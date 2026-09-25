@@ -56,8 +56,12 @@ npm start
 
 ### Render（無料プランあり・おすすめ）
 
-1. [Render](https://render.com) に GitHub でログインします。
-2. **New → Blueprint** から このリポジトリを選びます。ルートの `render.yaml` が読まれて、`village/` がそのまま Web サービスになります。
+[![Render に公開する](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/flygon823/f)
+
+1. 上のボタンを押して、[Render](https://render.com) に GitHub でログインします。
+   （ボタンを使わないときは **New → Blueprint** から このリポジトリを選びます。）
+2. ルートの `render.yaml` が読まれて、`village/` がそのまま Web サービスになります。
+   `STRIPE_SECRET_KEY` を聞かれたら、カラーパスを売らないうちは空のままで大丈夫です。**Apply**（作成）を押します。
 3. できあがった `https://pokapoka-island-xxxx.onrender.com/` を友だちに送れば、みんなで同じ島に入れます。
 
 無料プランは しばらく誰もいないと眠るので、最初に開いたときは起きるまで数十秒かかります。

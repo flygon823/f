@@ -1,6 +1,7 @@
 # 月と潮の磯 / MOONLIT TIDEPOOL
 
 > 🍃 みんなで入れる島のミニメタバース **ぽかぽか島** は [`village/`](village/) にあります。
+> ボタン1つでネットに公開できます： [![Render に公開する](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/flygon823/f)
 
 磯の潮だまりを箱庭のように眺める、3D の海の生き物図鑑です。
 ブラウザで `index.html` を開くだけで動きます（Three.js は CDN から読み込みます）。
