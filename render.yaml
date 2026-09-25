@@ -1,0 +1,10 @@
+# Render（https://render.com）の Blueprint。リポジトリをつなぐだけで「ぽかぽか島」が公開される。
+services:
+  - type: web
+    name: pokapoka-island
+    runtime: node
+    rootDir: village
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
