@@ -1841,7 +1841,8 @@ addEventListener('resize', () => {
 // =====================================================================
 const saved = store.get('look', null);
 // 前にどうぶつを選んでいた人も MOMO になる（色は MOMO のアクセント色の範囲に直す）
-const look = { s: 'momo', f: saved && saved.s === 'momo' && saved.f < MOMO_ACCENT.length ? saved.f : 0, c: 0 };
+const savedColor = saved && saved.s === 'momo' && saved.f < MOMO_ACCENT.length ? saved.f : 0;
+const look = { s: 'momo', f: savedColor, c: 0 };
 const nameInput = $('#name');
 nameInput.value = store.get('name', '');
 
@@ -1885,31 +1886,119 @@ function rebuildPreview() {
   pv.v.hop();
 }
 
-// ---------- 有料プラン ----------
-// いまは支払いのしくみがまだないので、全員が無料プラン。色を選べるのは有料プランの人だけ。
-// 支払いを入れたら、ここ（とサーバーの isPremium）で有料の人を判定する。
-function isPremium() { return false; }
+// ---------- 有料プラン（カラーパス・買い切り） ----------
+// 色を選べるのは、カラーパスを買った人だけ。買うと「購入の番号」がこの端末に保存され、
+// サーバーが Stripe に問い合わせて確かめる。
 const FREE_COLOR = 0; // 無料プランの MOMO はミント
+let premium = false;
+let pass = store.get('pass', null);
+let payConfig = { payments: false, price: 300 };
+function isPremium() { return premium; }
+function apiBase() {
+  const q = new URLSearchParams(location.search).get('server');
+  if (q) return q.replace(/^ws/, 'http').replace(/\/ws\/?$/, '').replace(/\/$/, '');
+  return location.protocol.startsWith('http') ? '' : null;
+}
+async function api(path, opts) {
+  const base = apiBase();
+  if (base === null || (window.claude && !new URLSearchParams(location.search).get('server'))) return null;
+  try {
+    const res = await fetch(base + path, opts);
+    return res.ok ? await res.json() : null;
+  } catch { return null; }
+}
+async function checkPass(code) {
+  const r = await api('/api/premium?code=' + encodeURIComponent(code));
+  return !!(r && r.premium);
+}
+async function initPayments() {
+  const params = new URLSearchParams(location.search);
+  const paid = params.get('paid'), canceled = params.get('canceled');
+  if (paid || canceled) {
+    params.delete('paid'); params.delete('canceled');
+    const q = params.toString();
+    try { history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash); } catch { /* そのままでよい */ }
+  }
+  const cfg = await api('/api/config');
+  if (cfg) payConfig = cfg;
+  if (paid) {
+    if (await checkPass(paid)) {
+      pass = paid; store.set('pass', pass); premium = true;
+      $('#colorNote').textContent = '🎉 カラーパスを手に入れました！ 好きな色を選んでね。';
+    } else {
+      $('#colorNote').textContent = '支払いを確認できませんでした。少し待ってからページを開きなおしてください。';
+    }
+  } else if (pass) {
+    premium = await checkPass(pass);
+  }
+  if (canceled) $('#colorNote').textContent = '支払いを取りやめました。';
+  renderPlan();
+}
+function renderPlan() {
+  $('#planBadge').textContent = premium ? 'カラーパス' : '無料プラン';
+  $('#planBadge').classList.toggle('paid', premium);
+  $('#passBox').hidden = !payConfig.payments && !premium;
+  $('#buyPass').hidden = premium;
+  $('#buyPass').textContent = `🎨 カラーパスを買う（${payConfig.price.toLocaleString('ja-JP')}円・買い切り）`;
+  $('#restoreRow').hidden = premium;
+  $('#ownedRow').hidden = !premium;
+  if (premium) $('#ownedCode').value = pass;
+  renderSwatches();
+}
+$('#buyPass').addEventListener('click', async () => {
+  $('#buyPass').disabled = true;
+  store.set('name', nameInput.value.trim().slice(0, 12));
+  const r = await api('/api/checkout', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ returnUrl: location.origin + location.pathname }),
+  });
+  if (r && r.url) { location.href = r.url; return; }
+  $('#buyPass').disabled = false;
+  $('#colorNote').textContent = 'いまは支払いページを開けません。少し待ってから試してください。';
+});
+$('#restoreOpen').addEventListener('click', () => { $('#restoreForm').hidden = false; $('#restoreInput').focus(); });
+$('#restoreGo').addEventListener('click', async () => {
+  const code = $('#restoreInput').value.trim();
+  if (!code) return;
+  if (await checkPass(code)) {
+    pass = code; store.set('pass', pass); premium = true;
+    $('#restoreForm').hidden = true;
+    $('#colorNote').textContent = '🎉 カラーパスが使えるようになりました！';
+    renderPlan();
+  } else {
+    $('#colorNote').textContent = 'その復元コードは使えませんでした。コードをもう一度確かめてください。';
+  }
+});
+$('#ownedCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(pass); $('#colorNote').textContent = '復元コードをコピーしました。'; }
+  catch { $('#ownedCode').select(); }
+});
 
-function buildChoices() {
+function buildChoices() { renderPlan(); }
+function renderSwatches() {
   const el = $('#furChoices');
-  const premium = isPremium();
-  if (!premium) look.f = FREE_COLOR;
-  $('#planBadge').textContent = premium ? '有料プラン' : '無料プラン';
+  el.textContent = '';
+  look.f = premium ? savedColor : FREE_COLOR;
   MOMO_ACCENT.forEach((c, i) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'swatch'; b.style.background = c; b.dataset.i = i;
     const locked = !premium && i !== FREE_COLOR;
     b.classList.toggle('locked', locked);
-    b.title = locked ? '有料プランで選べる色です' : c;
+    b.title = locked ? 'カラーパスで選べる色です' : c;
     b.setAttribute('aria-disabled', locked ? 'true' : 'false');
     b.addEventListener('click', () => {
-      if (locked) { $('#colorNote').textContent = '🔒 この色は有料プランの人だけ選べます。無料プランの MOMO はミント色です。'; return; }
+      if (locked) {
+        $('#colorNote').textContent = payConfig.payments
+          ? '🔒 この色はカラーパス（買い切り）で選べるようになります。'
+          : '🔒 この色は有料プランの人だけ選べます。無料プランの MOMO はミント色です。';
+        return;
+      }
       look.f = i; syncChoices(); rebuildPreview();
     });
     el.appendChild(b);
   });
   syncChoices();
+  if (pv.v) rebuildPreview();
 }
 function syncChoices() {
   document.querySelectorAll('#furChoices .swatch').forEach((b) => b.classList.toggle('on', +b.dataset.i === look.f));
@@ -1924,7 +2013,7 @@ function startConnecting() {
       $('#online').classList.toggle('offline', st === 'offline');
       if (st === 'offline') { $('#onlineText').textContent = 'つなぎなおし中…'; addLog(null, '通信が切れました。つなぎなおしています…'); }
       else if (st === 'upgraded') {
-        net.send({ t: 'join', name: me.name, look: me.look, x: me.x, z: me.z, r: me.r });
+        net.send({ t: 'join', name: me.name, look: me.look, x: me.x, z: me.z, r: me.r, pass: premium ? pass : undefined });
         lastSent = '';
         toast('サーバーにつながりました！');
         addLog(null, 'みんなの島につながりました');
@@ -1952,7 +2041,7 @@ async function enterIsland() {
   me = createPerson('__me', name, look, sx, sz, 0, true);
   camPos.set(sx, 14, sz + 17);
   for (const m of pending.splice(0)) handle(m);
-  net.send({ t: 'join', name, look, x: sx, z: sz, r: 0 });
+  net.send({ t: 'join', name, look, x: sx, z: sz, r: 0, pass: premium ? pass : undefined });
   $('#join').classList.add('hide');
   updateEnvironment();
   updateOnline();
@@ -1989,6 +2078,7 @@ updateClock();
 setInterval(() => { applyDayNight(); updateClock(); }, 5000);
 buildChoices();
 setupPreview();
+initPayments();
 startConnecting();
 frame();
 window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse };

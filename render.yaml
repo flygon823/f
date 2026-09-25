@@ -8,3 +8,10 @@ services:
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /healthz
+    envVars:
+      # Stripe のシークレットキー。Render の画面で入力する（ここには書かない）
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # カラーパスの値段（円）
+      - key: PREMIUM_PRICE_JPY
+        value: "300"

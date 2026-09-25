@@ -5,6 +5,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const payments = require('./payments');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -28,11 +29,74 @@ const MIME = {
 };
 
 // ---------- 静的ファイル ----------
+// ---------- カラーパスの支払い API ----------
+function json(res, status, data) {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'content-type',
+    'cache-control': 'no-store',
+  });
+  res.end(JSON.stringify(data));
+}
+function readBody(req, max = 4096) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > max) req.destroy(); });
+    req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch { resolve({}); } });
+    req.on('error', () => resolve({}));
+  });
+}
+const checkoutHits = new Map(); // IP ごとの回数（支払いページの作りすぎを防ぐ）
+function tooMany(req) {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const now = Date.now();
+  const list = (checkoutHits.get(ip) || []).filter((t) => now - t < 10 * 60e3);
+  list.push(now);
+  checkoutHits.set(ip, list);
+  return list.length > 10;
+}
+async function handleApi(req, res, url) {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET, POST' });
+    return res.end();
+  }
+  if (url.pathname === '/api/config') {
+    return json(res, 200, { payments: payments.enabled(), price: payments.PRICE });
+  }
+  if (url.pathname === '/api/premium') {
+    return json(res, 200, { premium: await payments.verify(url.searchParams.get('code')) });
+  }
+  if (url.pathname === '/api/checkout' && req.method === 'POST') {
+    if (!payments.enabled()) return json(res, 503, { error: 'not_configured' });
+    if (tooMany(req)) return json(res, 429, { error: 'too_many' });
+    const body = await readBody(req);
+    // もどり先は、この島のページ（呼び出し元と同じ場所）だけにする
+    let back = `https://${req.headers.host}/`;
+    try {
+      const u = new URL(String(body.returnUrl || ''));
+      const origin = req.headers.origin;
+      if ((u.protocol === 'https:' || u.protocol === 'http:') && (u.origin === origin || u.host === req.headers.host)) back = u.origin + u.pathname;
+    } catch { /* 決まったもどり先を使う */ }
+    try {
+      return json(res, 200, { url: await payments.createCheckout(back) });
+    } catch (e) {
+      console.error('[checkout]', e.message);
+      return json(res, 502, { error: 'stripe_error' });
+    }
+  }
+  return json(res, 404, { error: 'not_found' });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end(`ok ${players.size}`);
+    return;
+  }
+  if (url.pathname.startsWith('/api/')) {
+    handleApi(req, res, url).catch((e) => { console.error(e); json(res, 500, { error: 'server_error' }); });
     return;
   }
   let rel = decodeURIComponent(url.pathname);
@@ -85,8 +149,8 @@ const cleanText = (s, max) => String(s ?? '')
 const num = (v, lo, hi, d = 0) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : 0);
 
-// 有料プランかどうか。支払いのしくみがまだないので、いまは全員が無料プラン
-function isPremium(/* ws, msg */) { return false; }
+// 有料プラン（カラーパスを買った人）かどうか。join のときに送られてくる購入の番号を Stripe で確かめる
+const isPremium = (msg) => payments.verify(msg && msg.pass);
 
 // 島にくる人は みんなロボットの MOMO。アクセントの色を選べるのは有料プランの人だけ（無料はミント = 0）
 function cleanLook(l, premium) {
@@ -113,26 +177,32 @@ wss.on('connection', (ws) => {
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
 
-  ws.on('message', (raw) => {
+  let joining = false;
+  ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     if (!msg || typeof msg !== 'object') return;
     const now = Date.now();
 
     if (msg.t === 'join') {
-      if (me) return;
+      if (me || joining) return;
       if (players.size >= MAX_PLAYERS) { send(ws, { t: 'full' }); ws.close(); return; }
+      joining = true;
+      const premium = await isPremium(msg);
+      joining = false;
+      if (ws.readyState !== 1) return;
       me = {
         id: String(nextId++),
         ws,
         name: cleanText(msg.name, 12) || 'たびびと',
-        look: cleanLook(msg.look, isPremium(ws, msg)),
+        look: cleanLook(msg.look, premium),
+        premium,
         x: num(msg.x, -70, MAX_X), z: num(msg.z, -70, 70), r: num(msg.r, -10, 10), m: 0,
         dirty: false, lastChat: 0, lastEmote: 0, lastShake: 0,
       };
       players.set(me.id, me);
       send(ws, {
-        t: 'welcome', id: me.id,
+        t: 'welcome', id: me.id, premium,
         players: [...players.values()].filter((p) => p !== me).map(publicPlayer),
         world: worldSnapshot(),
       });

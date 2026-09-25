@@ -302,6 +302,20 @@
   }
   .plan { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--cream-2); color: var(--ink-2); font-size: 11px; }
   #colorNote { margin: 8px 0 0; font-size: 12px; color: var(--ink-2); min-height: 1.2em; }
+  .plan.paid { background: #fbe7a0; color: #6b4f14; }
+  #passBox { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 12px 14px; border-radius: 18px; background: var(--cream-2); }
+  #buyPass {
+    height: 42px; border: 0; border-radius: 999px; background: var(--sun); color: #6b4f14; font-size: 14px; box-shadow: 0 3px 0 var(--sun-dark);
+  }
+  #buyPass:disabled { opacity: .6; }
+  .passrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+  .passrow input {
+    flex: 1; min-width: 0; height: 32px; border-radius: 10px; border: 2px solid var(--line); background: #fff; padding: 0 8px;
+    font-size: 11px; font-weight: 700; color: var(--ink); user-select: text; -webkit-user-select: text;
+  }
+  .passrow button { height: 32px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--teal); color: #fff; font-size: 12px; }
+  .passrow .linkbtn { height: auto; border: 0; background: none; padding: 0; color: var(--ink-2); font-size: 12px; text-decoration: underline; }
+  #passBox a { color: var(--ink-2); font-size: 11px; }
   #go {
     width: 100%; height: 54px; margin-top: 6px; border: 0; border-radius: 999px; background: var(--teal); color: #fff; font-size: 18px;
     box-shadow: 0 5px 0 #149c8f;
@@ -420,6 +434,22 @@
         <label>MOMO の色<span class="plan" id="planBadge">無料プラン</span></label>
         <div class="choices" id="furChoices"></div>
         <p id="colorNote"></p>
+        <div id="passBox" hidden>
+          <button id="buyPass" type="button">🎨 カラーパスを買う</button>
+          <div class="passrow" id="restoreRow">
+            <button class="linkbtn" id="restoreOpen" type="button">復元コードをお持ちの方</button>
+          </div>
+          <div class="passrow" id="restoreForm" hidden>
+            <input id="restoreInput" placeholder="復元コード（cs_ から始まる番号）" autocomplete="off">
+            <button id="restoreGo" type="button">つかう</button>
+          </div>
+          <div class="passrow" id="ownedRow" hidden>
+            <span>復元コード（ほかの端末で使えます）</span>
+            <input id="ownedCode" readonly>
+            <button id="ownedCopy" type="button">コピー</button>
+          </div>
+          <a href="./tokushoho.html" target="_blank" rel="noopener">特定商取引法に基づく表記</a>
+        </div>
       </div>
       <button id="go" type="button">島へ行く</button>
       <p id="status"></p>
