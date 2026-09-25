@@ -1,0 +1,17 @@
+# Render（https://render.com）の Blueprint。リポジトリをつなぐだけで「ぽかぽか島」が公開される。
+services:
+  - type: web
+    name: pokapoka-island
+    runtime: node
+    rootDir: village
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      # Stripe のシークレットキー。Render の画面で入力する（ここには書かない）
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # カラーパスの値段（円）
+      - key: PREMIUM_PRICE_JPY
+        value: "300"
