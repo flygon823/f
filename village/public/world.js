@@ -306,15 +306,61 @@ export const BOARD = { x: PLAZA.x + 4.5, z: PLAZA.z - 6.2 };
 export const LAMPS = [0.6, 2.2, 3.9, 5.4].map((a) => ({ x: PLAZA.x + Math.cos(a) * 8.6, z: PLAZA.z + Math.sin(a) * 8.6 }));
 export const SPAWN = { x: PLAZA.x, z: PLAZA.z + 5 };
 
+// ---------- 地下通路 ----------
+// 地下は x = UNDER_X だけずらした場所にある。地上と同じ向き・同じ縮尺なので、地下で歩いた先は地上のその場所の真下。
+export const UNDER_X = 3000;
+export const TUNNEL_W = 1.7; // 通路の半分の幅
+// 地上の入り口（hatch は家の中の床の扉）
+export const UNDER_SPOTS = [
+  { key: 'well', kind: 'well', name: '古い井戸', x: 0, z: 6 },
+  { key: 'cave', kind: 'cave', name: '北の森のほらあな', x: 6, z: -32 },
+  { key: 'beach', kind: 'cave', name: '海辺のほらあな', x: 24, z: 37 },
+  { key: 'house', kind: 'hatch', name: 'むらさき屋根の家', x: -32, z: -26, room: 4, hatch: { x: 3.3, z: 1.9 } },
+];
+// 通路の分かれ道と部屋（地上の座標で）。T は宝箱の部屋
+export const UNDER_NODES = {
+  well: [0, 6], cave: [6, -32], beach: [24, 37], house: [-32, -26], T: [33, 12],
+  J1: [-4, -10], J2: [-21, -17], J3: [14, 22],
+};
+export const UNDER_EDGES = [['well', 'J1'], ['J1', 'cave'], ['J1', 'J2'], ['J2', 'house'], ['well', 'J3'], ['J3', 'beach'], ['J3', 'T']];
+export const UNDER_ROOMS = { well: 3.2, cave: 3.2, beach: 3.2, house: 3.2, T: 3.8, J1: 2.4, J2: 2.4, J3: 2.4 };
+export const CHEST = { x: 33, z: 10.4 };
+// 地下での、通路のまん中からの近さ（小さいほど通路の中）
+export function tunnelDist(lx, lz) {
+  let best = 99;
+  for (const [a, b] of UNDER_EDGES) best = Math.min(best, segDist(lx, lz, UNDER_NODES[a], UNDER_NODES[b]) - TUNNEL_W);
+  for (const [k, r] of Object.entries(UNDER_ROOMS)) best = Math.min(best, Math.hypot(lx - UNDER_NODES[k][0], lz - UNDER_NODES[k][1]) - r);
+  return best;
+}
+function tunnelWalkable(x, z, rad) {
+  const lx = x - UNDER_X;
+  if (tunnelDist(lx, z) > -rad) return false;
+  // はしご（部屋のまん中）と宝箱
+  for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, z - sp.z) < 0.45 + rad) return false;
+  if (Math.abs(lx - CHEST.x) < 0.75 + rad && Math.abs(z - CHEST.z) < 0.5 + rad) return false;
+  return true;
+}
+// 地上に出たときに立つ場所（入り口の手前）と、地下におりたときに立つ場所（はしごの手前）
+export function surfaceExit(sp) {
+  if (sp.kind === 'hatch') {
+    const r = INTERIORS[sp.room];
+    return { x: r.x + sp.hatch.x - 0.7, z: r.z + sp.hatch.z + 0.9 };
+  }
+  return { x: sp.x, z: sp.z + 2.1 };
+}
+export const underEntry = (sp) => ({ x: UNDER_X + sp.x, z: sp.z + 1.4 });
+
 // ---------- ぶつかり判定 ----------
 const CIRCLES = [
   ...PLACE.trees.map((t) => ({ x: t.x, z: t.z, r: t.kind === 'palm' ? 0.45 : 0.75 })),
   ...PLACE.rocks.map((r) => ({ x: r.x, z: r.z, r: 0.85 * r.s + 0.1 })),
   { x: TOWN_TREE.x, z: TOWN_TREE.z, r: 1.6 },
   { x: BOARD.x, z: BOARD.z, r: 0.8 },
+  ...UNDER_SPOTS.filter((s) => s.kind !== 'hatch').map((s) => ({ x: s.x, z: s.z - (s.kind === 'cave' ? 0.4 : 0), r: s.kind === 'cave' ? 1.5 : 1.1 })),
   ...LAMPS.map((l) => ({ x: l.x, z: l.z, r: 0.25 })),
 ];
 export function walkable(x, z, rad = 0.32) {
+  if (x > UNDER_X - 500) return tunnelWalkable(x, z, rad);
   if (x > INDOOR_X) return roomWalkable(x, z, rad);
   if (onBridge(x, z)) return true;
   if (groundHeight(x, z) < WALK_MIN_H) return false;

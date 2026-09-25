@@ -5,6 +5,7 @@ import {
   islandSDF, riverDist, pondDist, groundHeight, standHeight, walkable, onBridge,
   HOUSES, PATHS, BRIDGES, PLAZA, POND, PLACE, FRUITS, TOWN_TREE, BOARD, LAMPS, SPAWN, pathDist,
   INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit, seatsNear, standSpot,
+  UNDER_X, TUNNEL_W, UNDER_SPOTS, UNDER_NODES, UNDER_EDGES, UNDER_ROOMS, CHEST, tunnelDist, surfaceExit, underEntry,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
@@ -729,11 +730,235 @@ function buildInteriors() {
     g.add(mesh(GEO.cyl, toon(th.rug), 0.6, 0.02, 0.6, 2.2, 0.04, 1.6));
     g.add(mesh(GEO.cyl, toon('#ffffff', { transparent: true, opacity: 0.35 }), 0.6, 0.045, 0.6, 1.7, 0.02, 1.2));
     g.add(mesh(GEO.box, toon('#b0763f'), 0, 0.02, D / 2 - 0.35, 1.7, 0.04, 0.6));
+    const hatchSpot = UNDER_SPOTS.find((sp) => sp.kind === 'hatch' && sp.room === r.i);
+    if (hatchSpot) {
+      // 床の扉（地下通路への入り口）
+      const hx = hatchSpot.hatch.x, hz = hatchSpot.hatch.z;
+      g.add(mesh(GEO.box, toon('#6d4a2b'), hx, 0.02, hz, 1.25, 0.04, 1.25));
+      for (let k = -1; k <= 1; k++) g.add(mesh(GEO.box, toon('#9c6b3e'), hx + k * 0.37, 0.05, hz, 0.33, 0.04, 1.1));
+      g.add(mesh(new THREE.TorusGeometry(0.12, 0.025, 6, 14).rotateX(Math.PI / 2), toon('#d9b24a'), hx, 0.08, hz + 0.3));
+    }
     for (const [kind, fx, fz] of FURNITURE) {
       const f = buildFurniture(kind, th);
       f.position.set(fx, 0, fz);
       if (kind === 'sofa') f.rotation.y = 0;
       g.add(f);
+    }
+    scene.add(g);
+  }
+}
+
+// =====================================================================
+// 地下通路
+// =====================================================================
+function glowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.35)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const GLOW_TEX = glowTexture();
+function glow(color, size, opacity = 0.8) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sp.scale.setScalar(size);
+  return sp;
+}
+const chestLid = { mesh: null, open: 0, target: 0 };
+function buildUnderground() {
+  const g = new THREE.Group();
+  g.position.set(UNDER_X, 0, 0);
+  scene.add(g);
+  const X0 = -42, X1 = 44, Z0 = -42, Z1 = 46;
+  // 床：通路は石だたみ、それ以外は暗い土
+  const S = 1024, cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const cx = cv.getContext('2d');
+  const img = cx.createImageData(S, S);
+  const rnd = mulberry32(21);
+  for (let py = 0; py < S; py++) {
+    const z = Z0 + ((py + 0.5) / S) * (Z1 - Z0);
+    for (let px = 0; px < S; px++) {
+      const x = X0 + ((px + 0.5) / S) * (X1 - X0);
+      const d = tunnelDist(x, z), n = rnd();
+      let c;
+      if (d < 0) {
+        const cell = ((Math.floor(x * 1.1) + Math.floor(z * 1.1)) & 1) ? 0.95 : 1;
+        const edge = smoothstep(-0.9, 0, d);
+        c = [118 * cell - edge * 38 + n * 14, 104 * cell - edge * 36 + n * 12, 92 * cell - edge * 34 + n * 10];
+      } else c = [32 + n * 8, 26 + n * 6, 22 + n * 6];
+      const o = (py * S + px) * 4;
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, Z1 - Z0).rotateX(-Math.PI / 2), curvify(new THREE.MeshLambertMaterial({ map: tex })));
+  floor.position.set((X0 + X1) / 2, 0, (Z0 + Z1) / 2);
+  g.add(floor);
+
+  // 岩の壁：通路と部屋のふちに岩をならべる
+  const rocks = [];
+  const addRock = (x, z) => { if (tunnelDist(x, z) > 0.25 && tunnelDist(x, z) < 1.6) rocks.push([x, z]); };
+  for (const [a, b] of UNDER_EDGES) {
+    const [ax, az] = UNDER_NODES[a], [bx, bz] = UNDER_NODES[b];
+    const len = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
+    for (let t = 0; t < len; t += 1.25) {
+      for (const side of [-1, 1]) {
+        const off = TUNNEL_W + 0.75 + (rnd() - 0.5) * 0.4;
+        addRock(ax + ux * t - uz * off * side, az + uz * t + ux * off * side);
+      }
+    }
+  }
+  for (const [k, r] of Object.entries(UNDER_ROOMS)) {
+    const [nx, nz] = UNDER_NODES[k];
+    const n = Math.ceil((2 * Math.PI * (r + 0.8)) / 1.2);
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; addRock(nx + Math.cos(a) * (r + 0.8), nz + Math.sin(a) * (r + 0.8)); }
+  }
+  const rockMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), toon('#ffffff'), rocks.length);
+  const dummy = new THREE.Object3D(), col = new THREE.Color();
+  const rockColors = ['#6d6258', '#5f564e', '#776a5c', '#5a5360'];
+  rocks.forEach(([x, z], i) => {
+    // カメラ側（通路より手前）の岩は低くして、通路が見えるようにする
+    const near = tunnelDist(x, z - 1.3) < 0 || tunnelDist(x, z - 2.2) < 0;
+    const sz = near ? 0.55 + rnd() * 0.25 : 0.7 + rnd() * 0.35;
+    dummy.position.set(x, near ? 0.05 : 0.45 + rnd() * 0.3, z);
+    dummy.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+    dummy.scale.set(sz, near ? 0.35 + rnd() * 0.25 : 1.1 + rnd() * 0.9, sz);
+    dummy.updateMatrix();
+    rockMesh.setMatrixAt(i, dummy.matrix);
+    rockMesh.setColorAt(i, col.set(rockColors[i % rockColors.length]));
+  });
+  rockMesh.frustumCulled = false;
+  g.add(rockMesh);
+
+  // 坑道の木の柱と、ランタン
+  const wood = toon('#8a6038'), woodDark = toon('#6d4a2b');
+  let beamN = 0;
+  for (const [a, b] of UNDER_EDGES) {
+    const [ax, az] = UNDER_NODES[a], [bx, bz] = UNDER_NODES[b];
+    const len = Math.hypot(bx - ax, bz - az);
+    const ang = Math.atan2(bx - ax, bz - az);
+    for (let t = 5; t < len - 3; t += 7) {
+      const x = ax + (bx - ax) * (t / len), z = az + (bz - az) * (t / len);
+      const beam = new THREE.Group();
+      beam.position.set(x, 0, z);
+      beam.rotation.y = ang;
+      for (const sx of [-1, 1]) beam.add(mesh(GEO.box, wood, sx * (TUNNEL_W - 0.1), 1.1, 0, 0.22, 2.2, 0.22));
+      beam.add(mesh(GEO.box, woodDark, 0, 2.25, 0, TUNNEL_W * 2 + 0.3, 0.22, 0.26));
+      if (beamN++ % 2 === 0) {
+        beam.add(mesh(GEO.cyl, woodDark, 0.5, 2.0, 0, 0.015, 0.3, 0.015));
+        beam.add(mesh(GEO.sphereLo, basic('#ffd27a'), 0.5, 1.8, 0, 0.12, 0.15, 0.12));
+        const gl = glow('#ffb347', 2.6, 0.7);
+        gl.position.set(0.5, 1.8, 0);
+        beam.add(gl);
+      }
+      g.add(beam);
+    }
+  }
+  // 光る水晶
+  const crystalColors = ['#8fe3ff', '#c7a6ff', '#9ff0da'];
+  const crystal = (x, z, k) => {
+    const cg = new THREE.Group();
+    cg.position.set(x, 0, z);
+    const c = crystalColors[k % crystalColors.length];
+    for (let i = 0; i < 3; i++) {
+      const m = mesh(new THREE.ConeGeometry(0.16, 0.9, 6), basic(c), (i - 1) * 0.18, 0.4, (i % 2) * 0.12, 1, 0.7 + i * 0.3, 1);
+      m.rotation.z = (i - 1) * 0.35;
+      cg.add(m);
+    }
+    const gl = glow(c, 2.2, 0.55);
+    gl.position.y = 0.6;
+    cg.add(gl);
+    g.add(cg);
+  };
+  let ck = 0;
+  for (const [k, r] of Object.entries(UNDER_ROOMS)) {
+    const [nx, nz] = UNDER_NODES[k];
+    for (const a of [0.8, 2.6, 4.2]) {
+      const x = nx + Math.cos(a + ck) * (r - 0.35), z = nz + Math.sin(a + ck) * (r - 0.35);
+      if (tunnelDist(x, z) > -0.2 && tunnelDist(x, z) < 0.6) crystal(x, z, ck);
+      ck++;
+    }
+  }
+  // はしごと、上からさしこむ光
+  for (const sp of UNDER_SPOTS) {
+    const lg = new THREE.Group();
+    lg.position.set(sp.x, 0, sp.z);
+    for (const sx of [-1, 1]) lg.add(mesh(GEO.box, wood, sx * 0.32, 2.2, 0, 0.09, 4.4, 0.09));
+    for (let y = 0.35; y < 4.3; y += 0.45) lg.add(mesh(GEO.box, woodDark, 0, y, 0, 0.64, 0.06, 0.07));
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.9, 1.3, 7, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: sp.kind === 'hatch' ? '#ffd9a0' : '#fff6d6', transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
+    );
+    shaft.position.y = 3.5;
+    lg.add(shaft);
+    lg.add(mesh(GEO.cyl, basic('#f3e2b8'), 0, 0.01, 0, 1.1, 0.01, 1.1));
+    g.add(lg);
+  }
+  // 宝箱の部屋
+  const chest = new THREE.Group();
+  chest.position.set(CHEST.x, 0, CHEST.z);
+  chest.add(mesh(GEO.box, toon('#a0662f'), 0, 0.35, 0, 1.3, 0.7, 0.8));
+  chest.add(mesh(GEO.box, toon('#e4b43c'), 0, 0.35, 0.41, 1.34, 0.12, 0.02));
+  const lid = new THREE.Group();
+  lid.position.set(0, 0.7, -0.4);
+  lid.add(mesh(GEO.box, toon('#b5773a'), 0, 0.18, 0.4, 1.34, 0.36, 0.84));
+  lid.add(mesh(GEO.box, toon('#e4b43c'), 0, 0.18, 0.83, 0.2, 0.28, 0.04));
+  chest.add(lid);
+  chest.add(mesh(GEO.sphereLo, basic('#ffe27a'), 0, 0.72, 0, 0.5, 0.12, 0.3));
+  const cg = glow('#ffd35a', 3.2, 0.45);
+  cg.position.y = 0.9;
+  chest.add(cg);
+  chest.add(blob(2));
+  g.add(chest);
+  chestLid.mesh = lid;
+}
+
+// 地上の入り口（井戸・ほらあな）
+function buildEntrances() {
+  for (const sp of UNDER_SPOTS) {
+    if (sp.kind === 'hatch') continue;
+    const g = new THREE.Group();
+    g.position.set(sp.x, groundHeight(sp.x, sp.z), sp.z);
+    if (sp.kind === 'well') {
+      const stone = toon('#b8b0a2');
+      g.add(mesh(new THREE.CylinderGeometry(1.0, 1.08, 0.8, 22, 1, true), toon('#b8b0a2', { side: THREE.DoubleSide }), 0, 0.4, 0));
+      g.add(mesh(new THREE.TorusGeometry(1.0, 0.12, 8, 24).rotateX(Math.PI / 2), stone, 0, 0.8, 0));
+      g.add(mesh(GEO.cyl, basic('#121016'), 0, 0.3, 0, 0.92, 0.02, 0.92));
+      for (const sx of [-1, 1]) g.add(mesh(GEO.box, toon('#8a5a32'), sx * 1.0, 1.25, 0, 0.14, 2.1, 0.14));
+      const roof = makeRoof(2.8, 0.8, 1.5, '#7c5a3a');
+      roof.position.y = 2.25;
+      g.add(roof);
+      g.add(mesh(GEO.cyl, toon('#8a5a32'), 0, 1.85, 0, 0.06, 2.1, 0.06).rotateZ(Math.PI / 2));
+      g.add(mesh(GEO.cyl, toon('#c9a26b'), 0, 1.3, 0, 0.012, 1.0, 0.012));
+      g.add(mesh(GEO.cyl, toon('#9c774a'), 0, 0.72, 0, 0.18, 0.22, 0.18));
+      g.add(blob(3.2));
+    } else {
+      const beach = sp.key === 'beach';
+      const rock = (c) => toon(beach ? c[1] : c[0]);
+      const parts = [
+        [-1.05, 0.6, -0.3, 1.0, 1.3, 0.9, ['#8f877c', '#c9b99a']],
+        [1.05, 0.6, -0.3, 1.0, 1.25, 0.95, ['#978e82', '#d2c2a2']],
+        [0, 1.45, -0.45, 1.5, 0.75, 0.95, ['#a39a8d', '#dccdae']],
+        [-0.3, 0.5, -1.2, 1.3, 1.1, 0.9, ['#857d72', '#c1b193']],
+      ];
+      for (const [x, y, z, sx, sy, sz, c] of parts) {
+        const m = mesh(GEO.blobby, rock(c), x, y, z, sx, sy, sz);
+        m.rotation.y = x;
+        g.add(m);
+      }
+      const hole = new THREE.Mesh(new THREE.CircleGeometry(0.8, 24), basic('#0e0b0a'));
+      hole.position.set(0, 0.72, 0.05);
+      hole.scale.set(0.85, 1, 1);
+      g.add(hole);
+      g.add(mesh(GEO.cyl, basic('#0e0b0a'), 0, 0.02, 0.2, 0.75, 0.02, 0.55));
+      g.add(blob(3.6));
     }
     scene.add(g);
   }
@@ -1220,9 +1445,17 @@ $('#copyBtn').addEventListener('click', async () => {
 // =====================================================================
 function findTarget() {
   if (!me || transitioning) return null;
+  if (layerOf(me.x) === 'under') {
+    const lx = me.x - UNDER_X;
+    for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, me.z - sp.z) < 1.9) return { type: 'up', sp };
+    if (Math.hypot(lx - CHEST.x, me.z - CHEST.z) < 2.0) return { type: 'chest' };
+    return null;
+  }
   const room = interiorAt(me.x);
   if (room) {
     if (me.seat) return { type: 'stand' };
+    const hatch = UNDER_SPOTS.find((sp) => sp.kind === 'hatch' && sp.room === room.i);
+    if (hatch && Math.hypot(me.x - (room.x + hatch.hatch.x), me.z - (room.z + hatch.hatch.z)) < 1.3) return { type: 'down', sp: hatch };
     if (Math.abs(me.x - room.x) < 1.2 && me.z > room.z + ROOM.d / 2 - 1.3) return { type: 'exit' };
     const seat = seatsNear(me.x, me.z, 1.9).find((st) => !seatTaken(st));
     if (seat) return { type: 'seat', seat };
@@ -1235,6 +1468,9 @@ function findTarget() {
   }
   if (best) return best;
   if (resident && Math.hypot(resident.x - me.x, resident.z - me.z) < 2.0) return { type: 'talk' };
+  for (const sp of UNDER_SPOTS) {
+    if (sp.kind !== 'hatch' && Math.hypot(me.x - sp.x, me.z - sp.z) < 2.6) return { type: 'down', sp };
+  }
   for (let i = 0; i < HOUSES.length; i++) {
     const d = doorOf(HOUSES[i]);
     if (Math.abs(me.x - d.x) < 1.0 && Math.abs(me.z - d.z) < 1.1) return { type: 'door', i };
@@ -1259,6 +1495,9 @@ function action() {
   const t = findTarget();
   if (!t) { me.v.hop(); return; }
   if (t.type === 'door') { enterHouse(t.i); return; }
+  if (t.type === 'down') { enterUnder(t.sp); return; }
+  if (t.type === 'up') { exitUnder(t.sp); return; }
+  if (t.type === 'chest') { openChest(); return; }
   if (t.type === 'exit') { exitHouse(); return; }
   if (t.type === 'talk') { startTalk(); return; }
   if (t.type === 'seat') { sitDown(t.seat); return; }
@@ -1285,7 +1524,9 @@ function updatePrompt() {
   const t = findTarget();
   const label = !t ? '' : {
     pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
-    stand: 'たちあがる', seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
+    stand: 'たちあがる', chest: '宝箱をあける',
+    down: t.sp && (t.sp.kind === 'well' ? '井戸をおりる' : t.sp.kind === 'hatch' ? '床の扉からおりる' : 'ほらあなに入る'),
+    up: t.sp && `はしごをのぼる（${t.sp.name}へ）`, seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
   }[t.type] || (t.o.t.fruit && t.o.fruit > 0 ? '木をゆらす' : '木をゆらしてみる');
   if (label === lastPrompt) return;
   lastPrompt = label;
@@ -1380,6 +1621,39 @@ function seatOf(p) {
 // =====================================================================
 let transitioning = false;
 const INDOOR_BG = new THREE.Color('#1f1712');
+const UNDER_BG = new THREE.Color('#0d0b10');
+// いまいる場所：'surface'（島）/'room'（家の中）/'under'（地下）
+function layerOf(x) { return x > UNDER_X - 500 ? 'under' : x > INDOOR_X ? 'room' : 'surface'; }
+// 地下では MOMO の顔の画面がライトになる
+const momoLamp = new THREE.PointLight('#c8fff0', 0, 14, 1.1);
+scene.add(momoLamp);
+function enterUnder(sp) {
+  if (transitioning || !me) return;
+  me.seat = null;
+  sound.ladder();
+  fadeThen(() => { const e = underEntry(sp); me.x = e.x; me.z = e.z; me.r = 0; });
+}
+function exitUnder(sp) {
+  if (transitioning || !me) return;
+  sound.ladder();
+  fadeThen(() => { const e = surfaceExit(sp); me.x = e.x; me.z = e.z; me.r = 0; });
+}
+function openChest() {
+  const today = new Date().toDateString();
+  chestLid.target = 1;
+  if (store.get('chestDay', '') === today) {
+    toast('宝箱はからっぽ… また明日来てね');
+    sound.click();
+    return;
+  }
+  const amt = [300, 500, 800, 1000][Math.floor(Math.random() * 4)];
+  pocket.coins += amt;
+  store.set('pocket', pocket);
+  store.set('chestDay', today);
+  renderPocket();
+  toast(`宝箱に ${amt.toLocaleString('ja-JP')} ポカ 入っていた！`);
+  sound.coins();
+}
 function fadeThen(fn) {
   transitioning = true;
   keys.clear(); clickTarget = null;
@@ -1415,10 +1689,13 @@ function exitHouse() {
   });
 }
 function updateEnvironment() {
-  const inside = !!(me && interiorAt(me.x));
-  sky.visible = !inside;
-  scene.background = inside ? INDOOR_BG : null;
-  CURVE.uCurve.value = inside ? 0.0012 : 0.0055;
+  const layer = me ? layerOf(me.x) : 'surface';
+  sky.visible = layer === 'surface';
+  scene.background = layer === 'room' ? INDOOR_BG : layer === 'under' ? UNDER_BG : null;
+  CURVE.uCurve.value = layer === 'room' ? 0.0012 : layer === 'under' ? 0 : 0.0055;
+  scene.fog.near = layer === 'under' ? 9 : 60;
+  scene.fog.far = layer === 'under' ? 34 : 120;
+  momoLamp.intensity = layer === 'under' ? 6 : 0;
   applyDayNight();
 }
 
@@ -1466,6 +1743,13 @@ function buildMapBase() {
     g.fillRect(-b.len / 2 * k, -b.wid / 2 * k, b.len * k, b.wid * k);
     g.restore();
   }
+  // 地下への入り口
+  for (const sp of UNDER_SPOTS) {
+    if (sp.kind === 'hatch') continue;
+    const [ex, ey] = P(sp.x, sp.z);
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(ex, ey, 4.2, 0, 7); g.fill();
+    g.fillStyle = sp.kind === 'well' ? '#7c8a99' : '#5b4a3c'; g.beginPath(); g.arc(ex, ey, 2.8, 0, 7); g.fill();
+  }
   // 家
   for (const h of HOUSES) {
     const [cx, cy] = P(h.x, h.z);
@@ -1478,6 +1762,7 @@ function buildMapBase() {
   mapBase = c;
 }
 function mapPos(x, z) {
+  if (layerOf(x) === 'under') x -= UNDER_X;
   // 家の中にいる人は、その家の場所に出す
   const r = interiorAt(x);
   if (r) { const d = doorOf(r.house); x = d.x; z = d.z - 1.5; }
@@ -1492,7 +1777,25 @@ function drawMap() {
   const g = mapCtx;
   g.clearRect(0, 0, W, W);
   g.imageSmoothingEnabled = true;
-  if (mapBase) g.drawImage(mapBase, 0, 0, W, W);
+  const under = me && layerOf(me.x) === 'under';
+  if (mapBase) {
+    g.globalAlpha = under ? 0.28 : 1;
+    g.drawImage(mapBase, 0, 0, W, W);
+    g.globalAlpha = 1;
+  }
+  if (under) {
+    // 地下では通路の地図
+    const k = W / (2 * MAP_E), P = (x, z) => [(x + MAP_E) * k, (z + MAP_E) * k];
+    g.fillStyle = 'rgba(30,24,20,0.45)'; g.fillRect(0, 0, W, W);
+    g.strokeStyle = '#e8d9b6'; g.lineCap = 'round'; g.lineWidth = TUNNEL_W * 2 * k;
+    for (const [a, b] of UNDER_EDGES) { g.beginPath(); g.moveTo(...P(...UNDER_NODES[a])); g.lineTo(...P(...UNDER_NODES[b])); g.stroke(); }
+    g.fillStyle = '#e8d9b6';
+    for (const [key, r] of Object.entries(UNDER_ROOMS)) { g.beginPath(); g.arc(...P(...UNDER_NODES[key]), r * k, 0, 7); g.fill(); }
+    g.fillStyle = '#8a5a32';
+    for (const sp of UNDER_SPOTS) { const [px, py] = P(sp.x, sp.z); g.fillRect(px - 2 * dpr, py - 3 * dpr, 4 * dpr, 6 * dpr); }
+    g.fillStyle = '#e4b43c';
+    { const [px, py] = P(CHEST.x, CHEST.z); g.fillRect(px - 3 * dpr, py - 2 * dpr, 6 * dpr, 4 * dpr); }
+  }
   const dot = (x, z, color, rad) => {
     const [u, v] = mapPos(x, z);
     g.fillStyle = '#ffffff';
@@ -1502,8 +1805,10 @@ function drawMap() {
   };
   const big = box.classList.contains('big');
   const R = (big ? 5 : 3.2) * dpr;
-  for (const p of people.values()) if (!p.isMe) dot(p.x, p.z, tagColor(p.name), R);
-  if (resident) dot(resident.x, resident.z, '#e2a91e', R);
+  // 同じ階（地上か地下か）にいる人だけ出す
+  const same = (x) => (layerOf(x) === 'under') === !!under;
+  for (const p of people.values()) if (!p.isMe && same(p.x)) dot(p.x, p.z, tagColor(p.name), R);
+  if (resident && !under) dot(resident.x, resident.z, '#e2a91e', R);
   if (me) {
     const [u, v] = mapPos(me.x, me.z);
     const t = performance.now() / 1000;
@@ -1521,6 +1826,12 @@ function drawMap() {
   }
 }
 function whereName(x, z) {
+  if (layerOf(x) === 'under') {
+    const lx = x - UNDER_X;
+    if (Math.hypot(lx - UNDER_NODES.T[0], z - UNDER_NODES.T[1]) < UNDER_ROOMS.T + 0.5) return '地下の宝箱の部屋';
+    const sp = UNDER_SPOTS.find((s2) => Math.hypot(lx - s2.x, z - s2.z) < UNDER_ROOMS[s2.key] + 0.5);
+    return sp ? `地下通路（${sp.name}の下）` : '地下通路';
+  }
   const r = interiorAt(x);
   if (r) return `${r.house.name}の中`;
   if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.r + 1) return 'ひろば';
@@ -1594,7 +1905,13 @@ function applyDayNight() {
   const dayT = clamp((h - 6) / 12, 0, 1);
   const ang = lerp(-1.1, 1.1, dayT);
   sunOffset.set(Math.sin(ang) * 30, 34, 18);
-  if (me && interiorAt(me.x)) {
+  if (me && layerOf(me.x) === 'under') {
+    // 地下は うす暗く、青っぽい
+    hemi.color.set('#8a93c4'); hemi.groundColor.set('#3a2c22'); hemi.intensity = 0.75;
+    sun.color.set('#b9c4ff'); sun.intensity = 0.35;
+    sunOffset.set(-6, 30, 14);
+    scene.fog.color.copy(UNDER_BG);
+  } else if (me && interiorAt(me.x)) {
     // 家の中は いつも あかるい
     hemi.color.set('#fff8ee'); hemi.groundColor.set('#b89a7a'); hemi.intensity = 1.7;
     sun.color.set('#fff0dc'); sun.intensity = 1.5;
@@ -1622,6 +1939,7 @@ const tmpV = new THREE.Vector3();
 let sendTimer = 0, lastSent = '';
 let stepDist = 0;
 let mapTick = 0;
+let dripAt = 0;
 const camPos = new THREE.Vector3(SPAWN.x, 14, SPAWN.z + 16);
 const camLook = new THREE.Vector3(SPAWN.x, 0, SPAWN.z);
 
@@ -1674,7 +1992,7 @@ function moveMe(dt) {
   const room = interiorAt(me.x);
   if (stepDist > (me.speed > 5 ? 1.25 : 0.95)) {
     stepDist = 0;
-    sound.step(0.9, room ? 'wood' : onBridge(me.x, me.z) ? 'wood' : islandSDF(me.x, me.z) > -7.4 ? 'sand' : 'grass');
+    sound.step(0.9, layerOf(me.x) === 'under' ? 'stone' : room ? 'wood' : onBridge(me.x, me.z) ? 'wood' : islandSDF(me.x, me.z) > -7.4 ? 'sand' : 'grass');
   }
   // 果物の上を歩いたら拾う
   for (const d of drops.values()) {
@@ -1699,6 +2017,11 @@ function cameraGoal(now) {
     return { pos: t.clone().add(new THREE.Vector3(0, 9.2 * zi, 11.5 * zi)), look: t.clone().add(new THREE.Vector3(0, 0.4, -0.6)) };
   }
   const focus = me || { x: SPAWN.x, z: SPAWN.z };
+  if (me && layerOf(me.x) === 'under') {
+    const t = new THREE.Vector3(me.x, 0, me.z);
+    const zu = clamp(zoom, 0.7, 1.3) * portrait * 0.85;
+    return { pos: t.clone().add(new THREE.Vector3(0, 10 * zu, 15 * zu)), look: t.clone().add(new THREE.Vector3(0, 0.8, -1.8)) };
+  }
   const fy = me ? standHeight(me.x, me.z) : 0;
   const idle = me ? 0 : now * 0.05;
   const target = new THREE.Vector3(focus.x + Math.sin(idle) * 6, fy, focus.z + Math.cos(idle * 0.7) * 3);
@@ -1757,6 +2080,16 @@ function frame() {
     }
   }
   if (me && (mapTick -= dt) <= 0) { mapTick = 0.1; drawMap(); updateWhere(); }
+  if (me && layerOf(me.x) === 'under') {
+    momoLamp.position.set(me.x, 3.4, me.z - 0.8);
+    if (now > dripAt) { dripAt = now + 2 + Math.random() * 5; sound.drip(); }
+  }
+  if (chestLid.mesh) {
+    const lx = me ? me.x - UNDER_X : 0;
+    if (!me || Math.hypot(lx - CHEST.x, me.z - CHEST.z) > 4) chestLid.target = 0;
+    chestLid.open += (chestLid.target - chestLid.open) * Math.min(1, dt * 6);
+    chestLid.mesh.rotation.x = -chestLid.open * 1.2;
+  }
 
   // 人の動き
   for (const p of (resident ? [...people.values(), resident] : people.values())) {
@@ -2067,6 +2400,8 @@ buildRocks();
 buildFlowers();
 buildButterflies();
 buildInteriors();
+buildUnderground();
+buildEntrances();
 buildMapBase();
 {
   const pose = residentPose();

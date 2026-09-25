@@ -126,6 +126,11 @@ export class Sound {
   step(vol = 1, surface = 'grass') {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
+    if (surface === 'stone') {
+      this._noise({ t, dur: 0.06, vol: 0.05 * vol, freq: 900, q: 1.2 });
+      this._tone({ type: 'sine', freq: 140 + Math.random() * 20, glide: 90, t, dur: 0.05, vol: 0.06 * vol });
+      return;
+    }
     if (surface === 'wood') {
       this._tone({ type: 'sine', freq: 190 + Math.random() * 30, glide: 120, t, dur: 0.07, vol: 0.12 * vol });
       this._noise({ t, dur: 0.04, vol: 0.03 * vol, freq: 1200, q: 2 });
@@ -133,6 +138,17 @@ export class Sound {
     }
     const sand = surface === 'sand';
     this._noise({ t, dur: 0.07, vol: 0.05 * vol, freq: sand ? 1400 : 2600, q: sand ? 0.6 : 1.4 });
+  }
+  ladder() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 4; i++) this._tone({ type: 'sine', freq: 230 - i * 18, glide: 150, t: t + i * 0.09, dur: 0.07, vol: 0.12 });
+  }
+  drip() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime, f = 1300 + Math.random() * 900;
+    this._tone({ type: 'sine', freq: f, glide: f * 1.9, t, dur: 0.09, vol: 0.05 });
+    this._tone({ type: 'sine', freq: f * 0.7, glide: f * 1.2, t: t + 0.23, dur: 0.07, vol: 0.02 });
   }
   door() {
     if (!this.ctx) return;

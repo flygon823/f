@@ -15,7 +15,7 @@ const FRUIT_PER_TREE = 3;
 const FRUIT_REGROW_MS = 3 * 60 * 1000;
 const DROP_TTL_MS = 5 * 60 * 1000;
 
-const MAX_X = 1400;                // 家の中の部屋は x=1000 より先に並んでいる
+const MAX_X = 3200;                // 家の中の部屋は x=1000 から、地下通路は x=3000 あたりにある
 const EMOTES = ['wave', 'happy', 'sad', 'angry', 'wow', 'sleepy', 'love', 'music'];
 
 const MIME = {
