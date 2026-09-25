@@ -93,7 +93,7 @@ export class Sound {
   }
 
   // どうぶつ語：一文字ずつ短い「ぷ」「ぴ」を鳴らす
-  speak(text, pitch = 1, vol = 1) {
+  speak(text, pitch = 1, vol = 1, robot = false) {
     if (!this.ctx || vol <= 0.01) return;
     const ctx = this.ctx;
     let t = ctx.currentTime + 0.03;
@@ -109,6 +109,14 @@ export class Sound {
       if (/[?？]/.test(ch)) f *= 1.35;
       if (i === chars.length - 1) f *= 0.94;
       const fm = formants[code % formants.length];
+      if (robot) {
+        // ロボットは「ピポ」っぽい電子音
+        const q = base * 1.6 * Math.pow(2, Math.round(step / 2) * 2 / 12);
+        this._tone({ type: 'square', freq: q, t, dur: 0.06, vol: 0.06 * vol, filter: { type: 'lowpass', freq: 2600, q: 0.7 } });
+        this._tone({ type: 'sine', freq: q * 2, t, dur: 0.05, vol: 0.05 * vol });
+        t += 0.058;
+        return;
+      }
       this._tone({ type: 'sawtooth', freq: f, t, dur: 0.075, vol: 0.14 * vol, filter: { freq: fm, q: 3.5 }, glide: f * 0.93 });
       this._tone({ type: 'triangle', freq: f, t, dur: 0.07, vol: 0.12 * vol });
       t += 0.058;

@@ -8,7 +8,7 @@ import {
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
-import { makeVillager, SPECIES, FUR, SHIRT } from './villager.js';
+import { makeVillager, SPECIES, FUR, SHIRT, MOMO_ACCENT } from './villager.js';
 import { Sound } from './audio.js';
 import { connect } from './net.js';
 
@@ -30,7 +30,7 @@ const EMOTES = [
   { key: 'love', icon: '❤️', name: 'すき' },
   { key: 'music', icon: '🎵', name: 'ごきげん' },
 ];
-const VOICE = { cat: 1.3, dog: 1.0, rabbit: 1.45, bear: 0.78, pig: 0.95 };
+const VOICE = { momo: 1.15, cat: 1.3, dog: 1.0, rabbit: 1.45, bear: 0.78, pig: 0.95 };
 const TAG_COLORS = ['#f59ab5', '#6cc4f0', '#f7b84a', '#8bd07a', '#b69af0', '#f58c6c', '#4fcfbf', '#e8a0e0'];
 
 const sound = new Sound();
@@ -831,6 +831,7 @@ function createPerson(id, name, look, x, z, r, isMe, npc = false) {
     x, z, r, tx: x, tz: z, tr: r, speed: 0,
     sayUntil: 0, emoteUntil: 0, typer: null,
     voice: (VOICE[look.s] || 1) * (0.9 + (hashStr(name) % 20) / 100),
+    robot: look.s === 'momo',
   };
   if (!npc) people.set(id, p);
   return p;
@@ -858,7 +859,7 @@ function say(p, text, log = true) {
   p.sayUntil = performance.now() / 1000 + dur;
   p.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
   const dist = me ? Math.hypot(p.x - me.x, p.z - me.z) : 0;
-  sound.speak(text, p.voice, clamp(1 - dist / 30, 0, 1));
+  sound.speak(text, p.voice, clamp(1 - dist / 30, 0, 1), p.robot);
   if (log) addLog(p.name, text, tagColor(p.name));
 }
 
@@ -1764,9 +1765,10 @@ function frame() {
     }
     const seat = p.isMe ? me.seat : seatOf(p);
     const pose = seat ? seat.pose : 'stand';
-    const y = seat ? seat.y : standHeight(p.x, p.z);
+    // すわる高さは、キャラクターの腰の高さに合わせる
+    const y = seat ? seat.y + (pose === 'sit' ? (0.3 - p.v.hip) * 1.2 : 0) : standHeight(p.x, p.z);
     p.v.setPose(pose);
-    p.v.root.position.set(p.x, y, p.z);
+    p.v.root.position.set(p.x, y, p.z + (pose === 'lie' ? p.v.lieShift : 0));
     p.v.root.rotation.y = p.r;
     p.v.update(dt, seat ? 0 : p.speed);
     // 頭の上
@@ -1830,8 +1832,8 @@ addEventListener('resize', () => {
 // =====================================================================
 // はじめの画面
 // =====================================================================
-const look = store.get('look', { s: 'cat', f: 0, c: 0 });
-if (!SPECIES.some((s) => s.key === look.s)) look.s = 'cat';
+const look = store.get('look', { s: 'momo', f: 0, c: 0 });
+if (!SPECIES.some((s) => s.key === look.s)) look.s = 'momo';
 const nameInput = $('#name');
 nameInput.value = store.get('name', '');
 
@@ -1880,19 +1882,29 @@ function buildChoices() {
   for (const s of SPECIES) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'sp'; b.textContent = s.name;
-    b.addEventListener('click', () => { look.s = s.key; syncChoices(); rebuildPreview(); });
+    b.addEventListener('click', () => { look.s = s.key; buildSwatches(); rebuildPreview(); });
     b.dataset.k = s.key;
     sc.appendChild(b);
   }
-  const swatches = (el, list, field) => list.forEach((c, i) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'swatch'; b.style.background = c; b.dataset.i = i;
-    b.title = c;
-    b.addEventListener('click', () => { look[field] = i; syncChoices(); rebuildPreview(); });
-    el.appendChild(b);
-  });
-  swatches($('#furChoices'), FUR, 'f');
+  buildSwatches();
+}
+// MOMO は からだの色のかわりに「アクセントの色」、服はなし
+function buildSwatches() {
+  const momo = look.s === 'momo';
+  const swatches = (el, list, field) => {
+    el.textContent = '';
+    list.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'swatch'; b.style.background = c; b.dataset.i = i;
+      b.title = c;
+      b.addEventListener('click', () => { look[field] = i; syncChoices(); rebuildPreview(); });
+      el.appendChild(b);
+    });
+  };
+  swatches($('#furChoices'), momo ? MOMO_ACCENT : FUR, 'f');
   swatches($('#shirtChoices'), SHIRT, 'c');
+  $('#furLabel').textContent = momo ? 'アクセントの色' : 'からだの色';
+  $('#shirtField').hidden = momo;
   syncChoices();
 }
 function syncChoices() {

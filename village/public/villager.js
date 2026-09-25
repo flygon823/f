@@ -1,7 +1,9 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { toon, basic, blob, GEO, mesh, curvify, GRADIENT } from './gfx.js';
 
 export const SPECIES = [
+  { key: 'momo', name: 'MOMO' },
   { key: 'cat', name: 'ねこ' },
   { key: 'dog', name: 'いぬ' },
   { key: 'rabbit', name: 'うさぎ' },
@@ -39,10 +41,10 @@ function stripedShirt(base, stripe) {
   return stripeCache.get(key);
 }
 
-export function makeVillager(look) {
+function buildAnimal(body, look) {
+  const sp = look.s;
   const fur = look.furHex || FUR[look.f] || FUR[0];
   const shirt = look.shirtHex || SHIRT[look.c] || SHIRT[0];
-  const sp = look.s;
   const furM = toon(fur);
   const furDark = toon(shade(fur, 0.82));
   const light = toon(sp === 'pig' ? shade(fur, 1.12) : '#fff8ec');
@@ -51,17 +53,6 @@ export function makeVillager(look) {
   const inner = toon('#f6a6b8');
   const black = basic('#2b2320');
   const white = basic('#ffffff');
-
-  const root = new THREE.Group();
-  const shadow = blob(1.15);
-  shadow.position.y = 0.03;
-  root.add(shadow);
-
-  // すわる・ねころぶときは posePivot ごと傾ける
-  const posePivot = new THREE.Group();
-  root.add(posePivot);
-  const body = new THREE.Group();
-  posePivot.add(body);
 
   // 足
   const legs = [-1, 1].map((s) => {
@@ -190,6 +181,113 @@ export function makeVillager(look) {
     mouth.position.set(0, -0.2, 0.43);
   }
 
+  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 0.012, mouthOpen: 0.05, scale: 1, hip: 0.3, lieShift: 0 };
+}
+
+// ---------- MOMO（テレビ頭のロボット） ----------
+export const MOMO_ACCENT = ['#8fcfbd', '#f4a7b2', '#f3cf62', '#9cc8ef', '#b9a6e6', '#f2a36b', '#a8d67a', '#e4e6e2', '#7b828c', '#ef8f8f'];
+const RB = new Map();
+function rbox(w, h, d, r) {
+  const k = [w, h, d, r].join();
+  if (!RB.has(k)) RB.set(k, new RoundedBoxGeometry(w, h, d, 3, r));
+  return RB.get(k);
+}
+function buildMomo(body, look) {
+  const accent = toon(look.furHex || MOMO_ACCENT[look.f] || MOMO_ACCENT[0]);
+  const shell = toon('#e8ebe8');
+  const joint = toon('#4a5058');
+  const sole = toon('#f0a58f');
+  const screen = toon('#1f2a2e');
+  const glow = basic('#9ff0da');
+  const blush = basic('#f59aa9');
+
+  // 足：黒い関節・色のついた もも・白いすね・白い くつ（うらは もも色）
+  const legs = [-1, 1].map((s) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.13 * s, 0.37, 0);
+    pivot.add(mesh(GEO.sphereLo, joint, 0, 0, 0, 0.075));
+    pivot.add(mesh(GEO.sphereLo, accent, 0, -0.1, 0, 0.085, 0.1, 0.085));
+    pivot.add(mesh(rbox(0.17, 0.13, 0.17, 0.05), shell, 0, -0.22, 0.005));
+    pivot.add(mesh(rbox(0.19, 0.08, 0.26, 0.035), shell, 0, -0.315, 0.04));
+    pivot.add(mesh(rbox(0.2, 0.035, 0.27, 0.015), sole, 0, -0.355, 0.04));
+    body.add(pivot);
+    return pivot;
+  });
+  // 胴：白い箱と色の帯、胸のパネル
+  body.add(mesh(rbox(0.48, 0.36, 0.36, 0.08), shell, 0, 0.6, 0));
+  body.add(mesh(rbox(0.5, 0.11, 0.38, 0.05), accent, 0, 0.44, 0));
+  body.add(mesh(rbox(0.22, 0.1, 0.03, 0.02), screen, 0.04, 0.63, 0.18));
+  for (let k = 0; k < 3; k++) body.add(mesh(rbox(0.045, 0.05, 0.02, 0.01), toon('#e9f4f0'), -0.025 + k * 0.06, 0.63, 0.196));
+  body.add(mesh(GEO.sphereLo, toon('#f0a58f'), -0.14, 0.655, 0.18, 0.025, 0.025, 0.012));
+  body.add(mesh(GEO.sphereLo, accent, -0.14, 0.6, 0.18, 0.025, 0.025, 0.012));
+  body.add(mesh(GEO.cyl, joint, 0, 0.82, 0, 0.09, 0.08, 0.09));
+  // 腕
+  const arms = [-1, 1].map((s) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.3 * s, 0.7, 0);
+    pivot.rotation.z = 0.35 * s;
+    pivot.add(mesh(GEO.sphereLo, joint, 0, 0, 0, 0.07));
+    pivot.add(mesh(GEO.sphereLo, accent, 0, -0.09, 0, 0.065, 0.085, 0.065));
+    pivot.add(mesh(GEO.sphereLo, shell, 0, -0.19, 0, 0.07, 0.065, 0.07));
+    pivot.add(mesh(GEO.sphereLo, shell, 0, -0.28, 0.01, 0.065, 0.06, 0.06));
+    for (const f of [-1, 1]) pivot.add(mesh(GEO.sphereLo, shell, 0.03 * f, -0.33, 0.02, 0.022, 0.035, 0.022));
+    body.add(pivot);
+    return pivot;
+  });
+  // 頭：角の丸い箱と、黒い画面の顔
+  const head = new THREE.Group();
+  head.position.y = 1.14;
+  body.add(head);
+  head.add(mesh(rbox(0.82, 0.6, 0.58, 0.14), shell, 0, 0, 0));
+  head.add(mesh(rbox(0.64, 0.42, 0.04, 0.08), screen, 0, -0.01, 0.285));
+  const arcGeo = new THREE.TorusGeometry(0.055, 0.017, 6, 16, Math.PI);
+  const eyes = [-1, 1].map((s) => {
+    const e = new THREE.Group();
+    e.position.set(0.14 * s, 0.03, 0.31);
+    e.add(new THREE.Mesh(arcGeo, glow)); // ∩ のにっこり目
+    head.add(e);
+    return e;
+  });
+  for (const s of [-1, 1]) head.add(mesh(rbox(0.07, 0.035, 0.01, 0.012), blush, 0.23 * s, -0.04, 0.308));
+  const mouth = new THREE.Group();
+  mouth.position.set(0, -0.06, 0.31);
+  const smile = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.019, 6, 18, Math.PI), glow);
+  smile.rotation.z = Math.PI; // U のかたち
+  mouth.add(smile);
+  head.add(mouth);
+  // 耳のパーツ
+  for (const s of [-1, 1]) {
+    const rim = mesh(GEO.cyl, joint, 0.41 * s, 0.02, 0, 0.12, 0.04, 0.12);
+    rim.rotation.z = Math.PI / 2;
+    head.add(rim);
+    const ear = mesh(GEO.cyl, accent, 0.44 * s, 0.02, 0, 0.1, 0.06, 0.1);
+    ear.rotation.z = Math.PI / 2;
+    head.add(ear);
+  }
+  // アンテナ
+  head.add(mesh(GEO.cyl, joint, 0, 0.4, 0, 0.012, 0.22, 0.012));
+  head.add(mesh(GEO.sphereLo, toon('#f0a58f'), 0, 0.53, 0, 0.05));
+  const tailPivot = new THREE.Group();
+  body.add(tailPivot);
+  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 1, mouthOpen: 0.8, scale: 1.1, hip: 0.37, lieShift: 0.4 };
+}
+
+export function makeVillager(look) {
+  const root = new THREE.Group();
+  const shadow = blob(1.15);
+  shadow.position.y = 0.03;
+  root.add(shadow);
+
+  // すわる・ねころぶときは posePivot ごと傾ける
+  const posePivot = new THREE.Group();
+  root.add(posePivot);
+  const body = new THREE.Group();
+  posePivot.add(body);
+
+  const parts = look.s === 'momo' ? buildMomo(body, look) : buildAnimal(body, look);
+  const { legs, arms, head, eyes, mouth, tailPivot } = parts;
+  posePivot.scale.setScalar(parts.scale);
+
   const st = {
     pose: 'stand',
     phase: 0, walk: 0, blinkT: 2 + Math.random() * 3, talkT: 0, hopT: 0, waveT: 0, shakeT: 0, t: Math.random() * 10,
@@ -228,10 +326,10 @@ export function makeVillager(look) {
     // おしゃべり
     if (st.talkT > 0) {
       st.talkT -= dt;
-      mouth.scale.y = 0.012 + Math.abs(Math.sin(st.t * 18)) * 0.05;
+      mouth.scale.y = parts.mouthRest + Math.abs(Math.sin(st.t * 18)) * parts.mouthOpen;
       head.rotation.x += Math.sin(st.t * 9) * 0.05;
     } else {
-      mouth.scale.y = 0.012;
+      mouth.scale.y = parts.mouthRest;
     }
     // ぴょん（リアクション）
     if (st.hopT > 0) {
@@ -281,5 +379,7 @@ export function makeVillager(look) {
     shake() { st.shakeT = 0.6; },
     setPose(p) { st.pose = p; },
     get pose() { return st.pose; },
+    lieShift: parts.lieShift, // ねころぶとき、頭がベッドの板にぶつからないよう足もと側へずらす量
+    hip: parts.hip * parts.scale, // すわったときの腰の高さ（体の大きさ 1 のとき）
   };
 }

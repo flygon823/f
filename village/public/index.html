@@ -41,6 +41,7 @@
     user-select: none;
     -webkit-user-select: none;
   }
+  [hidden] { display: none !important; }
   button { font-family: inherit; font-weight: 800; color: inherit; cursor: pointer; }
   input { font-family: inherit; }
   #game { position: fixed; inset: 0; }
@@ -407,9 +408,9 @@
         <label for="name">なまえ</label>
         <input id="name" maxlength="12" placeholder="なまえを入れてね" autocomplete="nickname">
       </div>
-      <div class="field"><label>どうぶつ</label><div class="choices" id="speciesChoices"></div></div>
-      <div class="field"><label>からだの色</label><div class="choices" id="furChoices"></div></div>
-      <div class="field"><label>ふくの色</label><div class="choices" id="shirtChoices"></div></div>
+      <div class="field"><label>キャラクター</label><div class="choices" id="speciesChoices"></div></div>
+      <div class="field"><label id="furLabel">からだの色</label><div class="choices" id="furChoices"></div></div>
+      <div class="field" id="shirtField"><label>ふくの色</label><div class="choices" id="shirtChoices"></div></div>
       <button id="go" type="button">島へ行く</button>
       <p id="status"></p>
     </div>

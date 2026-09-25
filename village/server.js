@@ -13,7 +13,7 @@ const TICK_MS = 100;               // 位置のまとめ送り間隔
 const FRUIT_PER_TREE = 3;
 const FRUIT_REGROW_MS = 3 * 60 * 1000;
 const DROP_TTL_MS = 5 * 60 * 1000;
-const SPECIES = ['cat', 'dog', 'rabbit', 'bear', 'pig'];
+const SPECIES = ['momo', 'cat', 'dog', 'rabbit', 'bear', 'pig'];
 const MAX_X = 1400;                // 家の中の部屋は x=1000 より先に並んでいる
 const EMOTES = ['wave', 'happy', 'sad', 'angry', 'wow', 'sleepy', 'love', 'music'];
 
@@ -88,7 +88,7 @@ const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : 0);
 function cleanLook(l) {
   l = l && typeof l === 'object' ? l : {};
   return {
-    s: SPECIES.includes(l.s) ? l.s : 'cat',
+    s: SPECIES.includes(l.s) ? l.s : 'momo',
     f: idx(l.f, 16),
     c: idx(l.c, 16),
   };
