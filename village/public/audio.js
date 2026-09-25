@@ -115,9 +115,22 @@ export class Sound {
     });
   }
 
-  step(vol = 1, sand = false) {
+  step(vol = 1, surface = 'grass') {
     if (!this.ctx) return;
-    this._noise({ t: this.ctx.currentTime, dur: 0.07, vol: 0.05 * vol, freq: sand ? 1400 : 2600, q: sand ? 0.6 : 1.4 });
+    const t = this.ctx.currentTime;
+    if (surface === 'wood') {
+      this._tone({ type: 'sine', freq: 190 + Math.random() * 30, glide: 120, t, dur: 0.07, vol: 0.12 * vol });
+      this._noise({ t, dur: 0.04, vol: 0.03 * vol, freq: 1200, q: 2 });
+      return;
+    }
+    const sand = surface === 'sand';
+    this._noise({ t, dur: 0.07, vol: 0.05 * vol, freq: sand ? 1400 : 2600, q: sand ? 0.6 : 1.4 });
+  }
+  door() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._tone({ type: 'sine', freq: 170, glide: 110, t, dur: 0.12, vol: 0.2 });
+    [76, 81, 88].forEach((n, i) => this._tone({ type: 'triangle', freq: NOTE(n), t: t + 0.12 + i * 0.09, dur: 0.35, vol: 0.1 }));
   }
   rustle() {
     if (!this.ctx) return;
@@ -134,7 +147,7 @@ export class Sound {
     this._tone({ type: 'triangle', freq: NOTE(79), t, dur: 0.12, vol: 0.2 });
     this._tone({ type: 'triangle', freq: NOTE(86), t: t + 0.08, dur: 0.22, vol: 0.2 });
   }
-  bells() {
+  coins() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     [88, 91, 95, 100].forEach((n, i) => this._tone({ type: 'sine', freq: NOTE(n), t: t + i * 0.06, dur: 0.35, vol: 0.14 }));

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { toon, basic, blob, GEO, mesh } from './gfx.js';
+import { toon, basic, blob, GEO, mesh, curvify, GRADIENT } from './gfx.js';
 
 export const SPECIES = [
   { key: 'cat', name: 'ねこ' },
@@ -20,14 +20,34 @@ function shade(hex, k) {
 }
 
 // 胴体・頭・耳・しっぽを組み立てる。前は +z。
+// しましまのシャツ（住民用）
+const stripeCache = new Map();
+function stripedShirt(base, stripe) {
+  const key = base + stripe;
+  if (!stripeCache.has(key)) {
+    const c = document.createElement('canvas');
+    c.width = 8; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = base; g.fillRect(0, 0, 8, 64);
+    g.fillStyle = stripe;
+    for (let y = 4; y < 64; y += 12) g.fillRect(0, y, 8, 5);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.magFilter = THREE.NearestFilter;
+    stripeCache.set(key, curvify(new THREE.MeshToonMaterial({ color: '#ffffff', map: tex, gradientMap: GRADIENT })));
+  }
+  return stripeCache.get(key);
+}
+
 export function makeVillager(look) {
-  const fur = FUR[look.f] || FUR[0];
-  const shirt = SHIRT[look.c] || SHIRT[0];
+  const fur = look.furHex || FUR[look.f] || FUR[0];
+  const shirt = look.shirtHex || SHIRT[look.c] || SHIRT[0];
   const sp = look.s;
   const furM = toon(fur);
   const furDark = toon(shade(fur, 0.82));
   const light = toon(sp === 'pig' ? shade(fur, 1.12) : '#fff8ec');
-  const shirtM = toon(shirt);
+  const shirtM = look.stripe ? stripedShirt(shirt, look.stripe) : toon(shirt);
+  const sleeveM = toon(shirt);
   const inner = toon('#f6a6b8');
   const black = basic('#2b2320');
   const white = basic('#ffffff');
@@ -51,13 +71,13 @@ export function makeVillager(look) {
   });
   // 胴（シャツ）
   body.add(mesh(GEO.sphere, shirtM, 0, 0.47, 0, 0.3, 0.27, 0.26));
-  body.add(mesh(GEO.cyl, shirtM, 0, 0.36, 0, 0.3, 0.1, 0.26));
+  body.add(mesh(GEO.cyl, sleeveM, 0, 0.36, 0, 0.3, 0.1, 0.26));
   // 腕
   const arms = [-1, 1].map((s) => {
     const pivot = new THREE.Group();
     pivot.position.set(0.28 * s, 0.6, 0);
     pivot.rotation.z = 0.55 * s;
-    pivot.add(mesh(GEO.sphereLo, shirtM, 0, -0.08, 0, 0.085, 0.11, 0.085));
+    pivot.add(mesh(GEO.sphereLo, sleeveM, 0, -0.08, 0, 0.085, 0.11, 0.085));
     pivot.add(mesh(GEO.sphereLo, furM, 0, -0.2, 0, 0.075, 0.08, 0.075));
     body.add(pivot);
     return pivot;
@@ -139,6 +159,18 @@ export function makeVillager(look) {
     head.add(mesh(GEO.sphereLo, black, 0, -0.05, 0.49, 0.05, 0.035, 0.03));
     tailPivot.add(mesh(GEO.sphereLo, furM, 0, -0.02, 0, 0.08));
     mouth.position.set(0, -0.18, 0.47);
+  } else if (sp === 'hamster') {
+    // まるい耳・白い口もと・ふくらんだほっぺ
+    for (const s of [-1, 1]) {
+      head.add(mesh(GEO.sphereLo, furM, 0.3 * s, 0.34, -0.06, 0.12, 0.12, 0.07));
+      head.add(mesh(GEO.sphereLo, inner, 0.3 * s, 0.34, -0.01, 0.075, 0.075, 0.04));
+      head.add(mesh(GEO.sphereLo, light, 0.22 * s, -0.17, 0.3, 0.17, 0.13, 0.13));
+    }
+    head.add(mesh(GEO.sphereLo, light, 0, -0.1, 0.36, 0.14, 0.11, 0.1));
+    head.add(mesh(GEO.sphereLo, inner, 0, -0.04, 0.46, 0.04, 0.03, 0.025));
+    head.add(mesh(GEO.sphereLo, furDark, 0, 0.3, 0.3, 0.12, 0.05, 0.08));
+    tailPivot.add(mesh(GEO.sphereLo, furM, 0, -0.04, 0, 0.06));
+    mouth.position.set(0, -0.14, 0.45);
   } else if (sp === 'pig') {
     for (const s of [-1, 1]) {
       const ear = mesh(GEO.cone, furDark, 0.27 * s, 0.37, 0.05, 0.12, 0.18, 0.07);

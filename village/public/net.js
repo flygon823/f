@@ -25,7 +25,7 @@ class LocalWorld {
     if (fruitTree && this.fruitOf(i) > 0) {
       for (let s = 0; s < this.fruitOf(i); s++) drops.push({ id: `${tag}-${s}`, tree: i, slot: s, kind: 'fruit' });
     }
-    if (Math.random() < 0.12) drops.push({ id: `${tag}-b`, tree: i, slot: 3, kind: 'bell' });
+    if (Math.random() < 0.12) drops.push({ id: `${tag}-b`, tree: i, slot: 3, kind: 'coin' });
     return drops;
   }
   applyShake(i, drops) {
@@ -121,7 +121,7 @@ async function connectRoom(onMessage) {
   room.on('shake', (m) => {
     if (m.sameTab || !m.data || !Array.isArray(m.data.drops)) return;
     const i = Number(m.data.i);
-    const drops = m.data.drops.slice(0, 4).map((d) => ({ id: String(d.id), tree: i, slot: Number(d.slot) || 0, kind: d.kind === 'bell' ? 'bell' : 'fruit' }));
+    const drops = m.data.drops.slice(0, 4).map((d) => ({ id: String(d.id), tree: i, slot: Number(d.slot) || 0, kind: d.kind === 'coin' ? 'coin' : 'fruit' }));
     const fruit = local.applyShake(i, drops);
     onMessage({ t: 'shake', id: m.peer, i, fruit, drops });
   });

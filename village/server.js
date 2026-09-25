@@ -14,6 +14,7 @@ const FRUIT_PER_TREE = 3;
 const FRUIT_REGROW_MS = 3 * 60 * 1000;
 const DROP_TTL_MS = 5 * 60 * 1000;
 const SPECIES = ['cat', 'dog', 'rabbit', 'bear', 'pig'];
+const MAX_X = 1400;                // 家の中の部屋は x=1000 より先に並んでいる
 const EMOTES = ['wave', 'happy', 'sad', 'angry', 'wow', 'sleepy', 'love', 'music'];
 
 const MIME = {
@@ -126,7 +127,7 @@ wss.on('connection', (ws) => {
         ws,
         name: cleanText(msg.name, 12) || 'たびびと',
         look: cleanLook(msg.look),
-        x: num(msg.x, -70, 70), z: num(msg.z, -70, 70), r: num(msg.r, -10, 10), m: 0,
+        x: num(msg.x, -70, MAX_X), z: num(msg.z, -70, 70), r: num(msg.r, -10, 10), m: 0,
         dirty: false, lastChat: 0, lastEmote: 0, lastShake: 0,
       };
       players.set(me.id, me);
@@ -143,7 +144,7 @@ wss.on('connection', (ws) => {
 
     switch (msg.t) {
       case 'move':
-        me.x = num(msg.x, -70, 70, me.x);
+        me.x = num(msg.x, -70, MAX_X, me.x);
         me.z = num(msg.z, -70, 70, me.z);
         me.r = num(msg.r, -10, 10, me.r);
         me.m = idx(msg.m, 3);
@@ -173,7 +174,7 @@ wss.on('connection', (ws) => {
           t.fruit = 0;
           t.regrowAt = now + FRUIT_REGROW_MS;
         }
-        if (Math.random() < 0.12) fresh.push({ id: String(nextDrop++), tree: i, slot: 3, kind: 'bell', at: now });
+        if (Math.random() < 0.12) fresh.push({ id: String(nextDrop++), tree: i, slot: 3, kind: 'coin', at: now });
         for (const d of fresh) drops.set(d.id, d);
         broadcast({ t: 'shake', id: me.id, i, fruit: t.fruit, drops: fresh.map(publicDrop) });
         break;

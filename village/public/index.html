@@ -104,8 +104,8 @@
   #online.offline .dot { background: #e2574c; }
 
   #pocket { bottom: max(18px, env(safe-area-inset-bottom)); right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-  #bells { font-size: 15px; }
-  #bells b { font-size: 17px; }
+  #coins { font-size: 15px; }
+  #coins b { font-size: 17px; }
   #fruits { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 60vw; }
   #fruits:empty { display: none; }
   .fchip { height: 30px; padding: 0 10px 0 6px; font-size: 13px; }
@@ -166,6 +166,43 @@
     pointer-events: none; font-size: 15px; height: 42px; padding: 0 20px;
   }
   #toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- 地図 ---------- */
+  #mapbox {
+    top: calc(max(14px, env(safe-area-inset-top)) + 72px); left: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  }
+  #map {
+    display: block; width: 150px; height: 150px; border-radius: 22px; border: 4px solid var(--cream); background: #7fd0e6;
+    box-shadow: 0 5px 0 rgba(114, 93, 66, 0.16), 0 10px 22px rgba(40, 30, 10, 0.16); cursor: pointer;
+    transition: width .25s cubic-bezier(.3,1.3,.5,1), height .25s cubic-bezier(.3,1.3,.5,1);
+  }
+  #mapbox.big #map { width: min(360px, 78vw, 62vh); height: min(360px, 78vw, 62vh); }
+  #where { height: 28px; padding: 0 12px; font-size: 12px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ---------- 住民との会話 ---------- */
+  #dialog {
+    position: fixed; z-index: 12; left: 50%; bottom: max(26px, calc(env(safe-area-inset-bottom) + 12px)); width: min(620px, calc(100vw - 32px));
+    min-height: 118px; padding: 26px 30px 24px; border-radius: 44px / 38px; background: var(--cream); color: var(--ink);
+    font-size: 18px; line-height: 1.65; font-weight: 700; box-shadow: 0 6px 0 rgba(114, 93, 66, 0.14), 0 16px 34px rgba(40, 30, 10, 0.22);
+    transform: translate(-50%, 16px) scale(.96); opacity: 0; pointer-events: none; cursor: pointer;
+    transition: opacity .2s, transform .25s cubic-bezier(.3,1.5,.5,1);
+  }
+  #dialog.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  #dialog .who {
+    position: absolute; top: -18px; left: 30px; padding: 5px 18px 6px; border-radius: 999px; background: #f7c948; color: #6b4f14;
+    font-size: 16px; transform: rotate(-4deg); box-shadow: 0 3px 0 #dba92a;
+  }
+  #dialog .next {
+    position: absolute; right: 26px; bottom: 14px; width: 0; height: 0; border: 9px solid transparent; border-bottom: 0;
+    border-top: 12px solid var(--sun-dark); animation: bob .8s ease-in-out infinite; opacity: 0;
+  }
+  #dialog.done .next { opacity: 1; }
+  @keyframes bob { 50% { transform: translateY(4px); } }
+  body.talking #chatbar, body.talking #prompt { opacity: 0; pointer-events: none; }
+  .nametag.npc { background: rgba(214, 160, 30, 0.85); }
+
+  #fade { position: fixed; inset: 0; z-index: 14; background: #1f1712; opacity: 0; pointer-events: none; transition: opacity .25s; }
+  #fade.on { opacity: 1; }
 
   /* スマホ用 */
   #stick, #actBtn { display: none; }
@@ -270,6 +307,10 @@
     .passport .right { padding: 20px 18px 18px; }
     .logo { font-size: 27px; }
     #clock { left: 14px; }
+    #mapbox { top: calc(max(14px, env(safe-area-inset-top)) + 52px); left: 12px; }
+    #map { width: 104px; height: 104px; border-radius: 18px; border-width: 3px; }
+    #where { height: 24px; font-size: 11px; max-width: 150px; }
+    #dialog { font-size: 16px; padding: 24px 22px 22px; min-height: 104px; }
     #clock .t { font-size: 26px; }
     #clock .ap { font-size: 13px; }
     #clock .d { font-size: 12px; }
@@ -299,12 +340,15 @@
   <button class="pill iconbtn" id="seBtn" title="効果音">🔊</button>
   <button class="pill iconbtn" id="helpBtn" title="あそびかた・招待">？</button>
 </div>
+<div id="mapbox" class="hud"><canvas id="map" title="地図（M キーで大きく）"></canvas><div class="pill" id="where"></div></div>
 <div id="toast" class="hud pill"></div>
+<div id="dialog" role="dialog" aria-live="polite"><span class="who" id="dialogWho"></span><span id="dialogText"></span><i class="next"></i></div>
+<div id="fade"></div>
 <div id="prompt" class="hud pill"><kbd id="promptKey">E</kbd><span id="promptText"></span></div>
 <div id="log" class="hud"></div>
 <div id="pocket" class="hud">
   <div id="fruits"></div>
-  <div class="pill" id="bells">💰 <b id="bellCount">0</b> ベル</div>
+  <div class="pill" id="coins">🪙 <b id="coinCount">0</b> ポカ</div>
 </div>
 <div id="chatbar" class="hud">
   <form id="chatform" autocomplete="off">
@@ -324,7 +368,8 @@
     <div class="keys">
       <kbd>WASD・矢印</kbd><span>あるく（Shift でかける）</span>
       <kbd>クリック</kbd><span>その場所まであるく</span>
-      <kbd>E・スペース</kbd><span>木をゆらす／ひろう／読む</span>
+      <kbd>E・スペース</kbd><span>木をゆらす／ひろう／はなす／家に入る</span>
+      <kbd>M</kbd><span>地図を大きくする</span>
       <kbd>Enter</kbd><span>おしゃべり</span>
       <kbd>1〜8</kbd><span>リアクション</span>
       <kbd>ホイール</kbd><span>ズーム</span>
@@ -341,9 +386,11 @@
     <p>ようこそ、ぽかぽか島へ！</p>
     <ul>
       <li>実のなる木をゆらすと、果物が落ちてきます。3分ほどでまた実ります。</li>
-      <li>どの木でも、ゆらすと たまに ベルぶくろ が落ちてくるみたい。</li>
+      <li>どの木でも、ゆらすと たまに ポカぶくろ（島のお金）が落ちてくるみたい。</li>
       <li>空の色とBGMは、あなたの時計といっしょに変わります。</li>
       <li>川は橋をつかってわたってね。</li>
+      <li>家のドアに向かって歩くと、中に入れます。</li>
+      <li>ハムスターの こむぎ が島を おさんぽしています。話しかけてみてね。</li>
     </ul>
     <p id="boardNow"></p>
     <button class="close" type="button" data-close>とじる</button>

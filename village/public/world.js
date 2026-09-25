@@ -97,6 +97,7 @@ export function onBridge(x, z) {
 
 // ---------- 高さ ----------
 export function groundHeight(x, z) {
+  if (x > INDOOR_X) return 0;
   const d = islandSDF(x, z);
   let h;
   if (d < -7) h = 0;
@@ -109,6 +110,7 @@ export function groundHeight(x, z) {
   return h;
 }
 export function standHeight(x, z) {
+  if (x > INDOOR_X) return 0;
   const b = onBridge(x, z);
   if (b) return 0.2;
   return Math.max(groundHeight(x, z), WATER_Y - 0.08);
@@ -123,6 +125,55 @@ export const HOUSES = [
   { x: -32, z: -26, roof: '#9a6dd0', wall: '#f7f1e3', name: 'むらさき屋根の家' },
   { x: -33, z: 12, roof: '#f08a3c', wall: '#fff4dc', name: 'オレンジ屋根の家' },
 ].map((h) => ({ ...h, w: 5.2, d: 4.4 }));
+
+// ---------- 家の中 ----------
+// 部屋は島から遠く離れた場所に並べてある。座標がそのまま同期されるので、同じ家に入った人どうしは中で会える。
+export const INDOOR_X = 900;
+export const ROOM = { w: 9, d: 7.5 };
+export const ROOM_THEMES = [
+  { wall: '#f6e3c8', trim: '#d98f6f', floor: ['#c98f5a', '#b97e4c'], rug: '#e87a6a', bed: '#f3a6a0', accent: '#e2574c' },
+  { wall: '#dcecf7', trim: '#7fa8d6', floor: ['#d7b88e', '#c9a77a'], rug: '#7fb6e8', bed: '#9cc4ef', accent: '#4f8fd8' },
+  { wall: '#e6f2dc', trim: '#8fbf7a', floor: ['#b98d62', '#a97d54'], rug: '#9ed38a', bed: '#bfe3a8', accent: '#5bb363' },
+  { wall: '#fff2cc', trim: '#e0b347', floor: ['#d2a878', '#c4996a'], rug: '#f7d06b', bed: '#ffe29a', accent: '#f2b233' },
+  { wall: '#ece3f5', trim: '#a88fd0', floor: ['#bf9a73', '#ae8a64'], rug: '#b89ee6', bed: '#d3c2f2', accent: '#9a6dd0' },
+  { wall: '#fde7d6', trim: '#e9a070', floor: ['#c79363', '#b88355'], rug: '#f5a66b', bed: '#ffc9a3', accent: '#f08a3c' },
+];
+export const INTERIORS = HOUSES.map((h, i) => ({ i, x: INDOOR_X + 100 + i * 40, z: 0, house: h, theme: ROOM_THEMES[i % ROOM_THEMES.length] }));
+export function interiorAt(x) {
+  if (x <= INDOOR_X) return null;
+  let best = null, bd = 1e9;
+  for (const r of INTERIORS) { const d = Math.abs(x - r.x); if (d < bd) { bd = d; best = r; } }
+  return bd < 20 ? best : null;
+}
+// 家具（ぶつかり判定用。見た目は app.js が同じ配置で作る）: [x, z, 幅, 奥行き]（部屋の中心からの位置）
+export const FURNITURE = [
+  ['bed', -2.9, -2.3, 2.0, 2.6],
+  ['shelf', 0.6, -3.35, 2.4, 0.7],
+  ['table', 1.6, 0.4, 1.6, 1.6],
+  ['plant', 3.8, -3.1, 0.8, 0.8],
+  ['lamp', -1.2, -3.2, 0.6, 0.6],
+  ['chair', 1.6, 1.65, 0.7, 0.6],
+  ['sofa', -3.4, 1.0, 1.2, 2.2],
+];
+export const doorOf = (h) => ({ x: h.x, z: h.z + h.d / 2 + 0.55 });
+export const roomEntry = (r) => ({ x: r.x, z: r.z + ROOM.d / 2 - 1.1 });
+export function atRoomExit(x, z) {
+  const r = interiorAt(x);
+  return !!r && Math.abs(x - r.x) < 0.9 && z > r.z + ROOM.d / 2 - 0.45;
+}
+function roomWalkable(x, z, rad) {
+  const r = interiorAt(x);
+  if (!r) return false;
+  const lx = x - r.x, lz = z - r.z;
+  if (Math.abs(lx) > ROOM.w / 2 - 0.25 - rad || lz < -ROOM.d / 2 + 0.3 + rad) return false;
+  // 手前は出口マットのところだけ開いている
+  if (lz > ROOM.d / 2 - 0.35 - rad && Math.abs(lx) > 0.9) return false;
+  if (lz > ROOM.d / 2) return false;
+  for (const [, fx, fz, fw, fd] of FURNITURE) {
+    if (Math.abs(lx - fx) < fw / 2 + rad && Math.abs(lz - fz) < fd / 2 + rad) return false;
+  }
+  return true;
+}
 
 // 家の戸口から広場・橋へ伸びる土の道
 const door = (h) => [h.x, h.z + h.d / 2 + 0.8];
@@ -241,6 +292,7 @@ const CIRCLES = [
   ...LAMPS.map((l) => ({ x: l.x, z: l.z, r: 0.25 })),
 ];
 export function walkable(x, z, rad = 0.32) {
+  if (x > INDOOR_X) return roomWalkable(x, z, rad);
   if (onBridge(x, z)) return true;
   if (groundHeight(x, z) < WALK_MIN_H) return false;
   // 橋のたもとの手すり

@@ -3,9 +3,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   HALF, WATER_Y, RIVER_W, clamp, lerp, smoothstep, hashStr, mulberry32,
   islandSDF, riverDist, pondDist, groundHeight, standHeight, walkable, onBridge,
-  HOUSES, PATHS, BRIDGES, PLAZA, POND, PLACE, FRUITS, TOWN_TREE, BOARD, LAMPS, SPAWN,
+  HOUSES, PATHS, BRIDGES, PLAZA, POND, PLACE, FRUITS, TOWN_TREE, BOARD, LAMPS, SPAWN, pathDist,
+  INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit,
 } from './world.js';
-import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh } from './gfx.js';
+import { RESIDENT, residentPose, residentLines } from './resident.js';
+import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
 import { makeVillager, SPECIES, FUR, SHIRT } from './villager.js';
 import { Sound } from './audio.js';
 import { connect } from './net.js';
@@ -279,7 +281,7 @@ function buildWater() {
 // 木・家・橋・広場
 // =====================================================================
 const treeObjs = [];
-const dayNightMats = { windows: [], lamps: [] };
+const dayNightMats = { windows: [], lamps: [], inWindows: [] };
 
 function lumpyCanopy(group, parts, colors) {
   for (const [x, y, z, r, ci] of parts) {
@@ -612,7 +614,134 @@ function buildButterflies() {
 }
 
 // =====================================================================
-// 落ちた果物・ベルぶくろ
+// 家の中
+// =====================================================================
+function plankTexture(c1, c2) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const rnd = mulberry32(5);
+  for (let row = 0; row < 8; row++) {
+    let x = -rnd() * 120;
+    while (x < 256) {
+      const w = 90 + rnd() * 80;
+      g.fillStyle = rnd() < 0.5 ? c1 : c2;
+      g.fillRect(x, row * 32, w, 32);
+      g.fillStyle = 'rgba(80,50,25,0.35)';
+      g.fillRect(x, row * 32, 2, 32);
+      x += w;
+    }
+    g.fillStyle = 'rgba(80,50,25,0.3)';
+    g.fillRect(0, row * 32 + 30, 256, 2);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2.2, 2);
+  return tex;
+}
+
+function buildFurniture(kind, th) {
+  const g = new THREE.Group();
+  const wood = toon('#b98555'), woodDark = toon('#8f623b'), white = toon('#fbf8f0');
+  if (kind === 'bed') {
+    g.add(mesh(GEO.box, wood, 0, 0.25, 0, 2.0, 0.5, 2.6));
+    g.add(mesh(GEO.box, white, 0, 0.58, 0.05, 1.85, 0.2, 2.4));
+    g.add(mesh(GEO.box, toon(th.bed), 0, 0.72, 0.35, 1.9, 0.16, 1.75));
+    g.add(mesh(GEO.sphereLo, white, 0, 0.78, -0.85, 0.6, 0.14, 0.32));
+    g.add(mesh(GEO.box, woodDark, 0, 0.75, -1.3, 2.05, 1.5, 0.14));
+  } else if (kind === 'shelf') {
+    // 前があいた棚：背板・側板・天板と、段ごとの本
+    g.add(mesh(GEO.box, woodDark, 0, 0.9, -0.25, 2.4, 1.8, 0.1));
+    for (const sx of [-1, 1]) g.add(mesh(GEO.box, wood, sx * 1.15, 0.9, 0, 0.1, 1.8, 0.6));
+    g.add(mesh(GEO.box, wood, 0, 1.78, 0, 2.4, 0.08, 0.6));
+    const books = ['#e2574c', '#4f8fd8', '#f2b233', '#5bb363', '#9a6dd0', '#f08a3c', '#fbf8f0'];
+    for (const y of [0.35, 0.95, 1.5]) {
+      g.add(mesh(GEO.box, wood, 0, y - 0.22, 0, 2.2, 0.06, 0.58));
+      let x = -0.95;
+      for (let k = 0; k < 7 && x < 0.9; k++) {
+        const w = 0.14 + ((k * 7 + y * 10) % 3) * 0.04, h = 0.34 + ((k + y * 3) % 2) * 0.08;
+        g.add(mesh(GEO.box, toon(books[(k + Math.round(y * 3)) % books.length]), x + w / 2, y - 0.19 + h / 2, 0.05, w, h, 0.4));
+        x += w + 0.03;
+      }
+    }
+  } else if (kind === 'table') {
+    g.add(mesh(GEO.cyl, wood, 0, 0.72, 0, 0.8, 0.08, 0.8));
+    g.add(mesh(GEO.cyl, woodDark, 0, 0.36, 0, 0.1, 0.72, 0.1));
+    g.add(mesh(GEO.cyl, woodDark, 0, 0.03, 0, 0.4, 0.06, 0.4));
+    g.add(mesh(GEO.cyl, toon('#ffffff'), 0.25, 0.84, 0.1, 0.09, 0.16, 0.09));
+    g.add(mesh(GEO.cyl, toon(th.accent), -0.2, 0.9, -0.15, 0.1, 0.28, 0.1));
+    g.add(mesh(GEO.sphereLo, toon('#ffd23f'), -0.2, 1.1, -0.15, 0.1));
+  } else if (kind === 'plant') {
+    g.add(mesh(GEO.cyl, toon('#d98f6f'), 0, 0.3, 0, 0.3, 0.6, 0.3));
+    for (const [x, y, z, r] of [[0, 1.0, 0, 0.42], [0.2, 1.3, 0.1, 0.3], [-0.2, 1.25, -0.05, 0.32]]) {
+      g.add(mesh(GEO.blobby, toon('#5bb35a'), x, y, z, r));
+    }
+  } else if (kind === 'lamp') {
+    g.add(mesh(GEO.cyl, woodDark, 0, 0.04, 0, 0.25, 0.08, 0.25));
+    g.add(mesh(GEO.cyl, woodDark, 0, 0.8, 0, 0.04, 1.6, 0.04));
+    g.add(mesh(new THREE.CylinderGeometry(0.2, 0.35, 0.45, 16), basic('#fff1c4'), 0, 1.75, 0));
+  } else if (kind === 'chair') {
+    g.add(mesh(GEO.box, wood, 0, 0.45, 0, 0.62, 0.08, 0.55));
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(mesh(GEO.box, woodDark, sx * 0.25, 0.22, sz * 0.22, 0.07, 0.45, 0.07));
+    g.add(mesh(GEO.box, wood, 0, 0.85, 0.24, 0.62, 0.7, 0.07));
+  } else if (kind === 'sofa') {
+    const c = toon(th.accent);
+    g.add(mesh(GEO.box, c, 0, 0.3, 0, 1.1, 0.5, 2.2));
+    g.add(mesh(GEO.box, c, -0.45, 0.75, 0, 0.25, 0.7, 2.2));
+    for (const sz of [-1, 1]) g.add(mesh(GEO.box, c, 0, 0.62, sz * 1.02, 1.1, 0.35, 0.2));
+    for (const sz of [-0.5, 0.5]) g.add(mesh(GEO.sphereLo, toon('#fbf8f0'), 0.1, 0.65, sz, 0.35, 0.16, 0.42));
+  }
+  return g;
+}
+
+function buildInteriors() {
+  const H = 3.3, W = ROOM.w, D = ROOM.d;
+  for (const r of INTERIORS) {
+    const th = r.theme;
+    const g = new THREE.Group();
+    g.position.set(r.x, 0, r.z);
+    // 床と、そのまわりの台（ジオラマのような箱）
+    const floorMat = curvify(new THREE.MeshToonMaterial({ map: plankTexture(th.floor[0], th.floor[1]), gradientMap: GRADIENT }));
+    g.add(mesh(GEO.box, floorMat, 0, -0.1, 0, W + 0.4, 0.2, D + 0.4));
+    g.add(mesh(GEO.box, toon('#4a3526'), 0, -0.7, 0, W + 0.9, 1.0, D + 0.9));
+    const wall = toon(th.wall), trim = toon(th.trim);
+    g.add(mesh(GEO.box, wall, 0, H / 2, -D / 2 - 0.15, W + 0.6, H, 0.3));
+    for (const sx of [-1, 1]) g.add(mesh(GEO.box, wall, sx * (W / 2 + 0.15), H / 2, 0, 0.3, H, D + 0.6));
+    // 腰板と上のふち
+    g.add(mesh(GEO.box, trim, 0, 0.45, -D / 2 + 0.02, W, 0.9, 0.06));
+    for (const sx of [-1, 1]) g.add(mesh(GEO.box, trim, sx * (W / 2 - 0.02), 0.45, 0, 0.06, 0.9, D));
+    g.add(mesh(GEO.box, trim, 0, H + 0.05, -D / 2 - 0.15, W + 0.7, 0.14, 0.4));
+    for (const sx of [-1, 1]) g.add(mesh(GEO.box, trim, sx * (W / 2 + 0.15), H + 0.05, 0, 0.4, 0.14, D + 0.7));
+    // 窓（外の時間で色が変わる）
+    g.add(mesh(GEO.box, toon('#ffffff'), 2.4, 1.9, -D / 2 + 0.03, 1.6, 1.3, 0.08));
+    const pane = curvify(new THREE.MeshBasicMaterial({ color: '#bfe6f5' }));
+    dayNightMats.inWindows.push(pane);
+    g.add(mesh(GEO.box, pane, 2.4, 1.9, -D / 2 + 0.08, 1.35, 1.05, 0.04));
+    g.add(mesh(GEO.box, toon('#ffffff'), 2.4, 1.9, -D / 2 + 0.11, 0.07, 1.05, 0.03));
+    g.add(mesh(GEO.box, toon('#ffffff'), 2.4, 1.9, -D / 2 + 0.11, 1.35, 0.07, 0.03));
+    g.add(mesh(GEO.box, toon(th.accent), 2.4, 2.62, -D / 2 + 0.12, 1.8, 0.2, 0.12));
+    // 壁の絵
+    g.add(mesh(GEO.box, toon('#8f623b'), -1.9, 2.1, -D / 2 + 0.04, 1.0, 0.8, 0.06));
+    g.add(mesh(GEO.box, basic('#9ed8f0'), -1.9, 2.15, -D / 2 + 0.08, 0.84, 0.64, 0.02));
+    g.add(mesh(GEO.box, basic('#7cc35a'), -1.9, 1.94, -D / 2 + 0.1, 0.84, 0.22, 0.02));
+    // じゅうたん・出口のマット
+    g.add(mesh(GEO.cyl, toon(th.rug), 0.6, 0.02, 0.6, 2.2, 0.04, 1.6));
+    g.add(mesh(GEO.cyl, toon('#ffffff', { transparent: true, opacity: 0.35 }), 0.6, 0.045, 0.6, 1.7, 0.02, 1.2));
+    g.add(mesh(GEO.box, toon('#b0763f'), 0, 0.02, D / 2 - 0.35, 1.7, 0.04, 0.6));
+    for (const [kind, fx, fz] of FURNITURE) {
+      const f = buildFurniture(kind, th);
+      f.position.set(fx, 0, fz);
+      if (kind === 'sofa') f.rotation.y = 0;
+      if (kind === 'chair') f.rotation.y = Math.PI;
+      g.add(f);
+    }
+    scene.add(g);
+  }
+}
+
+// =====================================================================
+// 落ちた果物・ポカぶくろ
 // =====================================================================
 const drops = new Map(); // id -> { obj, kind, tree, t0 }
 function dropSpot(treeIndex, slot) {
@@ -630,7 +759,7 @@ function makeDropObj(kind, treeIndex) {
   const g = new THREE.Group();
   const inner = new THREE.Group();
   g.add(inner);
-  if (kind === 'bell') {
+  if (kind === 'coin') {
     inner.add(mesh(GEO.sphereLo, toon('#efdcaa'), 0, 0.3, 0, 0.32, 0.3, 0.3));
     inner.add(mesh(GEO.cyl, toon('#d8bf85'), 0, 0.6, 0, 0.1, 0.12, 0.1));
     inner.add(mesh(GEO.sphereLo, toon('#efdcaa'), 0, 0.72, 0, 0.14, 0.08, 0.14));
@@ -674,7 +803,7 @@ let myId = null;
 
 function tagColor(name) { return TAG_COLORS[hashStr(name) % TAG_COLORS.length]; }
 
-function createPerson(id, name, look, x, z, r, isMe) {
+function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   const v = makeVillager(look);
   v.root.scale.setScalar(1.2);
   v.root.position.set(x, standHeight(x, z), z);
@@ -683,7 +812,7 @@ function createPerson(id, name, look, x, z, r, isMe) {
   const wrap = document.createElement('div');
   wrap.className = 'tagwrap';
   const tag = document.createElement('div');
-  tag.className = 'nametag' + (isMe ? ' me' : '');
+  tag.className = 'nametag' + (isMe ? ' me' : npc ? ' npc' : '');
   tag.textContent = name;
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
@@ -703,7 +832,7 @@ function createPerson(id, name, look, x, z, r, isMe) {
     sayUntil: 0, emoteUntil: 0, typer: null,
     voice: (VOICE[look.s] || 1) * (0.9 + (hashStr(name) % 20) / 100),
   };
-  people.set(id, p);
+  if (!npc) people.set(id, p);
   return p;
 }
 function removePerson(id) {
@@ -715,7 +844,7 @@ function removePerson(id) {
   people.delete(id);
 }
 
-function say(p, text) {
+function say(p, text, log = true) {
   clearInterval(p.typer);
   p.text.textContent = '';
   p.bubble.classList.add('on');
@@ -730,7 +859,7 @@ function say(p, text) {
   p.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
   const dist = me ? Math.hypot(p.x - me.x, p.z - me.z) : 0;
   sound.speak(text, p.voice, clamp(1 - dist / 30, 0, 1));
-  addLog(p.name, text, tagColor(p.name));
+  if (log) addLog(p.name, text, tagColor(p.name));
 }
 
 function doEmote(p, key) {
@@ -773,11 +902,13 @@ function toast(text) {
 }
 
 // =====================================================================
-// ポケット（果物とベルは、この端末に保存）
+// ポケット（果物とポカは、この端末に保存）
 // =====================================================================
-const pocket = store.get('pocket', { fruit: {}, bells: 0 });
+const pocket = store.get('pocket', { fruit: {}, coins: 0 });
+if (!Number.isFinite(pocket.coins)) pocket.coins = Number(pocket.bells) || 0;
+delete pocket.bells;
 function renderPocket() {
-  $('#bellCount').textContent = pocket.bells.toLocaleString('ja-JP');
+  $('#coinCount').textContent = pocket.coins.toLocaleString('ja-JP');
   const box = $('#fruits');
   box.textContent = '';
   for (const [k, n] of Object.entries(pocket.fruit)) {
@@ -862,11 +993,11 @@ function handle(msg) {
       removeDrop(msg.id);
       break;
     case 'got': {
-      if (msg.kind === 'bell') {
+      if (msg.kind === 'coin') {
         const amt = [100, 200, 300, 500, 1000][Math.floor(Math.random() * 5)];
-        pocket.bells += amt;
-        toast(`${amt.toLocaleString('ja-JP')} ベルを手に入れた！`);
-        sound.bells();
+        pocket.coins += amt;
+        toast(`${amt.toLocaleString('ja-JP')} ポカを手に入れた！`);
+        sound.coins();
       } else {
         const key = PLACE.trees[msg.tree]?.fruit || 'peach';
         pocket.fruit[key] = (pocket.fruit[key] || 0) + 1;
@@ -917,6 +1048,11 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (!me) return;
+  if (dialog.open) {
+    if (['e', 'E', ' ', 'z', 'Z', 'Enter'].includes(e.key)) { e.preventDefault(); if (!e.repeat) advanceDialog(); }
+    return;
+  }
+  if (e.key === 'm' || e.key === 'M') { toggleMap(); return; }
   if (e.key === 'Enter') { e.preventDefault(); chatInput.focus(); return; }
   if (e.key === 'Escape') { closeModals(); return; }
   if (/^[1-8]$/.test(e.key)) { sendEmote(EMOTES[+e.key - 1].key); return; }
@@ -974,7 +1110,7 @@ function moveStick(e) {
   knob.style.transform = `translate(${x * 34}px, ${y * 34}px)`;
   clickTarget = null;
 }
-$('#actBtn').addEventListener('click', () => action());
+$('#actBtn').addEventListener('click', () => (dialog.open ? advanceDialog() : action()));
 let pinch = null;
 renderer.domElement.addEventListener('touchstart', (e) => {
   if (e.touches.length === 2) pinch = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), z: zoom };
@@ -1058,13 +1194,23 @@ $('#copyBtn').addEventListener('click', async () => {
 // アクション：ひろう／ゆらす／読む
 // =====================================================================
 function findTarget() {
-  if (!me) return null;
+  if (!me || transitioning) return null;
+  const room = interiorAt(me.x);
+  if (room) {
+    if (Math.abs(me.x - room.x) < 1.2 && me.z > room.z + ROOM.d / 2 - 1.3) return { type: 'exit' };
+    return null;
+  }
   let best = null, bd = 1.5;
   for (const d of drops.values()) {
     const dist = Math.hypot(d.x - me.x, d.z - me.z);
     if (dist < bd) { bd = dist; best = { type: 'pick', d }; }
   }
   if (best) return best;
+  if (resident && Math.hypot(resident.x - me.x, resident.z - me.z) < 2.0) return { type: 'talk' };
+  for (let i = 0; i < HOUSES.length; i++) {
+    const d = doorOf(HOUSES[i]);
+    if (Math.abs(me.x - d.x) < 1.0 && Math.abs(me.z - d.z) < 1.1) return { type: 'door', i };
+  }
   const fx = Math.sin(me.r), fz = Math.cos(me.r);
   let bs = 99;
   for (const o of treeObjs) {
@@ -1084,6 +1230,9 @@ function action() {
   if (!me || !net) return;
   const t = findTarget();
   if (!t) { me.v.hop(); return; }
+  if (t.type === 'door') { enterHouse(t.i); return; }
+  if (t.type === 'exit') { exitHouse(); return; }
+  if (t.type === 'talk') { startTalk(); return; }
   if (t.type === 'pick') {
     net.send({ t: 'pick', id: t.d.id });
     me.v.hop();
@@ -1104,12 +1253,233 @@ $('#promptKey').textContent = isTouch ? 'A' : 'E';
 let lastPrompt = null;
 function updatePrompt() {
   const t = findTarget();
-  const label = !t ? '' : t.type === 'pick' ? 'ひろう' : t.type === 'board' ? 'けいじばんを読む' : t.o.t.fruit && t.o.fruit > 0 ? '木をゆらす' : '木をゆらしてみる';
+  const label = !t ? '' : {
+    pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
+  }[t.type] || (t.o.t.fruit && t.o.fruit > 0 ? '木をゆらす' : '木をゆらしてみる');
   if (label === lastPrompt) return;
   lastPrompt = label;
   $('#prompt').classList.toggle('on', !!label);
   if (label) $('#promptText').textContent = label;
 }
+
+// =====================================================================
+// 住民との会話
+// =====================================================================
+let resident = null;
+let talkCount = 0;
+const dialog = { open: false, lines: [], idx: 0, typing: null, full: '' };
+function startTalk() {
+  if (!resident || dialog.open) return;
+  dialog.open = true;
+  dialog.lines = residentLines(me.name, currentHour(), talkCount++);
+  dialog.idx = 0;
+  keys.clear(); clickTarget = null; stickVec = { x: 0, y: 0 };
+  me.r = Math.atan2(resident.x - me.x, resident.z - me.z);
+  $('#dialogWho').textContent = RESIDENT.name;
+  $('#dialog').classList.add('on');
+  document.body.classList.add('talking');
+  showLine();
+}
+function showLine() {
+  const el = $('#dialogText');
+  const text = dialog.lines[dialog.idx];
+  const chars = [...text];
+  dialog.full = text;
+  el.textContent = '';
+  $('#dialog').classList.remove('done');
+  clearInterval(dialog.typing);
+  let i = 0;
+  dialog.typing = setInterval(() => {
+    el.textContent += chars[i++] || '';
+    if (i >= chars.length) { clearInterval(dialog.typing); dialog.typing = null; $('#dialog').classList.add('done'); }
+  }, 50);
+  sound.speak(text, RESIDENT.voice, 1);
+  resident.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
+}
+function advanceDialog() {
+  if (dialog.typing) {
+    clearInterval(dialog.typing); dialog.typing = null;
+    $('#dialogText').textContent = dialog.full;
+    $('#dialog').classList.add('done');
+    return;
+  }
+  dialog.idx++;
+  if (dialog.idx < dialog.lines.length) { showLine(); return; }
+  dialog.open = false;
+  $('#dialog').classList.remove('on');
+  document.body.classList.remove('talking');
+  resident.v.hop();
+}
+$('#dialog').addEventListener('click', () => advanceDialog());
+
+// ときどき、ひとりごと（近くにいる人にだけ聞こえる）
+const MUTTER = ['ふんふん♪', 'いい天気だもち〜', 'おなか すいたもち…', 'ひまわりのたね、どこに しまったっけ', 'あっ、ちょうちょだもち！'];
+let mutterAt = performance.now() / 1000 + 20;
+
+// =====================================================================
+// 家に入る・出る
+// =====================================================================
+let transitioning = false;
+const INDOOR_BG = new THREE.Color('#1f1712');
+function fadeThen(fn) {
+  transitioning = true;
+  keys.clear(); clickTarget = null;
+  $('#fade').classList.add('on');
+  setTimeout(() => {
+    fn();
+    updateEnvironment();
+    const goal = cameraGoal(0);
+    camPos.copy(goal.pos); camLook.copy(goal.look);
+    lastSent = '';
+    setTimeout(() => { $('#fade').classList.remove('on'); transitioning = false; }, 150);
+  }, 280);
+}
+function enterHouse(i) {
+  if (transitioning || !me) return;
+  sound.door();
+  fadeThen(() => {
+    const r = INTERIORS[i];
+    const e = roomEntry(r);
+    me.x = e.x; me.z = e.z; me.r = Math.PI;
+  });
+}
+function exitHouse() {
+  if (transitioning || !me) return;
+  const r = interiorAt(me.x);
+  if (!r) return;
+  sound.door();
+  fadeThen(() => {
+    const d = doorOf(r.house);
+    me.x = d.x; me.z = d.z + 0.5; me.r = 0;
+  });
+}
+function updateEnvironment() {
+  const inside = !!(me && interiorAt(me.x));
+  sky.visible = !inside;
+  scene.background = inside ? INDOOR_BG : null;
+  CURVE.uCurve.value = inside ? 0.0012 : 0.0055;
+  applyDayNight();
+}
+
+// =====================================================================
+// 地図
+// =====================================================================
+const MAP_E = 54; // 地図にうつす範囲（±）
+const mapCanvas = $('#map');
+const mapCtx = mapCanvas.getContext('2d');
+let mapBase = null;
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h) { this.rect(x, y, w, h); };
+}
+function buildMapBase() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const img = g.createImageData(S, S);
+  const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const SEA = hex('#7fd0e6'), RIVER = hex('#67bfe2'), SAND = hex('#f3e5b8'), GRASS = hex('#95d27a'), GRASS2 = hex('#86c86c'), PATH = hex('#e2cb96');
+  for (let py = 0; py < S; py++) for (let px = 0; px < S; px++) {
+    const x = -MAP_E + ((px + 0.5) / S) * 2 * MAP_E, z = -MAP_E + ((py + 0.5) / S) * 2 * MAP_E;
+    const h = groundHeight(x, z), d = islandSDF(x, z);
+    let c2;
+    if (h < WATER_Y) c2 = d > -7.5 ? SEA : RIVER;
+    else if (d > -7.4) c2 = SAND;
+    else if (pathDist(x, z) < 1.1) c2 = PATH;
+    else c2 = z < -22 ? GRASS2 : GRASS;
+    const o = (py * S + px) * 4;
+    img.data[o] = c2[0]; img.data[o + 1] = c2[1]; img.data[o + 2] = c2[2]; img.data[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const k = S / (2 * MAP_E);
+  const P = (x, z) => [(x + MAP_E) * k, (z + MAP_E) * k];
+  // 広場
+  g.fillStyle = '#efe4c9';
+  g.beginPath(); g.arc(...P(PLAZA.x, PLAZA.z), PLAZA.r * k, 0, 7); g.fill();
+  g.fillStyle = '#4c9a47';
+  g.beginPath(); g.arc(...P(TOWN_TREE.x, TOWN_TREE.z), 2.2 * k, 0, 7); g.fill();
+  // 橋
+  g.fillStyle = '#b3824f';
+  for (const b of BRIDGES) {
+    g.save(); g.translate(...P(b.x, b.z)); g.rotate(-b.rot);
+    g.fillRect(-b.len / 2 * k, -b.wid / 2 * k, b.len * k, b.wid * k);
+    g.restore();
+  }
+  // 家
+  for (const h of HOUSES) {
+    const [cx, cy] = P(h.x, h.z);
+    const w = (h.w + 1) * k, dd = (h.d + 1) * k;
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.roundRect(cx - w / 2 - 2, cy - dd / 2 - 2, w + 4, dd + 4, 5); g.fill();
+    g.fillStyle = h.roof;
+    g.beginPath(); g.roundRect(cx - w / 2, cy - dd / 2, w, dd, 4); g.fill();
+  }
+  mapBase = c;
+}
+function mapPos(x, z) {
+  // 家の中にいる人は、その家の場所に出す
+  const r = interiorAt(x);
+  if (r) { const d = doorOf(r.house); x = d.x; z = d.z - 1.5; }
+  return [(x + MAP_E) / (2 * MAP_E), (z + MAP_E) / (2 * MAP_E)];
+}
+function drawMap() {
+  const box = $('#mapbox');
+  const cssW = mapCanvas.clientWidth;
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  if (mapCanvas.width !== Math.round(cssW * dpr)) { mapCanvas.width = mapCanvas.height = Math.round(cssW * dpr); }
+  const W = mapCanvas.width;
+  const g = mapCtx;
+  g.clearRect(0, 0, W, W);
+  g.imageSmoothingEnabled = true;
+  if (mapBase) g.drawImage(mapBase, 0, 0, W, W);
+  const dot = (x, z, color, rad) => {
+    const [u, v] = mapPos(x, z);
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(u * W, v * W, rad + 2 * dpr, 0, 7); g.fill();
+    g.fillStyle = color;
+    g.beginPath(); g.arc(u * W, v * W, rad, 0, 7); g.fill();
+  };
+  const big = box.classList.contains('big');
+  const R = (big ? 5 : 3.2) * dpr;
+  for (const p of people.values()) if (!p.isMe) dot(p.x, p.z, tagColor(p.name), R);
+  if (resident) dot(resident.x, resident.z, '#e2a91e', R);
+  if (me) {
+    const [u, v] = mapPos(me.x, me.z);
+    const t = performance.now() / 1000;
+    g.fillStyle = 'rgba(31,195,179,0.25)';
+    g.beginPath(); g.arc(u * W, v * W, R * (2.2 + Math.sin(t * 4) * 0.4), 0, 7); g.fill();
+    g.save();
+    g.translate(u * W, v * W);
+    g.rotate(Math.atan2(Math.cos(me.r), Math.sin(me.r)));
+    const a = R * 1.9;
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(a + 3 * dpr, 0); g.lineTo(-a * 0.8 - 2 * dpr, a * 0.9 + 2 * dpr); g.lineTo(-a * 0.35, 0); g.lineTo(-a * 0.8 - 2 * dpr, -a * 0.9 - 2 * dpr); g.closePath(); g.fill();
+    g.fillStyle = '#1fc3b3';
+    g.beginPath(); g.moveTo(a, 0); g.lineTo(-a * 0.8, a * 0.9); g.lineTo(-a * 0.35, 0); g.lineTo(-a * 0.8, -a * 0.9); g.closePath(); g.fill();
+    g.restore();
+  }
+}
+function whereName(x, z) {
+  const r = interiorAt(x);
+  if (r) return `${r.house.name}の中`;
+  if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.r + 1) return 'ひろば';
+  if (onBridge(x, z)) return '橋の上';
+  for (const h of HOUSES) if (Math.abs(x - h.x) < h.w / 2 + 2.5 && Math.abs(z - h.z) < h.d / 2 + 3) return `${h.name}のまえ`;
+  if (pondDist(x, z) < 3) return '池のほとり';
+  if (riverDist(x, z) < RIVER_W + 3) return '川べり';
+  if (islandSDF(x, z) > -7.4) return '砂浜';
+  const ns = z < -15 ? '北' : z > 15 ? '南' : '';
+  const ew = x < -15 ? '西' : x > 15 ? '東' : '';
+  return ns || ew ? `島の${ns}${ew}のほう` : '島のまんなか';
+}
+let lastWhere = '';
+function updateWhere() {
+  if (!me) return;
+  const w = whereName(me.x, me.z);
+  if (w !== lastWhere) { lastWhere = w; $('#where').textContent = `📍 ${w}`; }
+}
+function toggleMap() { $('#mapbox').classList.toggle('big'); sound.click(); }
+mapCanvas.addEventListener('click', toggleMap);
 
 // =====================================================================
 // 昼と夜
@@ -1128,6 +1498,8 @@ const SKY_KEYS = [
 const cA = new THREE.Color(), cB = new THREE.Color();
 const WINDOW_DAY = new THREE.Color('#bfe6f5'), WINDOW_NIGHT = new THREE.Color('#ffd98a');
 const LAMP_DAY = new THREE.Color('#f6eed2'), LAMP_NIGHT = new THREE.Color('#ffe08a');
+const IN_WINDOW_NIGHT = new THREE.Color('#2b3f73');
+const sunOffset = new THREE.Vector3(0, 34, 18);
 let nightAmt = 0;
 const hourOverride = (() => { const h = parseFloat(new URLSearchParams(location.search).get('hour')); return Number.isFinite(h) ? h % 24 : null; })();
 function currentHour() {
@@ -1156,11 +1528,19 @@ function applyDayNight() {
   sky.material.uniforms.night.value = nightAmt;
   for (const m of dayNightMats.windows) m.color.copy(WINDOW_DAY).lerp(WINDOW_NIGHT, nightAmt);
   for (const m of dayNightMats.lamps) m.color.copy(LAMP_DAY).lerp(LAMP_NIGHT, nightAmt);
+  for (const m of dayNightMats.inWindows) m.color.copy(WINDOW_DAY).lerp(IN_WINDOW_NIGHT, nightAmt);
   // 太陽は東から西へ
   const dayT = clamp((h - 6) / 12, 0, 1);
   const ang = lerp(-1.1, 1.1, dayT);
-  sun.position.set(Math.sin(ang) * 30, 34, 18);
-  document.body.style.background = '#' + sky.material.uniforms.bot.value.getHexString();
+  sunOffset.set(Math.sin(ang) * 30, 34, 18);
+  if (me && interiorAt(me.x)) {
+    // 家の中は いつも あかるい
+    hemi.color.set('#fff8ee'); hemi.groundColor.set('#b89a7a'); hemi.intensity = 1.7;
+    sun.color.set('#fff0dc'); sun.intensity = 1.5;
+    sunOffset.set(-8, 30, 20);
+    scene.fog.color.copy(INDOOR_BG);
+  }
+  document.body.style.background = '#' + scene.fog.color.getHexString();
 }
 
 const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
@@ -1180,6 +1560,7 @@ const clock = new THREE.Clock();
 const tmpV = new THREE.Vector3();
 let sendTimer = 0, lastSent = '';
 let stepDist = 0;
+let mapTick = 0;
 const camPos = new THREE.Vector3(SPAWN.x, 14, SPAWN.z + 16);
 const camLook = new THREE.Vector3(SPAWN.x, 0, SPAWN.z);
 
@@ -1189,6 +1570,7 @@ function angleLerp(a, b, t) {
 }
 
 function moveMe(dt) {
+  if (transitioning || dialog.open) { me.speed = 0; return; }
   let ix = 0, iz = 0, run = keys.has('ShiftLeft') || keys.has('ShiftRight');
   if (keys.has('KeyW') || keys.has('ArrowUp')) iz -= 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) iz += 1;
@@ -1220,11 +1602,37 @@ function moveMe(dt) {
   }
   me.speed = moved / Math.max(dt, 1e-4);
   stepDist += moved;
+  const room = interiorAt(me.x);
   if (stepDist > (me.speed > 5 ? 1.25 : 0.95)) {
     stepDist = 0;
-    const sand = islandSDF(me.x, me.z) > -7.4;
-    sound.step(0.9, sand);
+    sound.step(0.9, room ? 'wood' : onBridge(me.x, me.z) ? 'wood' : islandSDF(me.x, me.z) > -7.4 ? 'sand' : 'grass');
   }
+  // ドアに向かって歩くと家に入り、出口のマットで下へ歩くと外に出る
+  if (speed > 0 && !room && iz < -0.5) {
+    for (let i = 0; i < HOUSES.length; i++) {
+      const h = HOUSES[i];
+      if (Math.abs(me.x - h.x) < 0.7 && me.z - (h.z + h.d / 2) < 0.45) { enterHouse(i); break; }
+    }
+  }
+  if (speed > 0 && room && iz > 0.5 && atRoomExit(me.x, me.z)) exitHouse();
+}
+
+function cameraGoal(now) {
+  const portrait = camera.aspect < 1 ? 1 + (1 - camera.aspect) * 0.55 : 1; // 縦長の画面では少し引く
+  const room = me ? interiorAt(me.x) : null;
+  if (room) {
+    const t = new THREE.Vector3(room.x + (me.x - room.x) * 0.35, 0, room.z + (me.z - room.z) * 0.3);
+    const zi = clamp(zoom, 0.8, 1.2) * portrait;
+    return { pos: t.clone().add(new THREE.Vector3(0, 9.2 * zi, 11.5 * zi)), look: t.clone().add(new THREE.Vector3(0, 0.4, -0.6)) };
+  }
+  const focus = me || { x: SPAWN.x, z: SPAWN.z };
+  const fy = me ? standHeight(me.x, me.z) : 0;
+  const idle = me ? 0 : now * 0.05;
+  const target = new THREE.Vector3(focus.x + Math.sin(idle) * 6, fy, focus.z + Math.cos(idle * 0.7) * 3);
+  return {
+    pos: target.clone().add(new THREE.Vector3(0, 10 * zoom * portrait, 18 * zoom * portrait)),
+    look: target.clone().add(new THREE.Vector3(0, 1.1, -2.2)),
+  };
 }
 
 function project(x, y, z) {
@@ -1249,24 +1657,36 @@ function frame() {
   }
 
   // カメラ
-  const focus = me || { x: SPAWN.x, z: SPAWN.z };
-  const fy = me ? standHeight(me.x, me.z) : 0;
-  const idle = me ? 0 : now * 0.05;
-  const target = new THREE.Vector3(focus.x + Math.sin(idle) * 6, fy, focus.z + Math.cos(idle * 0.7) * 3);
-  const portrait = camera.aspect < 1 ? 1 + (1 - camera.aspect) * 0.55 : 1; // 縦長の画面では少し引く
-  const want = target.clone().add(new THREE.Vector3(0, 10 * zoom * portrait, 18 * zoom * portrait));
+  const goal = cameraGoal(now);
   const ck = 1 - Math.exp(-dt * 5);
-  camPos.lerp(want, ck);
-  camLook.lerp(target.clone().add(new THREE.Vector3(0, 1.1, -2.2)), ck);
+  camPos.lerp(goal.pos, ck);
+  camLook.lerp(goal.look, ck);
   camera.position.copy(camPos);
   camera.lookAt(camLook);
   CURVE.uCenterZ.value = camLook.z;
   sky.position.copy(camera.position);
   sun.target.position.copy(camLook);
+  sun.position.copy(camLook).add(sunOffset);
   camera.updateMatrixWorld();
 
+  // 住民
+  if (resident) {
+    if (dialog.open) {
+      resident.tx = resident.x; resident.tz = resident.z;
+      resident.tr = Math.atan2(me.x - resident.x, me.z - resident.z);
+    } else {
+      const pose = residentPose();
+      resident.tx = pose.x; resident.tz = pose.z; resident.tr = pose.r;
+      if (me && now > mutterAt) {
+        mutterAt = now + 30 + Math.random() * 40;
+        if (Math.hypot(resident.x - me.x, resident.z - me.z) < 12) say(resident, MUTTER[Math.floor(Math.random() * MUTTER.length)], false);
+      }
+    }
+  }
+  if (me && (mapTick -= dt) <= 0) { mapTick = 0.1; drawMap(); updateWhere(); }
+
   // 人の動き
-  for (const p of people.values()) {
+  for (const p of (resident ? [...people.values(), resident] : people.values())) {
     if (!p.isMe) {
       const ox = p.x, oz = p.z;
       if (Math.hypot(p.tx - p.x, p.tz - p.z) > 10) { p.x = p.tx; p.z = p.tz; }
@@ -1451,6 +1871,7 @@ async function enterIsland() {
   for (const m of pending.splice(0)) handle(m);
   net.send({ t: 'join', name, look, x: sx, z: sz, r: 0 });
   $('#join').classList.add('hide');
+  updateEnvironment();
   updateOnline();
   renderPocket();
   addLog(null, net.mode === 'solo'
@@ -1473,6 +1894,13 @@ buildPlazaProps();
 buildRocks();
 buildFlowers();
 buildButterflies();
+buildInteriors();
+buildMapBase();
+{
+  const pose = residentPose();
+  resident = createPerson(RESIDENT.id, RESIDENT.name, RESIDENT.look, pose.x, pose.z, pose.r, false, true);
+  resident.voice = RESIDENT.voice;
+}
 applyDayNight();
 updateClock();
 setInterval(() => { applyDayNight(); updateClock(); }, 5000);
@@ -1480,4 +1908,4 @@ buildChoices();
 setupPreview();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; } };
+window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x) };
