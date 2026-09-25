@@ -4,7 +4,7 @@ import {
   HALF, WATER_Y, RIVER_W, clamp, lerp, smoothstep, hashStr, mulberry32,
   islandSDF, riverDist, pondDist, groundHeight, standHeight, walkable, onBridge,
   HOUSES, PATHS, BRIDGES, PLAZA, POND, PLACE, FRUITS, TOWN_TREE, BOARD, LAMPS, SPAWN, pathDist,
-  INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit,
+  INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit, seatsNear, standSpot,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
@@ -733,7 +733,6 @@ function buildInteriors() {
       const f = buildFurniture(kind, th);
       f.position.set(fx, 0, fz);
       if (kind === 'sofa') f.rotation.y = 0;
-      if (kind === 'chair') f.rotation.y = Math.PI;
       g.add(f);
     }
     scene.add(g);
@@ -747,9 +746,10 @@ const drops = new Map(); // id -> { obj, kind, tree, t0 }
 function dropSpot(treeIndex, slot) {
   const t = PLACE.trees[treeIndex];
   if (!t) return { x: SPAWN.x, z: SPAWN.z };
+  // 手前（カメラ側）に落ちるようにする。木の奥だと葉にかくれて見えないため
   for (let k = 0; k < 12; k++) {
-    const a = treeIndex * 2.4 + slot * 2.1 + k * 0.53;
-    const r = 1.55 + (k > 6 ? 0.6 : 0);
+    const a = Math.PI * (0.22 + slot * 0.19) + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.22;
+    const r = 1.7 + (k > 6 ? 0.5 : 0);
     const x = t.x + Math.cos(a) * r, z = t.z + Math.sin(a) * r;
     if (walkable(x, z, 0.05)) return { x, z };
   }
@@ -936,7 +936,7 @@ function handle(msg) {
       myId = msg.id;
       me.id = myId;
       people.set(myId, me);
-      for (const p of msg.players || []) if (!people.has(p.id)) createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false);
+      for (const p of msg.players || []) if (!people.has(p.id)) createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false).m = p.m;
       for (const [i, n] of msg.world?.trees || []) setTreeFruit(i, n);
       for (const d of msg.world?.drops || []) addDrop(d, false);
       updateOnline();
@@ -944,7 +944,7 @@ function handle(msg) {
     }
     case 'join':
       if (!people.has(msg.p.id)) {
-        createPerson(msg.p.id, msg.p.name, msg.p.look, msg.p.x, msg.p.z, msg.p.r, false);
+        createPerson(msg.p.id, msg.p.name, msg.p.look, msg.p.x, msg.p.z, msg.p.r, false).m = msg.p.m;
         addLog(null, `${msg.p.name} さんが島にやってきました`);
         updateOnline();
       }
@@ -959,10 +959,10 @@ function handle(msg) {
       break;
     }
     case 'state':
-      for (const [id, x, z, r] of msg.ps) {
+      for (const [id, x, z, r, m] of msg.ps) {
         const p = people.get(id);
         if (!p || p.isMe) continue;
-        p.tx = x; p.tz = z; p.tr = r;
+        p.tx = x; p.tz = z; p.tr = r; p.m = m;
       }
       break;
     case 'chat': {
@@ -1072,6 +1072,23 @@ $('#chatform').addEventListener('submit', (e) => {
   chatInput.blur();
 });
 
+// 落ちている果物の近くをクリック／タップしたら、そこまで歩いて拾う
+function setClickTarget(p) {
+  let best = null, bd = 1.3;
+  for (const d of drops.values()) {
+    const dist = Math.hypot(d.x - p.x, d.z - p.z);
+    if (dist < bd) { bd = dist; best = d; }
+  }
+  clickTarget = best ? { x: best.x, z: best.z, pickId: best.id } : p;
+}
+const pickRequested = new Set();
+function requestPick(id) {
+  if (pickRequested.has(id) || !net) return;
+  pickRequested.add(id);
+  setTimeout(() => pickRequested.delete(id), 3000);
+  net.send({ t: 'pick', id });
+}
+
 const raycaster = new THREE.Raycaster();
 function pickGround(cx, cy) {
   const ndc = new THREE.Vector2((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
@@ -1087,7 +1104,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   closeEmotes();
   if (!me || e.pointerType === 'touch' || e.button !== 0) return;
   const p = pickGround(e.clientX, e.clientY);
-  if (p) clickTarget = p;
+  if (p) setClickTarget(p);
 });
 renderer.domElement.addEventListener('wheel', (e) => {
   zoom = clamp(zoom * (e.deltaY > 0 ? 1.08 : 0.93), 0.6, 1.6);
@@ -1128,7 +1145,7 @@ renderer.domElement.addEventListener('touchend', (e) => {
 renderer.domElement.addEventListener('click', (e) => {
   if (!me || !isTouch) return;
   const p = pickGround(e.clientX, e.clientY);
-  if (p) clickTarget = p;
+  if (p) setClickTarget(p);
 });
 
 // リアクション
@@ -1197,7 +1214,10 @@ function findTarget() {
   if (!me || transitioning) return null;
   const room = interiorAt(me.x);
   if (room) {
+    if (me.seat) return { type: 'stand' };
     if (Math.abs(me.x - room.x) < 1.2 && me.z > room.z + ROOM.d / 2 - 1.3) return { type: 'exit' };
+    const seat = seatsNear(me.x, me.z, 1.9).find((st) => !seatTaken(st));
+    if (seat) return { type: 'seat', seat };
     return null;
   }
   let best = null, bd = 1.5;
@@ -1233,8 +1253,10 @@ function action() {
   if (t.type === 'door') { enterHouse(t.i); return; }
   if (t.type === 'exit') { exitHouse(); return; }
   if (t.type === 'talk') { startTalk(); return; }
+  if (t.type === 'seat') { sitDown(t.seat); return; }
+  if (t.type === 'stand') { standUp(); return; }
   if (t.type === 'pick') {
-    net.send({ t: 'pick', id: t.d.id });
+    requestPick(t.d.id);
     me.v.hop();
   } else if (t.type === 'shake') {
     if (performance.now() < shakeCooldown) return;
@@ -1255,6 +1277,7 @@ function updatePrompt() {
   const t = findTarget();
   const label = !t ? '' : {
     pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
+    stand: 'たちあがる', seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
   }[t.type] || (t.o.t.fruit && t.o.fruit > 0 ? '木をゆらす' : '木をゆらしてみる');
   if (label === lastPrompt) return;
   lastPrompt = label;
@@ -1317,6 +1340,34 @@ const MUTTER = ['ふんふん♪', 'いい天気だもち〜', 'おなか すい
 let mutterAt = performance.now() / 1000 + 20;
 
 // =====================================================================
+// すわる・ねころぶ
+// =====================================================================
+function seatTaken(seat) {
+  for (const p of people.values()) {
+    if (!p.isMe && (p.m || 0) >= 3 && Math.hypot(p.tx - seat.wx, p.tz - seat.wz) < 0.5) return true;
+  }
+  return false;
+}
+function sitDown(seat) {
+  me.seat = seat;
+  me.x = seat.wx; me.z = seat.wz; me.r = seat.r;
+  clickTarget = null;
+  sound.step(1, 'wood');
+}
+function standUp() {
+  if (!me.seat) return;
+  const sp = standSpot(me.seat);
+  me.seat = null;
+  me.x = sp.x; me.z = sp.z;
+  sound.step(1, 'wood');
+}
+// 他の人が すわっている／ねころんでいる家具
+function seatOf(p) {
+  if ((p.m || 0) < 3) return null;
+  return seatsNear(p.x, p.z, 0.9)[0] || null;
+}
+
+// =====================================================================
 // 家に入る・出る
 // =====================================================================
 let transitioning = false;
@@ -1336,6 +1387,7 @@ function fadeThen(fn) {
 }
 function enterHouse(i) {
   if (transitioning || !me) return;
+  me.seat = null;
   sound.door();
   fadeThen(() => {
     const r = INTERIORS[i];
@@ -1345,6 +1397,7 @@ function enterHouse(i) {
 }
 function exitHouse() {
   if (transitioning || !me) return;
+  me.seat = null;
   const r = interiorAt(me.x);
   if (!r) return;
   sound.door();
@@ -1571,6 +1624,13 @@ function angleLerp(a, b, t) {
 
 function moveMe(dt) {
   if (transitioning || dialog.open) { me.speed = 0; return; }
+  if (me.seat) {
+    const moving = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].some((k) => keys.has(k))
+      || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget;
+    if (moving) { standUp(); clickTarget = null; }
+    me.speed = 0;
+    return;
+  }
   let ix = 0, iz = 0, run = keys.has('ShiftLeft') || keys.has('ShiftRight');
   if (keys.has('KeyW') || keys.has('ArrowUp')) iz -= 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) iz += 1;
@@ -1585,7 +1645,8 @@ function moveMe(dt) {
   if (!mag && clickTarget) {
     const dx = clickTarget.x - me.x, dz = clickTarget.z - me.z;
     const l = Math.hypot(dx, dz);
-    if (l < 0.25) clickTarget = null;
+    if (clickTarget.pickId && l < 1.1) { requestPick(clickTarget.pickId); clickTarget = null; }
+    else if (l < 0.25) clickTarget = null;
     else { ix = dx / l; iz = dz / l; mag = 1; run = l > 9; }
   }
   const speed = mag ? (run ? 7.4 : 4.2) * Math.min(1, mag * 1.2) : 0;
@@ -1606,6 +1667,10 @@ function moveMe(dt) {
   if (stepDist > (me.speed > 5 ? 1.25 : 0.95)) {
     stepDist = 0;
     sound.step(0.9, room ? 'wood' : onBridge(me.x, me.z) ? 'wood' : islandSDF(me.x, me.z) > -7.4 ? 'sand' : 'grass');
+  }
+  // 果物の上を歩いたら拾う
+  for (const d of drops.values()) {
+    if (Math.hypot(d.x - me.x, d.z - me.z) < 0.75 && performance.now() / 1000 - d.t0 > 0.7) requestPick(d.id);
   }
   // ドアに向かって歩くと家に入り、出口のマットで下へ歩くと外に出る
   if (speed > 0 && !room && iz < -0.5) {
@@ -1649,7 +1714,7 @@ function frame() {
     sendTimer -= dt;
     if (sendTimer <= 0 && net) {
       sendTimer = 0.1;
-      const m = me.speed > 5 ? 2 : me.speed > 0.3 ? 1 : 0;
+      const m = me.seat ? (me.seat.pose === 'lie' ? 4 : 3) : me.speed > 5 ? 2 : me.speed > 0.3 ? 1 : 0;
       const s = `${me.x.toFixed(2)},${me.z.toFixed(2)},${me.r.toFixed(2)},${m}`;
       if (s !== lastSent) { lastSent = s; net.send({ t: 'move', x: +me.x.toFixed(2), z: +me.z.toFixed(2), r: +me.r.toFixed(2), m }); }
     }
@@ -1697,12 +1762,15 @@ function frame() {
       const sp = Math.hypot(p.x - ox, p.z - oz) / Math.max(dt, 1e-4);
       p.speed += (sp - p.speed) * Math.min(1, dt * 10);
     }
-    const y = standHeight(p.x, p.z);
+    const seat = p.isMe ? me.seat : seatOf(p);
+    const pose = seat ? seat.pose : 'stand';
+    const y = seat ? seat.y : standHeight(p.x, p.z);
+    p.v.setPose(pose);
     p.v.root.position.set(p.x, y, p.z);
     p.v.root.rotation.y = p.r;
-    p.v.update(dt, p.speed);
+    p.v.update(dt, seat ? 0 : p.speed);
     // 頭の上
-    const s = project(p.x, y + 2.3, p.z);
+    const s = project(p.x, y + (pose === 'lie' ? 0.9 : pose === 'sit' ? 2.0 : 2.3), p.z);
     p.wrap.style.display = s.ok ? '' : 'none';
     if (s.ok) p.wrap.style.transform = `translate(${s.sx.toFixed(1)}px, ${s.sy.toFixed(1)}px)`;
     const talking = now < p.sayUntil;
@@ -1908,4 +1976,4 @@ buildChoices();
 setupPreview();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x) };
+window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse };

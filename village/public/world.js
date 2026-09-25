@@ -155,6 +155,29 @@ export const FURNITURE = [
   ['chair', 1.6, 1.65, 0.7, 0.6],
   ['sofa', -3.4, 1.0, 1.2, 2.2],
 ];
+// すわる・ねころぶ場所（部屋の中心からの位置）。y は足もとの高さ、r は向き、pitch はねころぶときの傾き
+export const SEATS = [
+  { kind: 'sofa', pose: 'sit', x: -3.25, z: 0.5, y: 0.22, r: Math.PI / 2 },
+  { kind: 'sofa', pose: 'sit', x: -3.25, z: 1.5, y: 0.22, r: Math.PI / 2 },
+  { kind: 'chair', pose: 'sit', x: 1.6, z: 1.6, y: 0.14, r: Math.PI },
+  { kind: 'bed', pose: 'lie', x: -2.9, z: -1.85, y: 1.05, r: 0 },
+];
+export function seatsNear(x, z, range) {
+  const r = interiorAt(x);
+  if (!r) return [];
+  return SEATS.map((s, i) => ({ ...s, i, wx: r.x + s.x, wz: r.z + s.z }))
+    .filter((s) => Math.hypot(s.wx - x, s.wz - z) < range)
+    .sort((a, b) => Math.hypot(a.wx - x, a.wz - z) - Math.hypot(b.wx - x, b.wz - z));
+}
+// 立ち上がったときに立つ場所
+export function standSpot(seat) {
+  const r = interiorAt(seat.wx);
+  for (const [dx, dz] of [[1.2, 0], [0, 1.2], [1.4, 0.6], [0.8, 1.6], [-1.2, 0], [0, -1.2], [1.6, 1.6]]) {
+    const x = seat.wx + dx, z = seat.wz + dz;
+    if (r && walkable(x, z)) return { x, z };
+  }
+  return roomEntry(r);
+}
 export const doorOf = (h) => ({ x: h.x, z: h.z + h.d / 2 + 0.55 });
 export const roomEntry = (r) => ({ x: r.x, z: r.z + ROOM.d / 2 - 1.1 });
 export function atRoomExit(x, z) {

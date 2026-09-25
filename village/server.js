@@ -147,7 +147,7 @@ wss.on('connection', (ws) => {
         me.x = num(msg.x, -70, MAX_X, me.x);
         me.z = num(msg.z, -70, 70, me.z);
         me.r = num(msg.r, -10, 10, me.r);
-        me.m = idx(msg.m, 3);
+        me.m = idx(msg.m, 5); // 0 たつ 1 あるく 2 はしる 3 すわる 4 ねころぶ
         me.dirty = true;
         break;
       case 'chat': {

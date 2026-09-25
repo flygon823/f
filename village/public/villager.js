@@ -57,8 +57,11 @@ export function makeVillager(look) {
   shadow.position.y = 0.03;
   root.add(shadow);
 
+  // すわる・ねころぶときは posePivot ごと傾ける
+  const posePivot = new THREE.Group();
+  root.add(posePivot);
   const body = new THREE.Group();
-  root.add(body);
+  posePivot.add(body);
 
   // 足
   const legs = [-1, 1].map((s) => {
@@ -188,6 +191,7 @@ export function makeVillager(look) {
   }
 
   const st = {
+    pose: 'stand',
     phase: 0, walk: 0, blinkT: 2 + Math.random() * 3, talkT: 0, hopT: 0, waveT: 0, shakeT: 0, t: Math.random() * 10,
   };
 
@@ -248,6 +252,23 @@ export function makeVillager(look) {
       arms[0].rotation.z = -0.25; arms[1].rotation.z = 0.25;
     }
     body.position.y = y;
+
+    // すわる・ねころぶ
+    shadow.visible = st.pose === 'stand';
+    posePivot.rotation.x = st.pose === 'lie' ? -Math.PI / 2 : 0;
+    if (st.pose === 'sit') {
+      legs[0].rotation.x = legs[1].rotation.x = -1.45;
+      arms[0].rotation.x = arms[1].rotation.x = -0.35;
+      body.position.y = 0;
+    } else if (st.pose === 'lie') {
+      legs[0].rotation.x = legs[1].rotation.x = 0;
+      arms[0].rotation.x = arms[1].rotation.x = 0;
+      arms[0].rotation.z = -0.25; arms[1].rotation.z = 0.25;
+      body.position.y = 0;
+      head.rotation.set(0, 0, Math.sin(st.t * 0.8) * 0.06);
+      // ねむっている目
+      if (st.talkT <= 0) for (const e of eyes) e.scale.y = 0.12;
+    }
   }
 
   return {
@@ -258,5 +279,7 @@ export function makeVillager(look) {
     hop() { st.hopT = 0.5; },
     wave() { st.waveT = 1.6; },
     shake() { st.shakeT = 0.6; },
+    setPose(p) { st.pose = p; },
+    get pose() { return st.pose; },
   };
 }
