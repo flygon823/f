@@ -13,7 +13,7 @@ const TICK_MS = 100;               // 位置のまとめ送り間隔
 const FRUIT_PER_TREE = 3;
 const FRUIT_REGROW_MS = 3 * 60 * 1000;
 const DROP_TTL_MS = 5 * 60 * 1000;
-const SPECIES = ['momo', 'cat', 'dog', 'rabbit', 'bear', 'pig'];
+
 const MAX_X = 1400;                // 家の中の部屋は x=1000 より先に並んでいる
 const EMOTES = ['wave', 'happy', 'sad', 'angry', 'wow', 'sleepy', 'love', 'music'];
 
@@ -85,13 +85,10 @@ const cleanText = (s, max) => String(s ?? '')
 const num = (v, lo, hi, d = 0) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : 0);
 
+// 島にくる人は みんなロボットの MOMO。選べるのはアクセントの色だけ
 function cleanLook(l) {
   l = l && typeof l === 'object' ? l : {};
-  return {
-    s: SPECIES.includes(l.s) ? l.s : 'momo',
-    f: idx(l.f, 16),
-    c: idx(l.c, 16),
-  };
+  return { s: 'momo', f: idx(l.f, 10), c: 0 };
 }
 
 // ---------- 送信 ----------

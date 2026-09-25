@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { toon, basic, blob, GEO, mesh, curvify, GRADIENT } from './gfx.js';
 
+// どうぶつは島の住民用（プレイヤーは MOMO だけ）
 export const SPECIES = [
-  { key: 'momo', name: 'MOMO' },
   { key: 'cat', name: 'ねこ' },
   { key: 'dog', name: 'いぬ' },
   { key: 'rabbit', name: 'うさぎ' },

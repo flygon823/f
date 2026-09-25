@@ -8,7 +8,7 @@ import {
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
-import { makeVillager, SPECIES, FUR, SHIRT, MOMO_ACCENT } from './villager.js';
+import { makeVillager, MOMO_ACCENT } from './villager.js';
 import { Sound } from './audio.js';
 import { connect } from './net.js';
 
@@ -804,6 +804,8 @@ let myId = null;
 function tagColor(name) { return TAG_COLORS[hashStr(name) % TAG_COLORS.length]; }
 
 function createPerson(id, name, look, x, z, r, isMe, npc = false) {
+  // 島にくる人は みんな MOMO。どうぶつの見た目は住民だけ
+  if (!npc) look = { s: 'momo', f: Number.isInteger(look?.f) && look.f >= 0 && look.f < MOMO_ACCENT.length ? look.f : 0, c: 0 };
   const v = makeVillager(look);
   v.root.scale.setScalar(1.2);
   v.root.position.set(x, standHeight(x, z), z);
@@ -1832,8 +1834,9 @@ addEventListener('resize', () => {
 // =====================================================================
 // はじめの画面
 // =====================================================================
-const look = store.get('look', { s: 'momo', f: 0, c: 0 });
-if (!SPECIES.some((s) => s.key === look.s)) look.s = 'momo';
+const saved = store.get('look', null);
+// 前にどうぶつを選んでいた人も MOMO になる（色は MOMO のアクセント色の範囲に直す）
+const look = { s: 'momo', f: saved && saved.s === 'momo' && saved.f < MOMO_ACCENT.length ? saved.f : 0, c: 0 };
 const nameInput = $('#name');
 nameInput.value = store.get('name', '');
 
@@ -1878,39 +1881,18 @@ function rebuildPreview() {
 }
 
 function buildChoices() {
-  const sc = $('#speciesChoices');
-  for (const s of SPECIES) {
+  const el = $('#furChoices');
+  MOMO_ACCENT.forEach((c, i) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'sp'; b.textContent = s.name;
-    b.addEventListener('click', () => { look.s = s.key; buildSwatches(); rebuildPreview(); });
-    b.dataset.k = s.key;
-    sc.appendChild(b);
-  }
-  buildSwatches();
-}
-// MOMO は からだの色のかわりに「アクセントの色」、服はなし
-function buildSwatches() {
-  const momo = look.s === 'momo';
-  const swatches = (el, list, field) => {
-    el.textContent = '';
-    list.forEach((c, i) => {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'swatch'; b.style.background = c; b.dataset.i = i;
-      b.title = c;
-      b.addEventListener('click', () => { look[field] = i; syncChoices(); rebuildPreview(); });
-      el.appendChild(b);
-    });
-  };
-  swatches($('#furChoices'), momo ? MOMO_ACCENT : FUR, 'f');
-  swatches($('#shirtChoices'), SHIRT, 'c');
-  $('#furLabel').textContent = momo ? 'アクセントの色' : 'からだの色';
-  $('#shirtField').hidden = momo;
+    b.type = 'button'; b.className = 'swatch'; b.style.background = c; b.dataset.i = i;
+    b.title = c;
+    b.addEventListener('click', () => { look.f = i; syncChoices(); rebuildPreview(); });
+    el.appendChild(b);
+  });
   syncChoices();
 }
 function syncChoices() {
-  document.querySelectorAll('#speciesChoices .sp').forEach((b) => b.classList.toggle('on', b.dataset.k === look.s));
   document.querySelectorAll('#furChoices .swatch').forEach((b) => b.classList.toggle('on', +b.dataset.i === look.f));
-  document.querySelectorAll('#shirtChoices .swatch').forEach((b) => b.classList.toggle('on', +b.dataset.i === look.c));
 }
 
 // つなぎにいくのは、ボタンを押す前から始めておく
