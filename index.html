@@ -178,6 +178,14 @@
   .card dl { margin: 2px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 11px; }
   .card dt { color: var(--ink-3); letter-spacing: 0.1em; }
   .card dd { margin: 0; color: var(--ink-2); }
+  .buy {
+    margin-top: 4px; display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px;
+    background: var(--tide); color: #f4faf9; text-decoration: none;
+  }
+  .buy:hover { background: #235755; }
+  .buy b { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; }
+  .buy b::after { content: " ↗"; }
+  .buy span { font-size: 10px; opacity: 0.85; letter-spacing: 0.04em; }
 
   .tip {
     position: fixed; left: 0; top: 0; pointer-events: none; padding: 5px 10px; border-radius: 999px;
@@ -283,6 +291,10 @@
     <dt>大きさ</dt><dd id="cardSize"></dd>
     <dt>すみか</dt><dd id="cardHabitat"></dd>
   </dl>
+  <a class="buy" id="cardBuy" href="https://moonlitprops.booth.pm/" target="_blank" rel="noopener">
+    <b>この 3D モデルを BOOTH で見る</b>
+    <span>Moonlit Props「磯の生き物 3D セット」（FBX / GLB / Blender）</span>
+  </a>
 </aside>
 
 <div class="tip" id="tip" hidden></div>
@@ -894,6 +906,8 @@ const SPECIES = {
     status: () => tn > 0.7 ? '満ちた潮にのって、岩場の上まで群れで泳いでいます。' : '深い場所で、群れになって泳いでいます。',
   },
 };
+// Where the card's BOOTH button goes. Put the item page URL in SET once it is listed.
+const BOOTH = { shop: 'https://moonlitprops.booth.pm/', set: null };
 const ORDER = ['madako', 'agohaze', 'isogani', 'yadokari', 'umeboshi', 'uni', 'hitode', 'mejina'];
 
 /* ------------------------------------------------------------------ creature builders */
@@ -1087,6 +1101,17 @@ function makeHermit() {
   return { group: g, soft, legs };
 }
 
+const GOBY = { len: 0.46, w: 0.07, d: 0.06, head: true, eyesTop: true, body: '#a48e66', fin: '#cbb994', spots: '#6f5c3f', belly: '#cdbd98' };
+const MEJINA = { len: 0.36, w: 0.05, d: 0.085, body: '#4a7a84', fin: '#3a6670', belly: '#9ab9b5', iris: '#d7e2da' };
+// o: 0 = closed ball (out of water), 1 = tentacles open
+function poseAnemone(an, o, t = 0) {
+  an.ball.scale.set(0.16 * lerp(1, 0.85, o), 0.16 * lerp(1, 0.35, o), 0.16 * lerp(1, 0.85, o));
+  an.ball.position.y = lerp(0.14, 0.1, o);
+  an.tg.scale.setScalar(Math.max(0.01, o));
+  an.tents.forEach((tt, i) => {
+    tt.pv.rotation.set(Math.sin(t * 1.2 + i) * 0.12 * o, -tt.ang, -lerp(0.2, tt.ring ? 1.15 : 0.6, o));
+  });
+}
 const tentGeo = new THREE.ConeGeometry(0.02, 0.2, 6).translate(0, 0.1, 0);
 function makeAnemone() {
   const g = new THREE.Group();
@@ -1219,7 +1244,7 @@ const inside = (x, z, lim = 0.82) => seF(x, z) < lim;
 // アゴハゼ
 POOLS.forEach((p, pi) => {
   for (let k = 0; k < 3; k++) {
-    const f = makeFish({ len: 0.46, w: 0.07, d: 0.06, head: true, eyesTop: true, body: '#a48e66', fin: '#cbb994', spots: '#6f5c3f', belly: '#cdbd98' });
+    const f = makeFish(GOBY);
     const a = rr(0, TAU);
     register(walker({
       species: 'agohaze', ...f, x: p.x + Math.cos(a) * p.r * 0.35, z: p.z + Math.sin(a) * p.r * 0.35,
@@ -1295,13 +1320,7 @@ POOLS.forEach((p, pi) => {
         ind.submerged = waterLevelAt(x, z) > y + 0.1;
         const target = ind.submerged && ind.react <= 0 ? 1 : 0;
         ind.o += (target - ind.o) * Math.min(1, dt * (target > ind.o ? 0.7 : 3));
-        const o = ind.o;
-        ind.ball.scale.set(0.16 * lerp(1, 0.85, o), 0.16 * lerp(1, 0.35, o), 0.16 * lerp(1, 0.85, o));
-        ind.ball.position.y = lerp(0.14, 0.1, o);
-        ind.tg.scale.setScalar(Math.max(0.01, o));
-        ind.tents.forEach((tt, i) => {
-          tt.pv.rotation.set(Math.sin(t * 1.2 + i) * 0.12 * o, -tt.ang, -lerp(0.2, tt.ring ? 1.15 : 0.6, o));
-        });
+        poseAnemone(ind, ind.o, t);
       },
     });
   });
@@ -1332,7 +1351,7 @@ POOLS.forEach((p, pi) => {
 // メジナ（群れ）
 const school = { a: rr(0, TAU), x: -7.2, z: 5.6, yaw: 0 };
 for (let k = 0; k < 11; k++) {
-  const f = makeFish({ len: 0.36, w: 0.05, d: 0.085, body: '#4a7a84', fin: '#3a6670', belly: '#9ab9b5', iris: '#d7e2da' });
+  const f = makeFish(MEJINA);
   register({
     species: 'mejina', ...f, pick: 0.26, pickY: 0, focus: 3.2, school: true,
     off: new THREE.Vector3(rr(-0.7, 0.7), rr(-0.25, 0.25), rr(-0.7, 0.7)), x: -7.2, z: 5.6, y: -1.4, ph: rr(0, TAU),
@@ -1598,6 +1617,7 @@ function select(ind, fly) {
   $('cardDesc').textContent = sp.desc;
   $('cardSize').textContent = sp.size;
   $('cardHabitat').textContent = sp.habitat;
+  $('cardBuy').href = BOOTH.set || BOOTH.shop;
   $('cardNow').textContent = sp.status(ind);
   ui.card.hidden = false;
   document.body.classList.add('has-card');
@@ -1774,7 +1794,20 @@ function frame() {
 }
 renderer.setAnimationLoop(frame);
 requestAnimationFrame(() => requestAnimationFrame(() => $('loader').classList.add('done')));
+// Builders in their rest pose, used by tools/export to write the sellable model files.
+const BUILDERS = {
+  madako: () => makeOctopus(),
+  agohaze: () => makeFish(GOBY),
+  isogani: () => makeCrab(),
+  yadokari: () => makeHermit(),
+  umeboshi_open: () => { const a = makeAnemone(); poseAnemone(a, 1); return a; },
+  umeboshi_closed: () => { const a = makeAnemone(); poseAnemone(a, 0); return a; },
+  uni: () => makeUrchin(),
+  hitode: () => makeStar(),
+  mejina: () => makeFish(MEJINA),
+};
 window.__tidal = {
+  THREE, BUILDERS, mergeGeometries,
   get tn() { return tn; }, set tn(v) { tn = v; },
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
