@@ -805,7 +805,12 @@ function tagColor(name) { return TAG_COLORS[hashStr(name) % TAG_COLORS.length]; 
 
 function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   // 島にくる人は みんな MOMO。どうぶつの見た目は住民だけ
-  if (!npc) look = { s: 'momo', f: Number.isInteger(look?.f) && look.f >= 0 && look.f < MOMO_ACCENT.length ? look.f : 0, c: 0 };
+  // 色はサーバーが有料プランかどうかを確かめてから配る。サーバーがないとき（claude.ai のページ・ひとり）は無料の色にそろえる
+  if (!npc) {
+    const verified = net && net.mode === 'server';
+    const f = Number.isInteger(look?.f) && look.f >= 0 && look.f < MOMO_ACCENT.length ? look.f : FREE_COLOR;
+    look = { s: 'momo', f: verified || isMe ? f : FREE_COLOR, c: 0 };
+  }
   const v = makeVillager(look);
   v.root.scale.setScalar(1.2);
   v.root.position.set(x, standHeight(x, z), z);
@@ -1880,13 +1885,28 @@ function rebuildPreview() {
   pv.v.hop();
 }
 
+// ---------- 有料プラン ----------
+// いまは支払いのしくみがまだないので、全員が無料プラン。色を選べるのは有料プランの人だけ。
+// 支払いを入れたら、ここ（とサーバーの isPremium）で有料の人を判定する。
+function isPremium() { return false; }
+const FREE_COLOR = 0; // 無料プランの MOMO はミント
+
 function buildChoices() {
   const el = $('#furChoices');
+  const premium = isPremium();
+  if (!premium) look.f = FREE_COLOR;
+  $('#planBadge').textContent = premium ? '有料プラン' : '無料プラン';
   MOMO_ACCENT.forEach((c, i) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'swatch'; b.style.background = c; b.dataset.i = i;
-    b.title = c;
-    b.addEventListener('click', () => { look.f = i; syncChoices(); rebuildPreview(); });
+    const locked = !premium && i !== FREE_COLOR;
+    b.classList.toggle('locked', locked);
+    b.title = locked ? '有料プランで選べる色です' : c;
+    b.setAttribute('aria-disabled', locked ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      if (locked) { $('#colorNote').textContent = '🔒 この色は有料プランの人だけ選べます。無料プランの MOMO はミント色です。'; return; }
+      look.f = i; syncChoices(); rebuildPreview();
+    });
     el.appendChild(b);
   });
   syncChoices();
@@ -1919,6 +1939,7 @@ async function enterIsland() {
   const name = nameInput.value.trim().slice(0, 12);
   if (!name) { nameInput.focus(); $('#status').textContent = 'なまえを入れてね'; return; }
   store.set('name', name);
+  if (!isPremium()) look.f = FREE_COLOR;
   store.set('look', look);
   sound.init();
   const go = $('#go');

@@ -85,10 +85,13 @@ const cleanText = (s, max) => String(s ?? '')
 const num = (v, lo, hi, d = 0) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : 0);
 
-// 島にくる人は みんなロボットの MOMO。選べるのはアクセントの色だけ
-function cleanLook(l) {
+// 有料プランかどうか。支払いのしくみがまだないので、いまは全員が無料プラン
+function isPremium(/* ws, msg */) { return false; }
+
+// 島にくる人は みんなロボットの MOMO。アクセントの色を選べるのは有料プランの人だけ（無料はミント = 0）
+function cleanLook(l, premium) {
   l = l && typeof l === 'object' ? l : {};
-  return { s: 'momo', f: idx(l.f, 10), c: 0 };
+  return { s: 'momo', f: premium ? idx(l.f, 10) : 0, c: 0 };
 }
 
 // ---------- 送信 ----------
@@ -123,7 +126,7 @@ wss.on('connection', (ws) => {
         id: String(nextId++),
         ws,
         name: cleanText(msg.name, 12) || 'たびびと',
-        look: cleanLook(msg.look),
+        look: cleanLook(msg.look, isPremium(ws, msg)),
         x: num(msg.x, -70, MAX_X), z: num(msg.z, -70, 70), r: num(msg.r, -10, 10), m: 0,
         dirty: false, lastChat: 0, lastEmote: 0, lastShake: 0,
       };
