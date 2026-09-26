@@ -3,7 +3,7 @@
 //  2. room   : claude.ai の Artifact として開いたとき、同じページを開いている人どうし
 //  3. solo   : どちらもつながらないときは、ひとりで遊べる
 
-import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS, BUG_SPOTS, bugFor, fishFor, waterNear, critterCat } from './world.js';
+import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS, BUG_SPOTS, bugFor, fishFor, critterCat, FISH_SPOTS, SHADOW_MAX, fishSize } from './world.js';
 
 const FRUIT_PER_TREE = 3;
 const GEM_REGROW_MS = 10 * 60 * 1000;
@@ -15,7 +15,7 @@ const SHORE_SPOTS = BUG_SPOTS.map((_, i) => i).filter(isShore);
 
 // サーバーがいないときに、木の実と落とし物を手元で管理する
 class LocalWorld {
-  constructor() { this.trees = new Map(); this.drops = new Map(); this.gems = new Map(); this.bugs = new Map(); this.nextBug = 1; }
+  constructor() { this.trees = new Map(); this.drops = new Map(); this.gems = new Map(); this.bugs = new Map(); this.nextBug = 1; this.shadows = new Map(); this.nextShadow = 1; }
   // ---- 虫（この端末だけで出す） ----
   bugList() { return [...this.bugs.values()].map((b) => [b.id, b.key, b.spot]); }
   // 陸の虫（10ぴき）と、砂浜の潮だまり（5ひき）は べつに数える。サーバーと同じ
@@ -55,9 +55,38 @@ class LocalWorld {
     this.bugs.delete(id);
     return b.key;
   }
-  fish(x, z) {
-    const where = waterNear(x, z, 5);
-    return where ? fishFor(where, new Date().getHours(), Math.random()) : null;
+  // ---- 魚の影（サーバーと同じ決まり） ----
+  shadowList() { return [...this.shadows.values()].map((f) => [f.id, fishSize(f.key), f.spot]); }
+  countShadows(where) { return [...this.shadows.values()].filter((f) => FISH_SPOTS[f.spot].where === where).length; }
+  spawnShadow(where) {
+    const list = FISH_SPOTS.map((_, i) => i).filter((i) => FISH_SPOTS[i].where === where);
+    const spot = list[Math.floor(Math.random() * list.length)];
+    if (spot === undefined || [...this.shadows.values()].some((f) => f.spot === spot)) return false;
+    const key = fishFor(where, new Date().getHours(), Math.random());
+    if (!key) return false;
+    const id = 'f' + this.nextShadow++;
+    this.shadows.set(id, { id, key, spot, until: Date.now() + (240 + Math.random() * 240) * 1000 });
+    return true;
+  }
+  shadowTick() {
+    let changed = false;
+    for (const f of this.shadows.values()) if (f.until < Date.now()) { this.shadows.delete(f.id); changed = true; }
+    for (const [where, max] of Object.entries(SHADOW_MAX)) if (this.countShadows(where) < max && Math.random() < 0.5 && this.spawnShadow(where)) changed = true;
+    return changed;
+  }
+  scareShadows(x, z) {
+    const gone = [];
+    for (const f of this.shadows.values()) { const sp = FISH_SPOTS[f.spot]; if (Math.hypot(sp.x - x, sp.z - z) < 3.5) { this.shadows.delete(f.id); gone.push(f.id); } }
+    return gone;
+  }
+  // 影を つりあげる／にがす（近くにいるときだけ）
+  takeShadow(id, x, z) {
+    const f = this.shadows.get(id);
+    if (!f) return null;
+    const sp = FISH_SPOTS[f.spot];
+    if (Math.hypot(sp.x - x, sp.z - z) > 9) return null;
+    this.shadows.delete(id);
+    return f.key;
   }
   // 宝石の岩をたたく：{ n: たたいた回数, kind: 掘れたら宝石の種類 }
   hitGem(i) {
@@ -113,16 +142,25 @@ function serverUrl() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 }
 
-// ひとりモード・room で、虫・磯の生きもの・魚を手元で動かす
+// ひとりモード・room で、虫・磯の生きもの・魚の影を手元で動かす
 function localCreatures(local, onMessage) {
   for (let k = 0; k < 20 && local.count(false) < 8; k++) local.spawnBug(false);
   for (let k = 0; k < 10 && local.count(true) < 4; k++) local.spawnBug(true);
+  for (const [where, max] of Object.entries(SHADOW_MAX)) for (let k = 0; k < max * 3 && local.countShadows(where) < max; k++) local.spawnShadow(where);
   setInterval(() => { if (local.bugTick()) onMessage({ t: 'bugs', list: local.bugList() }); }, 4000);
+  setInterval(() => { if (local.shadowTick()) onMessage({ t: 'shadows', list: local.shadowList() }); }, 5000);
   let lastFish = 0;
   return (msg) => {
     switch (msg.t) {
-      case 'join': onMessage({ t: 'bugs', list: local.bugList() }); return true;
-      case 'move': if (msg.m === 2) { const fled = local.flee(msg.x, msg.z); if (fled.length) onMessage({ t: 'bugs', list: local.bugList(), fled }); } return false;
+      case 'join': onMessage({ t: 'bugs', list: local.bugList() }); onMessage({ t: 'shadows', list: local.shadowList() }); return true;
+      case 'move':
+        if (msg.m === 2) {
+          const fled = local.flee(msg.x, msg.z);
+          if (fled.length) onMessage({ t: 'bugs', list: local.bugList(), fled });
+          const gone = local.scareShadows(msg.x, msg.z);
+          if (gone.length) onMessage({ t: 'shadows', list: local.shadowList(), fled: gone });
+        }
+        return false;
       case 'catch': {
         const b = local.bugs.get(String(msg.id));
         if (!b) return true;
@@ -135,7 +173,13 @@ function localCreatures(local, onMessage) {
       case 'fish': {
         if (Date.now() - lastFish < 2500) return true;
         lastFish = Date.now();
-        onMessage({ t: 'caught', kind: 'fish', key: local.fish(msg.x, msg.z) });
+        const key = local.takeShadow(String(msg.id), msg.x, msg.z);
+        onMessage({ t: 'shadows', list: local.shadowList() });
+        onMessage({ t: 'caught', kind: 'fish', key });
+        return true;
+      }
+      case 'spook': {
+        if (local.takeShadow(String(msg.id), msg.x, msg.z)) onMessage({ t: 'shadows', list: local.shadowList(), fled: [String(msg.id)] });
         return true;
       }
     }

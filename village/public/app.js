@@ -9,7 +9,7 @@ import {
   GEM_KINDS, GEM_SPOTS, gemPlan, gemDay, PICKAXE_SPOT,
   PLOTS, PLOT_SIZE, PLOT_PRICE, PLOT_REFUND, setPlotOwned, plotOwned, inPlot, SHOP, SELL_PRICES,
   FISH, BUGS, BUG_SPOTS, WHERE_NAMES, RANKS, rankOf, dexCount, DEX_TOTAL, waterAt, inHours,
-  ISO, TIDEPOOLS, critterCat, critterInfo,
+  ISO, TIDEPOOLS, critterCat, critterInfo, FISH_SPOTS, shadowWander,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { makeCreature } from './creatures.js';
@@ -1400,8 +1400,86 @@ function tryCatchBug(id) {
   net.send({ t: 'catch', id, x: me.x, z: me.z });
 }
 
+// ---- 魚の影 ----
+// 影はサーバーが出す（どの魚かは つりあげるまで ひみつ。わかるのは大きさだけ）。
+// ふだんは決まった道すじを泳ぎ、ウキが近くに落ちると よってくる。
+const shadowObjs = new Map(); // id -> { g, sp, sz, seed, len, x, z, head, hook, fleeT }
+const shadowGeo = (() => {
+  // 頭が +z を向いた魚のかたち（平ら）
+  const sh = new THREE.Shape();
+  sh.moveTo(0, -0.5);
+  sh.bezierCurveTo(0.2, -0.46, 0.22, 0.05, 0.07, 0.3);
+  sh.lineTo(0.17, 0.5); sh.lineTo(-0.17, 0.5); sh.lineTo(-0.07, 0.3);
+  sh.bezierCurveTo(-0.22, 0.05, -0.2, -0.46, 0, -0.5);
+  return new THREE.ShapeGeometry(sh, 10).rotateX(-Math.PI / 2);
+})();
+const shadowMat = basic('#0e2230', { transparent: true, opacity: 0.55, depthWrite: false });
+function applyShadows(list, fled = []) {
+  const alive = new Set();
+  const now = performance.now() / 1000;
+  for (const [id, sz, spot] of list || []) {
+    alive.add(id);
+    if (shadowObjs.has(id)) continue;
+    const sp = FISH_SPOTS[spot];
+    if (!sp) continue;
+    const len = 0.5 + sz * 0.26; // 影の長さ（sz 1 → 0.76、6 → 2.06）
+    const g = new THREE.Mesh(shadowGeo, shadowMat);
+    g.scale.set(len, 1, len);
+    g.renderOrder = 1;
+    const seed = (hashStr(id) % 1000) / 100;
+    const p = shadowWander(sp, seed, now);
+    g.position.set(p.x, WATER_Y + 0.03, p.z);
+    scene.add(g);
+    shadowObjs.set(id, { g, sp, sz, seed, len, x: p.x, z: p.z, head: 0, hook: false, fleeT: 0, jerk: 0 });
+  }
+  for (const [id, o] of shadowObjs) {
+    if (alive.has(id) || o.fleeT) continue;
+    if (fled.includes(id)) o.fleeT = 0.8; // すーっと にげる
+    else { scene.remove(o.g); shadowObjs.delete(id); }
+  }
+}
+function updateShadows(dt, now) {
+  for (const [id, o] of shadowObjs) {
+    if (o.fleeT) {
+      o.fleeT -= dt;
+      o.x += Math.sin(o.head) * dt * 6; o.z += Math.cos(o.head) * dt * 6;
+      o.g.scale.setScalar(o.len * Math.max(0.05, o.fleeT / 0.8)).setY(1);
+      o.g.position.set(o.x, WATER_Y + 0.03, o.z);
+      if (o.fleeT <= 0) { scene.remove(o.g); shadowObjs.delete(id); }
+      continue;
+    }
+    // 行きたい場所：ウキ（口がウキにとどくところ）か、ふだんの道すじ
+    let tx, tz, speed;
+    if (o.hook && fishing) {
+      const b = fishing.bob.position, d = Math.hypot(b.x - o.x, b.z - o.z) || 1;
+      tx = b.x - ((b.x - o.x) / d) * o.len * 0.5; tz = b.z - ((b.z - o.z) / d) * o.len * 0.5;
+      speed = 0.7;
+    } else {
+      const p = shadowWander(o.sp, o.seed, now);
+      tx = p.x; tz = p.z; speed = 1.4;
+    }
+    const dx = tx - o.x, dz = tz - o.z, dist = Math.hypot(dx, dz);
+    const step = Math.min(dist, speed * dt);
+    if (dist > 0.001) {
+      o.x += (dx / dist) * step; o.z += (dz / dist) * step;
+      if (dist > 0.02) {
+        let want = Math.atan2(dx, dz);
+        if (o.hook && fishing) want = Math.atan2(fishing.bob.position.x - o.x, fishing.bob.position.z - o.z);
+        let dh = want - o.head; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+        o.head += dh * Math.min(1, dt * 3);
+      }
+    }
+    o.arrived = !!o.hook && dist < 0.06;
+    o.jerk = Math.max(0, o.jerk - dt * 3);
+    const j = o.jerk * 0.12;
+    o.g.position.set(o.x + Math.sin(o.head) * j, WATER_Y + 0.03, o.z + Math.cos(o.head) * j);
+    o.g.rotation.y = o.head + Math.sin(now * (o.hook ? 9 : 5) + o.seed) * 0.08;
+  }
+}
+
 // ---- 魚つり ----
-let fishing = null; // { phase, bob, line, biteAt, nibbles, until }
+// ウキを投げる → 近くの影が よってくる → ツンツン（まだ）→ ぐっと しずむ（いま！）
+let fishing = null; // { phase, bob, line, cp, fish, state, nibbles, biteAt, until, idleUntil, dip }
 const BOB_Y = WATER_Y + 0.03;
 function castPoint() {
   for (const turn of [0, 0.35, -0.35, 0.7, -0.7]) {
@@ -1430,14 +1508,20 @@ function startFishing() {
   line.frustumCulled = false;
   scene.add(line);
   const now = performance.now() / 1000;
-  const biteAt = now + 3 + Math.random() * 6;
-  const nibbles = [];
-  for (let k = 0; k < Math.floor(Math.random() * 4); k++) nibbles.push(now + 1.2 + Math.random() * (biteAt - now - 1.8));
-  nibbles.sort((a, b) => a - b);
-  fishing = { phase: 'wait', bob, line, cp, biteAt, nibbles, dip: 0, until: 0 };
+  fishing = { phase: 'wait', bob, line, cp, fish: null, state: null, nibbles: [], biteAt: 0, dip: 0.3, until: 0, idleUntil: now + 12 };
 }
-function endFishing(msg) {
+function releaseFish(spook) {
+  if (!fishing || !fishing.fish) return;
+  const o = shadowObjs.get(fishing.fish);
+  if (o) {
+    o.hook = false;
+    if (spook) { o.fleeT = 0.8; o.head += Math.PI; net.send({ t: 'spook', id: fishing.fish, x: me.x, z: me.z }); }
+  }
+  fishing.fish = null;
+}
+function endFishing(msg, spook = false) {
   if (!fishing) return;
+  releaseFish(spook);
   scene.remove(fishing.bob); scene.remove(fishing.line);
   fishing.line.geometry.dispose();
   fishing = null;
@@ -1450,10 +1534,16 @@ function fishingAction() {
   if (fishing.phase === 'bite') {
     fishing.phase = 'reel';
     sound.splash();
-    net.send({ t: 'fish', x: me.x, z: me.z });
+    const id = fishing.fish;
+    const o = shadowObjs.get(id);
+    if (o) { scene.remove(o.g); shadowObjs.delete(id); }
+    fishing.fish = null;
+    net.send({ t: 'fish', id, x: me.x, z: me.z });
     setTimeout(() => endFishing(), 600);
   } else if (fishing.phase === 'wait') {
-    endFishing('はやすぎた… にげられちゃった');
+    if (fishing.fish && fishing.state === 'nibble') endFishing('はやすぎた… にげられちゃった', true);
+    else if (fishing.fish) endFishing('あっ… 魚が びっくりして にげちゃった', true);
+    else endFishing(); // なにも よってきていないので、そのまま ひきあげる
   }
   return true;
 }
@@ -1462,14 +1552,34 @@ function updateFishing(now) {
   if (!fishing) return;
   const f = fishing;
   if (f.phase === 'wait') {
-    if (f.nibbles.length && now > f.nibbles[0]) { f.nibbles.shift(); f.dip = 0.22; sound.nibble(); }
-    if (now > f.biteAt) {
-      f.phase = 'bite'; f.until = now + 0.95; f.dip = 1;
-      sound.splash();
-      doEmote(me, 'wow');
+    const o = f.fish && shadowObjs.get(f.fish);
+    if (f.fish && (!o || o.fleeT)) { f.fish = null; f.state = null; f.idleUntil = now + 8; } // ほかの人に つられた・時間で いなくなった
+    if (!f.fish) {
+      // ウキのまわりの影を よぶ
+      let best = null, bd = 2.8;
+      for (const [id, s] of shadowObjs) {
+        if (s.fleeT || s.hook) continue;
+        const d = Math.hypot(s.x - f.bob.position.x, s.z - f.bob.position.z);
+        if (d < bd) { bd = d; best = id; }
+      }
+      if (best) { f.fish = best; f.state = 'approach'; shadowObjs.get(best).hook = true; }
+      else if (now > f.idleUntil) { endFishing('なにも かからない… 魚の影の ちかくに なげてみよう'); return; }
+    } else if (f.state === 'approach' && o.arrived) {
+      f.state = 'nibble';
+      let t = now + 0.6;
+      f.nibbles = [];
+      for (let k = 0, n = 1 + Math.floor(Math.random() * 4); k < n; k++) { t += 0.7 + Math.random() * 0.8; f.nibbles.push(t); }
+      f.biteAt = t + 0.6 + Math.random() * 1.2;
+    } else if (f.state === 'nibble') {
+      if (f.nibbles.length && now > f.nibbles[0]) { f.nibbles.shift(); f.dip = 0.22; o.jerk = 1; sound.nibble(); }
+      if (now > f.biteAt) {
+        f.phase = 'bite'; f.until = now + 0.95; f.dip = 1; o.jerk = 1;
+        sound.splash();
+        doEmote(me, 'wow');
+      }
     }
   } else if (f.phase === 'bite' && now > f.until) {
-    endFishing('にげられた…');
+    endFishing('にげられた…', true);
     return;
   }
   f.dip = Math.max(0, f.dip - 0.02);
@@ -1871,6 +1981,7 @@ function handle(msg) {
       if (msg.me) applyMe(msg.me);
       if (msg.plots) applyPlots(msg.plots);
       if (msg.bugs) applyBugs(msg.bugs);
+      if (msg.shadows) applyShadows(msg.shadows);
       if (!serverMode()) setRank(me, rankOf(pocket.dex).i);
       updateOnline();
       break;
@@ -1980,6 +2091,9 @@ function handle(msg) {
       break;
     case 'bugs':
       applyBugs(msg.list, msg.fled);
+      break;
+    case 'shadows':
+      applyShadows(msg.list, msg.fled);
       break;
     case 'caught':
       onCaught(msg);
@@ -2955,6 +3069,7 @@ function frame() {
   }
   updateSparks(dt);
   updateBugs(dt, now);
+  updateShadows(dt, now);
   updateFishing(now);
   updateTrophy(now);
   if (me && layerOf(me.x) === 'under') {
@@ -3297,4 +3412,4 @@ setupPreview();
 initPayments();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, get fishing() { return fishing; } };
+window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, shadowObjs, get fishing() { return fishing; } };

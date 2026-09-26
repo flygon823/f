@@ -187,6 +187,33 @@ function bugTick() {
   if (countBugs(true) < MAX_SHORE && Math.random() < 0.5 && spawnBug(true)) changed = true;
   if (changed) broadcast({ t: 'bugs', list: bugList() });
 }
+// ---------- 魚の影（どの魚かはサーバーだけが知っている。画面には大きさだけ送る） ----------
+const shadows = new Map(); // id -> { id, key, spot, until }
+let nextShadow = 1;
+const shadowList = () => [...shadows.values()].map((f) => [f.id, W.fishSize(f.key), f.spot]);
+function spawnShadow(where) {
+  const list = W.FISH_SPOTS.map((_, i) => i).filter((i) => W.FISH_SPOTS[i].where === where);
+  const spot = list[Math.floor(Math.random() * list.length)];
+  if (spot === undefined || [...shadows.values()].some((f) => f.spot === spot)) return false;
+  const key = W.fishFor(where, jstHour(), Math.random());
+  if (!key) return false;
+  const id = 'f' + nextShadow++;
+  shadows.set(id, { id, key, spot, until: Date.now() + (240 + Math.random() * 240) * 1000 });
+  return true;
+}
+const countShadows = (where) => [...shadows.values()].filter((f) => W.FISH_SPOTS[f.spot].where === where).length;
+function shadowTick() {
+  const now = Date.now();
+  let changed = false;
+  for (const f of shadows.values()) if (f.until < now) { shadows.delete(f.id); changed = true; }
+  for (const [where, max] of Object.entries(W.SHADOW_MAX)) {
+    if (countShadows(where) < max && Math.random() < 0.5 && spawnShadow(where)) changed = true;
+  }
+  if (changed) broadcast({ t: 'shadows', list: shadowList() });
+}
+// 影に手がとどく（つりざおの先 + 泳いでいるぶん）くらい近くにいるか
+const nearShadow = (me, f) => { const sp = W.FISH_SPOTS[f.spot]; return Math.hypot(sp.x - me.x, sp.z - me.z) < 9; };
+
 // 虫をつかまえた・魚をつった・磯の生きものをひろった：ポケットと図鑑に入れて、ランクが上がったらみんなに知らせる
 function caught(me, kind, key) {
   const before = me.rank;
@@ -284,6 +311,7 @@ wss.on('connection', (ws, req) => {
         players: [...players.values()].filter((p) => p !== me).map(publicPlayer),
         world: worldSnapshot(),
         bugs: bugList(),
+        shadows: shadowList(),
       });
       broadcast({ t: 'plots', plots: economy.plotsView() }, me.id); // 看板の名前が変わったかもしれない
       broadcast({ t: 'join', p: publicPlayer(me) }, me.id);
@@ -308,6 +336,13 @@ wss.on('connection', (ws, req) => {
             if (Math.hypot(sp.x - me.x, sp.z - me.z) < 3.2) { bugs.delete(b.id); fled.push(b.id); }
           }
           if (fled.length) broadcast({ t: 'bugs', list: bugList(), fled });
+          // 岸を走ると、魚の影も にげる
+          const gone = [];
+          for (const f of shadows.values()) {
+            const sp = W.FISH_SPOTS[f.spot];
+            if (Math.hypot(sp.x - me.x, sp.z - me.z) < 3.5) { shadows.delete(f.id); gone.push(f.id); }
+          }
+          if (gone.length) broadcast({ t: 'shadows', list: shadowList(), fled: gone });
         }
         break;
       case 'chat': {
@@ -388,13 +423,22 @@ wss.on('connection', (ws, req) => {
         break;
       }
       case 'fish': {
-        // つりあげた。どの魚かは、水の種類と時間でサーバーが決める
+        // 魚の影を つりあげた。どの魚かは、影が出たときにサーバーが決めてある
         if (now - (me.lastFish || 0) < 2500) return;
         me.lastFish = now;
-        const where = W.waterNear(me.x, me.z, 5);
-        if (!where) { send(ws, { t: 'caught', kind: 'fish', key: null }); return; }
-        const key = W.fishFor(where, jstHour(), Math.random());
-        if (key) caught(me, 'fish', key);
+        const f = shadows.get(String(msg.id));
+        if (!f || !nearShadow(me, f)) { send(ws, { t: 'caught', kind: 'fish', key: null }); return; }
+        shadows.delete(f.id);
+        broadcast({ t: 'shadows', list: shadowList() });
+        caught(me, 'fish', f.key);
+        break;
+      }
+      case 'spook': {
+        // はやく引きすぎた・おそすぎた：その影は にげていく
+        const f = shadows.get(String(msg.id));
+        if (!f || !nearShadow(me, f)) return;
+        shadows.delete(f.id);
+        broadcast({ t: 'shadows', list: shadowList(), fled: [f.id] });
         break;
       }
       case 'chest': {
@@ -463,7 +507,9 @@ setInterval(() => {
   await economy.init();
   for (let k = 0; k < MAX_BUGS * 2 && countBugs(false) < MAX_BUGS - 2; k++) spawnBug(false);
   for (let k = 0; k < MAX_SHORE * 2 && countBugs(true) < MAX_SHORE - 1; k++) spawnBug(true);
+  for (const [where, max] of Object.entries(W.SHADOW_MAX)) for (let k = 0; k < max * 3 && countShadows(where) < max; k++) spawnShadow(where);
   setInterval(bugTick, 4000);
+  setInterval(shadowTick, 5000);
   server.listen(PORT, () => {
     console.log(`ぽかぽか島がひらきました → http://localhost:${PORT}/`);
   });

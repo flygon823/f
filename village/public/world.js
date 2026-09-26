@@ -410,28 +410,29 @@ export const GEM_KINDS = [
 export const GEM_HITS = 3; // 何回たたくと取れるか
 // ---------- 魚と虫 ----------
 // h: 出てくる時間（[はじめ, おわり) の時。はじめ > おわり なら夜をまたぐ）、w: 出やすさ、price: よろず屋の値段
+// sz: 魚の影の大きさ（1 とても小さい 〜 6 とても大きい）
 const ALL_DAY = [[0, 24]];
 export const FISH = [
-  { key: 'funa', name: 'フナ', where: 'river', h: ALL_DAY, w: 30, price: 150 },
-  { key: 'oikawa', name: 'オイカワ', where: 'river', h: [[6, 18]], w: 25, price: 200 },
-  { key: 'yamame', name: 'ヤマメ', where: 'river', h: [[4, 9], [16, 19]], w: 12, price: 800 },
-  { key: 'ayu', name: 'アユ', where: 'river', h: [[6, 18]], w: 12, price: 700 },
-  { key: 'nijimasu', name: 'ニジマス', where: 'river', h: ALL_DAY, w: 10, price: 600 },
-  { key: 'sake', name: 'サケ', where: 'river', h: [[4, 9], [16, 20]], w: 7, price: 900 },
-  { key: 'namazu', name: 'ナマズ', where: 'river', h: [[19, 4]], w: 6, price: 1200 },
-  { key: 'medaka', name: 'メダカ', where: 'pond', h: ALL_DAY, w: 30, price: 100 },
-  { key: 'koi', name: 'コイ', where: 'pond', h: ALL_DAY, w: 22, price: 400 },
-  { key: 'zarigani', name: 'ザリガニ', where: 'pond', h: ALL_DAY, w: 15, price: 300 },
-  { key: 'kingyo', name: 'キンギョ', where: 'pond', h: ALL_DAY, w: 5, price: 1300 },
-  { key: 'aji', name: 'アジ', where: 'sea', h: ALL_DAY, w: 28, price: 150 },
-  { key: 'iwashi', name: 'イワシ', where: 'sea', h: ALL_DAY, w: 25, price: 120 },
-  { key: 'mejina', name: 'メジナ', where: 'sea', h: ALL_DAY, w: 15, price: 400 },
-  { key: 'agohaze', name: 'アゴハゼ', where: 'sea', h: ALL_DAY, w: 14, price: 200 },
-  { key: 'karei', name: 'カレイ', where: 'sea', h: ALL_DAY, w: 10, price: 500 },
-  { key: 'fugu', name: 'フグ', where: 'sea', h: [[19, 4]], w: 8, price: 600 },
-  { key: 'madako', name: 'マダコ', where: 'sea', h: [[18, 6]], w: 6, price: 1000 },
-  { key: 'tai', name: 'タイ', where: 'sea', h: ALL_DAY, w: 4, price: 1500 },
-  { key: 'coelacanth', name: 'シーラカンス', where: 'sea', h: ALL_DAY, w: 0.6, price: 15000 },
+  { key: 'funa', name: 'フナ', where: 'river', h: ALL_DAY, w: 30, price: 150, sz: 3 },
+  { key: 'oikawa', name: 'オイカワ', where: 'river', h: [[6, 18]], w: 25, price: 200, sz: 2 },
+  { key: 'yamame', name: 'ヤマメ', where: 'river', h: [[4, 9], [16, 19]], w: 12, price: 800, sz: 3 },
+  { key: 'ayu', name: 'アユ', where: 'river', h: [[6, 18]], w: 12, price: 700, sz: 3 },
+  { key: 'nijimasu', name: 'ニジマス', where: 'river', h: ALL_DAY, w: 10, price: 600, sz: 4 },
+  { key: 'sake', name: 'サケ', where: 'river', h: [[4, 9], [16, 20]], w: 7, price: 900, sz: 5 },
+  { key: 'namazu', name: 'ナマズ', where: 'river', h: [[19, 4]], w: 6, price: 1200, sz: 5 },
+  { key: 'medaka', name: 'メダカ', where: 'pond', h: ALL_DAY, w: 30, price: 100, sz: 1 },
+  { key: 'koi', name: 'コイ', where: 'pond', h: ALL_DAY, w: 22, price: 400, sz: 4 },
+  { key: 'zarigani', name: 'ザリガニ', where: 'pond', h: ALL_DAY, w: 15, price: 300, sz: 2 },
+  { key: 'kingyo', name: 'キンギョ', where: 'pond', h: ALL_DAY, w: 5, price: 1300, sz: 1 },
+  { key: 'aji', name: 'アジ', where: 'sea', h: ALL_DAY, w: 28, price: 150, sz: 3 },
+  { key: 'iwashi', name: 'イワシ', where: 'sea', h: ALL_DAY, w: 25, price: 120, sz: 2 },
+  { key: 'mejina', name: 'メジナ', where: 'sea', h: ALL_DAY, w: 15, price: 400, sz: 3 },
+  { key: 'agohaze', name: 'アゴハゼ', where: 'sea', h: ALL_DAY, w: 14, price: 200, sz: 2 },
+  { key: 'karei', name: 'カレイ', where: 'sea', h: ALL_DAY, w: 10, price: 500, sz: 4 },
+  { key: 'fugu', name: 'フグ', where: 'sea', h: [[19, 4]], w: 8, price: 600, sz: 3 },
+  { key: 'madako', name: 'マダコ', where: 'sea', h: [[18, 6]], w: 6, price: 1000, sz: 4 },
+  { key: 'tai', name: 'タイ', where: 'sea', h: ALL_DAY, w: 4, price: 1500, sz: 4 },
+  { key: 'coelacanth', name: 'シーラカンス', where: 'sea', h: ALL_DAY, w: 0.6, price: 15000, sz: 6 },
 ];
 export const BUGS = [
   { key: 'monshiro', name: 'モンシロチョウ', hab: 'flower', h: [[6, 17]], w: 30, price: 120 },
@@ -488,6 +489,52 @@ export function waterNear(x, z, r = 4.5) {
     for (let a = 0; a < 6.28; a += 0.4) { const w = waterAt(x + Math.cos(a) * d, z + Math.sin(a) * d); if (w) return w; }
   }
   return null;
+}
+
+// ---------- 魚の影 ----------
+// 影が泳いでいる場所。岸から つりざおが とどくところに置く。影はこの点のまわりを ゆっくり泳ぐ
+function buildFishSpots() {
+  const spots = [];
+  // 海：島のまわりを ぐるっと。岸から 3〜5 くらいの沖
+  for (let k = 0; k < 40; k++) {
+    const a = (k / 40) * Math.PI * 2 + 0.07;
+    const dx = Math.cos(a), dz = Math.sin(a);
+    let lo = 0, hi = 90;
+    for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (islandSDF(dx * m, dz * m) < 0.3) lo = m; else hi = m; }
+    const x = dx * lo, z = dz * lo;
+    if (riverDist(x, z) < RIVER_W + 3 || waterAt(x, z) !== 'sea') continue;
+    spots.push({ x, z, where: 'sea', r: 1.6 });
+  }
+  // 川：まん中の線にそって（橋の下はさける）
+  for (let i = 0; i < RIVER.length - 1; i++) {
+    const [ax, az] = RIVER[i], [bx, bz] = RIVER[i + 1];
+    const len = Math.hypot(bx - ax, bz - az);
+    for (let t = 2; t < len; t += 5) {
+      const x = ax + (bx - ax) * (t / len), z = az + (bz - az) * (t / len);
+      if (islandSDF(x, z) > -6 || onBridge(x, z) || BRIDGES.some((b) => Math.hypot(b.x - x, b.z - z) < 4)) continue;
+      if (waterAt(x, z) !== 'river') continue;
+      spots.push({ x, z, where: 'river', r: 0.9 });
+    }
+  }
+  // 池
+  for (const [ox, oz] of [[-2.2, -0.8], [2.2, 0.9], [0, 1.4], [0.4, -1.3]]) {
+    const x = POND.x + ox, z = POND.z + oz;
+    if (waterAt(x, z) === 'pond') spots.push({ x, z, where: 'pond', r: 0.8 });
+  }
+  return spots;
+}
+export const FISH_SPOTS = buildFishSpots();
+// 水べごとに、いっぺんに泳いでいる影の数
+export const SHADOW_MAX = { sea: 7, river: 5, pond: 2 };
+export const fishSize = (key) => FISH.find((f) => f.key === key)?.sz || 3;
+// 影の いまの場所（泳ぎかたは id から決まるので、誰の画面でも だいたい同じ）
+export function shadowWander(spot, seed, t) {
+  const u = t * 0.22 + seed * 1.7, v = t * 0.13 + seed * 0.9;
+  let x = spot.x + Math.sin(u) * spot.r + Math.sin(v * 2.3) * spot.r * 0.35;
+  let z = spot.z + Math.cos(u * 0.8) * spot.r * 0.8 + Math.cos(v * 1.7) * spot.r * 0.3;
+  // 陸に乗り上げそうなら、まん中へ よせる
+  for (let k = 0; k < 4 && !waterAt(x, z); k++) { x = (x + spot.x) / 2; z = (z + spot.z) / 2; }
+  return { x, z };
 }
 
 // ---------- 図鑑とランク ----------
