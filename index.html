@@ -109,6 +109,12 @@
   .clock .range::-webkit-slider-runnable-track { background: linear-gradient(90deg, #22314f 0%, #e7b7a4 24%, #e3ebea 36%, #eef2ee 60%, #f0ad7e 76%, #3d4466 84%, #22314f 100%); }
   .clock .range::-moz-range-track { background: linear-gradient(90deg, #22314f 0%, #e7b7a4 24%, #e3ebea 36%, #eef2ee 60%, #f0ad7e 76%, #3d4466 84%, #22314f 100%); }
   .clock .range { width: 100%; }
+  .seasons { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0 4px; border-top: 1px solid var(--line); margin-top: 2px; }
+  .seasons[hidden] { display: none; }
+  .season-label { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .season-btns { display: flex; gap: 2px; }
+  .season-btns button { border: 0; background: transparent; border-radius: 999px; padding: 3px 8px; font-size: 11px; cursor: pointer; color: var(--ink-2); }
+  .season-btns button[aria-pressed="true"] { background: var(--tide); color: #f4faf9; }
   .caption {
     position: fixed; left: 30px; bottom: calc(96px + env(safe-area-inset-bottom, 0px));
     pointer-events: none; transition: opacity 0.4s, color 1.2s ease; color: var(--float-ink);
@@ -254,7 +260,7 @@
   <p class="eyebrow" id="eyebrow">MOONLIT TIDEPOOL</p>
   <h1 id="worldName">月と潮の磯</h1>
   <p class="lede" id="lede">月が潮を引くと、小さな世界が現れる。</p>
-  <button type="button" class="flip" id="flip"><span class="flip-icon" aria-hidden="true">↻</span><span id="flipLabel">裏返す・流氷の海へ</span></button>
+  <button type="button" class="flip" id="flip"><span class="flip-icon" aria-hidden="true">↻</span><span id="flipLabel">裏返す・オホーツクの海へ</span></button>
 </header>
 
 <nav class="views" aria-label="視点">
@@ -266,6 +272,12 @@
 <section class="clock" aria-label="時間帯">
   <div class="clock-head"><span class="clock-name" id="clockName">昼</span><span class="clock-time" id="clockTime">12:00</span></div>
   <input id="tod" class="range" type="range" min="0" max="1439" value="720" aria-label="時刻">
+  <div class="seasons" id="seasons" hidden>
+    <span class="season-label" id="seasonLabel">秋・9月</span>
+    <div class="season-btns" role="group" aria-label="季節（オホーツクの海）">
+      <button type="button" data-season="春">春</button><button type="button" data-season="夏">夏</button><button type="button" data-season="秋">秋</button><button type="button" data-season="冬">冬</button>
+    </div>
+  </div>
 </section>
 
 <section class="caption" aria-live="polite">
@@ -321,7 +333,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -448,13 +460,20 @@ scene.environmentIntensity = 0.42;
 scene.fog = new THREE.Fog('#4f9e9b', 400, 1000);
 
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 250);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.07;
+// Trackball rotation has no pole limit, so the planet can be turned any way and keeps
+// gliding a little after the pointer is released.
+const controls = new TrackballControls(camera, renderer.domElement);
+controls.rotateSpeed = 2.4;
+controls.zoomSpeed = 1.1;
+controls.panSpeed = 0.6;
+controls.staticMoving = false;
+controls.dynamicDampingFactor = 0.08;
 controls.minDistance = 1.6;
 controls.maxDistance = 110;
-controls.maxPolarAngle = Math.PI * 0.82;
-controls.autoRotateSpeed = 0.45;
+controls.keys = ['', '', ''];   // no keyboard mode switching
+let dragging = false;
+controls.addEventListener('start', () => { dragging = true; });
+controls.addEventListener('end', () => { dragging = false; });
 controls.target.set(0, 0.1, 0.8);
 
 const hemi = new THREE.HemisphereLight('#f3f7fb', '#cdbb94', 0.9);
@@ -567,12 +586,14 @@ for (let m = 0; m < MSEG; m++) bnd.push(boundaryAt(m / MSEG * TAU));
 const cSand = new THREE.Color('#ecdfc2'), cSand2 = new THREE.Color('#ddcdaa');
 const cRock = new THREE.Color('#dcd7cb'), cRock2 = new THREE.Color('#c5bdab'), cGreen = new THREE.Color('#bfc98d');
 const tmpC = new THREE.Color();
+const DEEP = new THREE.Color('#7f8f8c');
+const rimMask = (x, z) => smooth(0.72, 0.95, Math.hypot(x, z) / RIM);
 function colorAt(x, z, h, rock, out) {
   out.copy(cSand).lerp(cSand2, smooth(0.35, 0.75, fbm(x * 1.3 + 7, z * 1.3)) * 0.8);
   if (rock > 0) { tmpC.copy(cRock).lerp(cRock2, smooth(0.3, 0.8, fbm(x * 2.2, z * 2.2))); out.lerp(tmpC, rock); }
   const g = smooth(-3.2, -5.2, z) * smooth(1.9, 2.3, h);
   if (g > 0) out.lerp(cGreen, g * 0.55);
-  return out;
+  return out.lerp(DEEP, rimMask(x, z));
 }
 
 const terrainMat = wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }));
@@ -640,8 +661,21 @@ const poolMat = seaMat.clone();
 poolMat.color.set('#86cfc4');
 poolMat.opacity = 0.5;
 
-const waterGeo = new THREE.SphereGeometry(1, 180, 64, 0, TAU, 0, Math.PI / 2);
-{ const uv = waterGeo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 64, uv.getY(i) * 16); }
+// One ocean around the whole planet: warm green-blue in the north fading to cold blue
+// in the south, with no line at the equator.
+const waterGeo = new THREE.SphereGeometry(1, 180, 128);
+{
+  const uv = waterGeo.attributes.uv, p = waterGeo.attributes.position, cols = [];
+  const warm = new THREE.Color('#5fbab0'), cold = new THREE.Color('#3a7d93'), c = new THREE.Color();
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, uv.getX(i) * 64, uv.getY(i) * 32);
+    c.copy(cold).lerp(warm, smooth(-0.55, 0.55, p.getY(i)));
+    cols.push(c.r, c.g, c.b);
+  }
+  waterGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+}
+seaMat.vertexColors = true;
+const DAY_WATER = new THREE.Color('#5fbab0');
 const sea = new THREE.Mesh(waterGeo, seaMat);
 sea.position.y = CEN;
 sea.renderOrder = 2;
@@ -1415,21 +1449,69 @@ function iceHeight(x, z) {
 }
 const iceOnLand = (x, z) => iceHeight(x, z) > tideY + 0.15;
 
+// Seasons. Only the Okhotsk side (Hokkaido) has four seasons; the southern shore stays
+// the same all year. yearT runs 0..1 from 1 January and starts at today's date.
+const today = new Date();
+let yearT = ((today - new Date(today.getFullYear(), 0, 1)) / 86400000) / 365;
+const monthOf = () => ((yearT % 1) + 1) % 1 * 12;             // 0 = start of January
+const seasonName = (m) => (m < 2 || m >= 11 ? '冬' : m < 5 ? '春' : m < 8 ? '夏' : '秋');
+const SEASON_MID = { 春: 4.2, 夏: 6.6, 秋: 9.4, 冬: 1.4 };       // month used by the season buttons
+const GROUND_KEYS = [[0, '#a79a74'], [3.6, '#a79a74'], [4.5, '#9dbe70'], [6.5, '#79a55c'], [8.6, '#80a35a'], [9.6, '#b5a064'], [11, '#a79a74'], [12, '#a79a74']]
+  .map(([m, c]) => [m, new THREE.Color(c)]);
+const SEASON = { m: 0, snow: 1, ice: 1, leaf: 0, bloom: 0, autumn: 0, berries: 0, roseLeaf: 0, roseFlower: 0, hips: 0, ground: new THREE.Color() };
+function computeSeason() {
+  const m = monthOf();
+  SEASON.m = m;
+  SEASON.snow = Math.max(1 - smooth(2.8, 4.0, m), smooth(10.4, 11.4, m));
+  SEASON.ice = smooth(0.3, 1.1, m) * (1 - smooth(2.7, 3.5, m));          // drift ice: February-March
+  SEASON.leaf = smooth(3.9, 4.7, m) * (1 - smooth(10.1, 10.8, m));
+  SEASON.bloom = smooth(3.7, 4.05, m) * (1 - smooth(4.45, 4.85, m));      // Ezo mountain cherry: early May
+  SEASON.autumn = smooth(8.6, 9.5, m);
+  SEASON.berries = Math.max(smooth(8.3, 8.9, m), 1 - smooth(2.6, 3.2, m));
+  SEASON.roseLeaf = smooth(4.3, 4.9, m) * (1 - smooth(9.8, 10.4, m));
+  SEASON.roseFlower = smooth(5.2, 5.7, m) * (1 - smooth(7.8, 8.3, m));
+  SEASON.hips = smooth(7.9, 8.4, m) * (1 - smooth(9.9, 10.4, m));
+  let i = 0;
+  while (GROUND_KEYS[i + 1][0] <= m) i++;
+  const [ma, ca] = GROUND_KEYS[i], [mb, cb] = GROUND_KEYS[i + 1];
+  SEASON.ground.lerpColors(ca, cb, smooth(0, 1, (m - ma) / (mb - ma)));
+}
+computeSeason();
+
 const cSnow = new THREE.Color('#f2f6f8'), cSnow2 = new THREE.Color('#dfe8ee'), cGravel = new THREE.Color('#8f979b'), cSeabed = new THREE.Color('#6f8087');
-let iceTerrain;
-const iceRocks = [];
+let iceTerrain, iceColorData, snowMounds;
+const iceRocks = [], snowCaps = [];
+// paint the Okhotsk ground for the current season: bare grass, green, autumn brown, or snow
+function recolorIce(col = iceColorData.col) {
+  const { base, land, top, rim, tint } = iceColorData, c = new THREE.Color(), g = new THREE.Color();
+  for (let j = 0; j < land.length; j++) {
+    const i = j * 3;
+    g.copy(SEASON.ground).offsetHSL(0, 0, (tint[j] - 0.5) * 0.08);
+    c.setRGB(base[i], base[i + 1], base[i + 2]).lerp(g, land[j]);
+    c.lerp(cSnow2, land[j] * SEASON.snow).lerp(cSnow, top[j] * 0.8 * SEASON.snow);
+    c.lerp(DEEP, rim[j]);
+    col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b;
+  }
+  if (iceTerrain) iceTerrain.geometry.attributes.color.needsUpdate = true;
+}
 {
-  const pos = new Float32Array((K + 1) * MSEG * 3), col = new Float32Array((K + 1) * MSEG * 3), c = new THREE.Color();
+  const N = (K + 1) * MSEG, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), c = new THREE.Color();
+  const base = new Float32Array(N * 3), land = new Float32Array(N), top = new Float32Array(N), rim = new Float32Array(N), tint = new Float32Array(N);
   for (let k = 0; k <= K; k++) {
     const s = k / K;
     for (let m = 0; m < MSEG; m++) {
-      const x = bnd[m][0] * s, z = bnd[m][1] * s, h = iceHeight(x, z), i = (k * MSEG + m) * 3;
+      const x = bnd[m][0] * s, z = bnd[m][1] * s, h = iceHeight(x, z), j = k * MSEG + m, i = j * 3;
       pos[i] = x; pos[i + 1] = h; pos[i + 2] = z;
-      c.copy(cSeabed).lerp(cGravel, smooth(-2.5, 0.2, h)).lerp(cSnow2, smooth(0.9, 1.5, h + (fbm(x * 2, z * 2) - 0.5) * 0.5));
-      c.lerp(cSnow, smooth(1.5, 2.1, h) * 0.8);
-      col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b;
+      c.copy(cSeabed).lerp(cGravel, smooth(-2.5, 0.2, h));
+      base[i] = c.r; base[i + 1] = c.g; base[i + 2] = c.b;
+      land[j] = smooth(0.9, 1.5, h + (fbm(x * 2, z * 2) - 0.5) * 0.5);
+      top[j] = smooth(1.5, 2.1, h);
+      rim[j] = rimMask(x, z);
+      tint[j] = fbm(x * 1.4 + 3, z * 1.4);
     }
   }
+  iceColorData = { col, base, land, top, rim, tint };
+  recolorIce(col);
   const idx = [];
   for (let k = 0; k < K; k++) for (let m = 0; m < MSEG; m++) {
     const a = k * MSEG + m, b = k * MSEG + (m + 1) % MSEG, cc = (k + 1) * MSEG + m, d = (k + 1) * MSEG + (m + 1) % MSEG;
@@ -1457,22 +1539,14 @@ const iceRocks = [];
     const s = sr(0.3, 0.65), m = new THREE.Mesh(rockGeos[n % rockGeos.length], dark);
     m.scale.set(s, s * 0.7, s * sr(0.8, 1.1)); m.rotation.y = sr(0, TAU); m.position.set(x, h + s * 0.1, z);
     const cap = new THREE.Mesh(rockGeos[(n + 2) % rockGeos.length], snowM);
-    cap.scale.set(0.85, 0.35, 0.85); cap.position.y = 0.55; m.add(cap);
+    cap.scale.set(0.85, 0.35, 0.85); cap.position.y = 0.55; m.add(cap); snowCaps.push(cap);
     m.castShadow = m.receiveShadow = true; cap.castShadow = true;
     iceSide.add(m); iceRocks.push(m);
     n++;
   }
 }
 
-// cold sea (same water shape as the shore side)
-const iceSeaMat = seaMat.clone();
-iceSeaMat.color.set('#3c7f93');
-iceSeaMat.opacity = 0.66;
-const iceSea = new THREE.Mesh(waterGeo, iceSeaMat);
-iceSea.position.y = CEN;
-iceSea.renderOrder = 2;
-iceSea.userData.noBend = true;
-iceSide.add(iceSea);
+
 
 // conifers with snow, and a bare snag for the eagle
 {
@@ -1487,7 +1561,7 @@ iceSide.add(iceSea);
     for (let i = 0; i < 3; i++) {
       const w = 0.62 - i * 0.16, y = 0.45 + i * 0.42;
       const c1 = new THREE.Mesh(cone, needle); c1.scale.set(w, 0.7, w); c1.position.y = y + 0.35; g.add(c1);
-      const c2 = new THREE.Mesh(cone, snowTop); c2.scale.set(w * 0.72, 0.3, w * 0.72); c2.position.y = y + 0.56; g.add(c2);
+      const c2 = new THREE.Mesh(cone, snowTop); c2.scale.set(w * 0.72, 0.3, w * 0.72); c2.position.y = y + 0.56; g.add(c2); snowCaps.push(c2);
     }
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     g.position.set(x, iceHeight(x, z) - 0.05, z); g.scale.setScalar(s); g.rotation.y = sr(0, TAU);
@@ -1501,8 +1575,99 @@ iceSide.add(iceSea);
     const s = sr(0.5, 1.2);
     mounds.push({ x, y: iceHeight(x, z) - 0.05, z, ry: sr(0, TAU), sx: s, sy: s * 0.35, sz: s });
   }
-  instanced(new THREE.IcosahedronGeometry(0.35, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.85 }), mounds,
+  snowMounds = instanced(new THREE.IcosahedronGeometry(0.35, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.85 }), mounds,
     (c) => c.set('#f1f5f8').offsetHSL(0, 0, sr(-0.03, 0.01)), iceSide);
+}
+
+// deciduous trees: Ezo mountain cherry (pink in May) and rowan (red leaves and berries in autumn)
+const seasonalTrees = [];
+function makeDeciduous(kind) {
+  const g = new THREE.Group(), wood = M('#6d5646', { roughness: 0.9 });
+  const t1 = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, 1.3, 6), wood); t1.position.y = 0.65; g.add(t1);
+  for (let i = 0; i < 4; i++) {
+    const a = i / 4 * TAU + 0.4, b = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.045, 0.7, 5), wood);
+    b.position.set(Math.cos(a) * 0.2, 1.3, Math.sin(a) * 0.2); b.rotation.set(Math.sin(a) * 0.8, 0, -Math.cos(a) * 0.8); g.add(b);
+  }
+  const crown = new THREE.Group(); crown.position.y = 1.55; g.add(crown);
+  const mats = [new THREE.MeshStandardMaterial({ roughness: 0.8, flatShading: true }), new THREE.MeshStandardMaterial({ roughness: 0.8, flatShading: true })];
+  for (let i = 0; i < 9; i++) {
+    const a = sr(0, TAU), r = sr(0.1, 0.65);
+    const leaf = new THREE.Mesh(crownGeo, mats[i % 2]);
+    leaf.position.set(Math.cos(a) * r, sr(-0.1, 0.45), Math.sin(a) * r);
+    leaf.scale.set(sr(0.4, 0.6), sr(0.3, 0.42), sr(0.4, 0.6));
+    crown.add(leaf);
+  }
+  const berries = new THREE.Group(); g.add(berries);
+  if (kind === 'nanakamado') {
+    const red = M('#c7242c', { roughness: 0.4 });
+    for (let i = 0; i < 7; i++) {
+      const a = sr(0, TAU), cl = new THREE.Group(); cl.position.set(Math.cos(a) * sr(0.3, 0.7), sr(1.3, 1.9), Math.sin(a) * sr(0.3, 0.7));
+      for (let k = 0; k < 5; k++) blob(cl, red, sr(-0.06, 0.06), sr(-0.05, 0.03), sr(-0.06, 0.06), 0.04);
+      berries.add(cl);
+    }
+  }
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return { group: g, crown, mats, berries, kind };
+}
+{
+  let placed = 0;
+  for (let tries = 0; tries < 900 && placed < 8; tries++) {
+    const x = sr(-A, A), z = sr(-B, -3.6);
+    if (seF(x, z) > 0.8 || iceHeight(x, z) < 1.7) continue;
+    if (seasonalTrees.some(t => Math.hypot(t.x - x, t.z - z) < 1.6)) continue;
+    const kind = placed % 2 ? 'nanakamado' : 'sakura', t = makeDeciduous(kind);
+    t.group.position.set(x, iceHeight(x, z) - 0.05, z);
+    t.group.scale.setScalar(sr(0.9, 1.2));
+    t.group.rotation.y = sr(0, TAU);
+    Object.assign(t, { x, z });
+    seasonalTrees.push(t);
+    placed++;
+  }
+}
+const LEAF = {
+  sakura: { spring: new THREE.Color('#8fbf5e'), summer: new THREE.Color('#5c9a48'), autumnA: new THREE.Color('#e0a13c'), autumnB: new THREE.Color('#d8702f'), bloomA: new THREE.Color('#f6c3d3'), bloomB: new THREE.Color('#fde3ec') },
+  nanakamado: { spring: new THREE.Color('#9cc768'), summer: new THREE.Color('#4f8d44'), autumnA: new THREE.Color('#c8322a'), autumnB: new THREE.Color('#e0592e') },
+};
+function updateTrees() {
+  const tmp = new THREE.Color();
+  for (const t of seasonalTrees) {
+    const L = LEAF[t.kind], green = tmp.copy(L.spring).lerp(L.summer, smooth(4.6, 6, SEASON.m));
+    t.mats.forEach((mat, i) => {
+      mat.color.copy(green).lerp(i ? L.autumnB : L.autumnA, SEASON.autumn);
+      if (t.kind === 'sakura') mat.color.lerp(i ? L.bloomB : L.bloomA, SEASON.bloom);
+    });
+    const amount = t.kind === 'sakura' ? Math.max(SEASON.leaf, SEASON.bloom) : SEASON.leaf;
+    t.crown.scale.setScalar(Math.max(0.001, amount));
+    t.crown.visible = amount > 0.01;
+    t.berries.visible = SEASON.berries > 0.5;
+  }
+}
+
+// rugosa roses along the upper beach: leaves in summer, pink flowers in June-August, red hips after
+const roses = [];
+{
+  const leafM = M('#4f8a45', { roughness: 0.8, flatShading: true }), flowerM = M('#e25a95', { roughness: 0.5 }), hipM = M('#d8412c', { roughness: 0.4 });
+  for (let tries = 0; tries < 900 && roses.length < 7; tries++) {
+    const x = sr(-A, A), z = sr(-6.5, -2.5), h = iceHeight(x, z);
+    if (seF(x, z) > 0.8 || h < 0.9 || h > 1.9) continue;
+    if (roses.some(r => Math.hypot(r.x - x, r.z - z) < 1.5)) continue;
+    const g = new THREE.Group(), leaves = new THREE.Group(), flowers = new THREE.Group(), hips = new THREE.Group();
+    g.add(leaves, flowers, hips);
+    for (let i = 0; i < 6; i++) { const l = new THREE.Mesh(crownGeo, leafM); l.position.set(sr(-0.3, 0.3), sr(0.1, 0.3), sr(-0.3, 0.3)); l.scale.set(0.3, 0.2, 0.3); leaves.add(l); }
+    for (let i = 0; i < 6; i++) { const px = sr(-0.3, 0.3), py = sr(0.3, 0.45), pz = sr(-0.3, 0.3); blob(flowers, flowerM, px, py, pz, 0.07, 0.03, 0.07); blob(flowers, M('#f4d35e'), px, py + 0.02, pz, 0.02); }
+    for (let i = 0; i < 6; i++) blob(hips, hipM, sr(-0.3, 0.3), sr(0.28, 0.42), sr(-0.3, 0.3), 0.045);
+    g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    g.position.set(x, h - 0.02, z);
+    roses.push({ group: g, leaves, flowers, hips, x, z });
+  }
+}
+function updateRoses() {
+  for (const r of roses) {
+    r.leaves.scale.setScalar(Math.max(0.001, SEASON.roseLeaf));
+    r.leaves.visible = SEASON.roseLeaf > 0.01;
+    r.flowers.visible = SEASON.roseFlower > 0.4;
+    r.hips.visible = SEASON.hips > 0.4;
+  }
 }
 const SNAG = { x: ISLET.x - 0.3, z: ISLET.z - 0.2 };
 const snagTopY = (() => {
@@ -1564,32 +1729,80 @@ for (let n = 0, tries = 0; n < 3 && tries < 800; tries++) {
   floes.push(f);
   n++;
 }
+// A slow anticlockwise gyre fills the bay; the floes and the streaks on the water follow it.
+const GYRE = { x: -0.5, z: 4.2 };
+function flowAt(x, z, out) {
+  const dx = x - GYRE.x, dz = z - GYRE.z, r = Math.hypot(dx, dz) + 1e-3;
+  const sp = 0.2 * smooth(0.3, 2.2, r) * (1 - smooth(7.2, 9.2, r));
+  out.x = -dz / r * sp - dx / r * 0.01;
+  out.z = dx / r * sp - dz / r * 0.01;
+  return out;
+}
+const flowTmp = { x: 0, z: 0 };
 function updateFloes(dt, t) {
   for (const f of floes) {
-    // a slow, wandering current plus a little push away from the edge and the beach
-    f.vx += (Math.sin(t * 0.05 + f.ph) * 0.02 - f.x * 0.0015) * dt;
-    f.vz += (Math.cos(t * 0.04 + f.ph * 1.7) * 0.02 - (f.z - 2.5) * 0.0015) * dt;
+    if (!f.mesh.visible) continue;
+    // follow the current, eased so the floes feel heavy
+    flowAt(f.x, f.z, flowTmp);
+    const k = Math.min(1, dt * 0.35);
+    f.vx += (flowTmp.x - f.vx) * k;
+    f.vz += (flowTmp.z - f.vz) * k;
+    const di = Math.hypot(f.x - ISLET.x, f.z - ISLET.z), minI = f.r + 1.5;
+    if (di < minI) { f.vx += (f.x - ISLET.x) / di * (minI - di) * 0.8 * dt; f.vz += (f.z - ISLET.z) / di * (minI - di) * 0.8 * dt; }
     for (const o of floes) {
       if (o === f) continue;
       const dx = f.x - o.x, dz = f.z - o.z, d = Math.hypot(dx, dz), min = f.r + o.r + 0.1;
       if (d < min && d > 1e-4) { const k = (min - d) * 0.6 * dt; f.vx += dx / d * k; f.vz += dz / d * k; }
     }
     if (seF(f.x, f.z) > 0.6) { f.vx -= f.x * 0.01 * dt; f.vz -= f.z * 0.01 * dt; }
-    if (f.home) { f.vx += (f.home.x - f.x) * 0.02 * dt; f.vz += (f.home.z - f.z) * 0.02 * dt; }
+    if (f.home) { f.vx += (f.home.x - f.x) * 0.05 * dt - flowTmp.x * k; f.vz += (f.home.z - f.z) * 0.05 * dt - flowTmp.z * k; }
     const floor = iceHeight(f.x, f.z);
     f.grounded = floor + 0.26 > tideY;
-    const damp = f.grounded ? 0.8 : 0.995;
+    const damp = f.grounded ? 0.8 : 1;
     f.vx *= Math.pow(damp, dt * 60); f.vz *= Math.pow(damp, dt * 60);
-    const nx = f.x + f.vx * dt * 6, nz = f.z + f.vz * dt * 6;
+    const nx = f.x + f.vx * dt, nz = f.z + f.vz * dt;
     if (!f.home && iceHeight(nx, nz) + 0.26 > tideY + 0.05 && !f.grounded) { f.vx *= -0.3; f.vz *= -0.3; }
     else { f.x = nx; f.z = nz; }
     const bob = f.grounded ? 0 : Math.sin(t * 0.9 + f.ph) * 0.025;
     const want = Math.max(tideY + bob, floor + 0.26);
     f.y += (want - f.y) * Math.min(1, dt * 2);
-    f.rot += f.spin * dt * (f.grounded ? 0 : 1);
+    f.rot += (f.spin + 0.02) * dt * (f.grounded ? 0 : 1);
     f.mesh.position.set(f.x, f.y, f.z);
     f.mesh.rotation.set(f.grounded ? 0.03 : Math.sin(t * 0.7 + f.ph) * 0.012, f.rot, f.grounded ? -0.02 : Math.cos(t * 0.6 + f.ph) * 0.012);
   }
+}
+
+const streaks = (() => {
+  const N = 90, g = new THREE.PlaneGeometry(0.7, 0.045).rotateX(-Math.PI / 2);
+  const im = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: '#e8f6fb', transparent: true, opacity: 0.4, depthWrite: false }), N);
+  im.userData = { noBend: true, items: Array.from({ length: N }, () => ({ x: 0, z: 0, life: 0, max: 1 })) };
+  im.frustumCulled = false;
+  im.renderOrder = 3;
+  iceSide.add(im);
+  return im;
+})();
+function updateStreaks(dt) {
+  const o = new THREE.Object3D(), n = new THREE.Vector3(), q = new THREE.Quaternion(), yq = new THREE.Quaternion();
+  streaks.userData.items.forEach((it, i) => {
+    it.life -= dt;
+    if (it.life <= 0) {
+      for (let k = 0; k < 10; k++) {
+        const a = rr(0, TAU), r = rr(1.5, 8.5), x = GYRE.x + Math.cos(a) * r, z = GYRE.z + Math.sin(a) * r;
+        if (seF(x, z) < 0.7 && iceHeight(x, z) < tideY - 0.6) { it.x = x; it.z = z; break; }
+      }
+      it.max = it.life = rr(5, 10);
+    }
+    flowAt(it.x, it.z, flowTmp);
+    it.x += flowTmp.x * dt * 1.4; it.z += flowTmp.z * dt * 1.4;
+    const fade = Math.sin(Math.PI * clamp(it.life / it.max, 0, 1));
+    bendVec(it.x, tideY + 0.03, it.z, o.position);
+    q.setFromUnitVectors(UP, normalAt(it.x, it.z, n));
+    o.quaternion.copy(q).multiply(yq.setFromAxisAngle(UP, Math.atan2(-flowTmp.z, flowTmp.x)));
+    o.scale.set(Math.max(0.01, fade), 1, 1);
+    o.updateMatrix();
+    streaks.setMatrixAt(i, o.matrix);
+  });
+  streaks.instanceMatrix.needsUpdate = true;
 }
 
 // falling snow, drawn only while the ice side faces up
@@ -1598,18 +1811,28 @@ const snow = (() => {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(p, 3));
   const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: 0.07, transparent: true, opacity: 0.85, depthWrite: false }));
-  pts.userData = { noBend: true, flat: Array.from({ length: N }, () => ({ x: rr(-RIM, RIM) * 0.9, z: rr(-RIM, RIM) * 0.9, y: rr(0, 10), v: rr(0.35, 0.6) })) };
+  pts.userData = { noBend: true, flat: Array.from({ length: N }, () => { const x = rr(-RIM, RIM) * 0.9, z = rr(-RIM, RIM) * 0.9; return { x, z, y: rr(0, 10), v: rr(0.35, 0.6), g: iceHeight(x, z) }; }) };
   pts.visible = false;
   pts.frustumCulled = false;
   iceSide.add(pts);
   return pts;
 })();
+const PARTICLE = { snow: new THREE.Color('#ffffff'), petal: new THREE.Color('#f7c6d6'), leaf: new THREE.Color('#e08a3c') };
 function updateSnow(dt, t) {
-  const p = snow.geometry.attributes.position, v = new THREE.Vector3();
+  const p = snow.geometry.attributes.position, v = new THREE.Vector3(), N = snow.userData.flat.length;
+  const kind = SEASON.bloom > 0.3 ? 'petal' : SEASON.snow > 0.5 ? 'snow' : SEASON.autumn > 0.5 && SEASON.leaf > 0.3 ? 'leaf' : null;
+  snow.visible = !!kind;
+  if (!kind) return;
+  snow.material.color.copy(PARTICLE[kind]);
+  snow.material.size = kind === 'snow' ? 0.07 : 0.1;
+  const count = kind === 'snow' ? N : kind === 'petal' ? Math.floor(N * 0.35) : Math.floor(N * 0.12);
+  snow.geometry.setDrawRange(0, count);
+  const slow = kind === 'snow' ? 1 : 0.55;
   snow.userData.flat.forEach((f, i) => {
-    f.y -= dt * f.v;
-    f.x += Math.sin(t * 0.6 + i) * dt * 0.12;
-    if (f.y < Math.max(tideY, iceHeight(f.x, f.z)) || Math.hypot(f.x, f.z) > RIM * 0.95) { f.y = 10; f.x = rr(-RIM, RIM) * 0.9; f.z = rr(-RIM, RIM) * 0.9; }
+    if (i >= count) return;
+    f.y -= dt * f.v * slow;
+    f.x += Math.sin(t * 0.6 + i) * dt * (slow < 1 ? 0.35 : 0.12);
+    if (f.y < Math.max(tideY, f.g) || Math.hypot(f.x, f.z) > RIM * 0.95) { f.y = 10; f.x = rr(-RIM, RIM) * 0.9; f.z = rr(-RIM, RIM) * 0.9; f.g = iceHeight(f.x, f.z); }
     bendVec(f.x, f.y, f.z, v);
     p.setXYZ(i, v.x, v.y, v.z);
   });
@@ -1704,20 +1927,20 @@ function makeFox() {
 
 Object.assign(SPECIES, {
   gomafu: {
-    name: 'ゴマフアザラシ', sci: 'Phoca largha', kind: '哺乳類・アザラシのなかま', side: 'ice',
+    name: 'ゴマフアザラシ', sci: 'Phoca largha', kind: '哺乳類・アザラシのなかま', side: 'ice', active: () => SEASON.m < 5 || SEASON.m >= 11,
     desc: '冬に流氷に乗って北海道の沿岸へやってくるアザラシ。灰色の体に、ごまをふったような黒い斑点があります。',
     size: '全長 約1.6m', habitat: '流氷の上・冷たい沿岸',
     status: (ind) => ind.react > 0 ? '顔を上げて、こちらをじっと見ています。'
       : ind.swim ? '氷の下を、すいすいと泳いでいます。' : ind.floe && ind.floe.grounded ? '浜に乗り上げた氷の上で、のんびり休んでいます。' : '流氷の上で、波にゆられて休んでいます。',
   },
   clione: {
-    name: 'クリオネ', sci: 'Clione limacina', kind: '軟体動物・巻き貝のなかま', side: 'ice',
+    name: 'クリオネ', sci: 'Clione limacina', kind: '軟体動物・巻き貝のなかま', side: 'ice', active: () => SEASON.m >= 0.8 && SEASON.m < 4.2,
     desc: '「流氷の天使」と呼ばれる、殻のない小さな巻き貝。透きとおった体で、翼のような足をぱたぱた動かして泳ぎます。',
     size: '体長 約1〜3cm', habitat: '流氷の下の冷たい海',
     status: (ind) => ind.react > 0 ? '頭から触手を出しかけて、すぐにしまいました。' : nightF > 0.5 ? '暗い海の中で、赤い体がぼんやり透けています。' : '翼足をはばたかせて、ゆっくり浮かんでいます。',
   },
   oowashi: {
-    name: 'オオワシ', sci: 'Haliaeetus pelagicus', kind: '鳥類・タカのなかま', side: 'ice',
+    name: 'オオワシ', sci: 'Haliaeetus pelagicus', kind: '鳥類・タカのなかま', side: 'ice', active: () => SEASON.m < 3.3 || SEASON.m >= 10.6,
     desc: '冬にロシアから渡ってくる、日本でいちばん大きなワシ。黄色い大きなくちばしと、肩の白い羽が目印です。',
     size: '全長 約90cm・翼を広げると約2.4m', habitat: '流氷の海・海岸の林',
     status: (ind) => ind.react > 0 ? '大きな翼を広げて、胸を張りました。' : nightF > 0.5 ? '枝の上で、夜が明けるのを待っています。' : '高い枝から、流氷の上の獲物を探しています。',
@@ -1726,23 +1949,59 @@ Object.assign(SPECIES, {
     name: 'キタキツネ', sci: 'Vulpes vulpes schrencki', kind: '哺乳類・イヌのなかま', side: 'ice',
     desc: '北海道にすむキツネ。冬は毛がふかふかに伸びて、黒い足先と白い尾の先が雪の上でよく目立ちます。',
     size: '体長 約60cm・尾 約40cm', habitat: '雪の海岸・林のまわり',
-    status: (ind) => ind.react > 0 ? '耳をぴんと立てて、立ち止まりました。' : ind.moving ? '雪の上を、足跡をつけながら歩いています。' : '雪の下の音に、耳をすませています。',
+    status: (ind) => ind.react > 0 ? '耳をぴんと立てて、立ち止まりました。'
+      : SEASON.snow > 0.5 ? (ind.moving ? '雪の上を、足跡をつけながら歩いています。' : '雪の下の音に、耳をすませています。')
+      : SEASON.m < 6 ? '子ギツネが生まれる季節。巣穴のまわりでエサを探しています。'
+      : SEASON.m < 8.5 ? '夏毛になって、ほっそりした姿で歩いています。' : '冬に備えて、毛がふかふかになってきました。',
   },
   ryuhyo: {
-    name: '流氷', sci: 'Drift ice', kind: '海の氷', side: 'ice',
+    name: '流氷', sci: 'Drift ice', kind: '海の氷', side: 'ice', active: () => SEASON.ice > 0.3,
     desc: 'アムール川から流れこんだ水が冷やされてできた海の氷が、風と海流に運ばれて北海道のオホーツク海沿岸までやってきます。',
     size: '一枚の大きさは数mから数km', habitat: 'オホーツク海（1月〜3月ごろ）',
     status: () => {
       const g = floes.filter(f => f.grounded).length;
-      return g > 0 ? `潮が引いて、${g}枚の氷が浜に乗り上げています。` : '潮の流れにのって、ゆっくり漂っています。';
+      return g > 0 ? `潮が引いて、${g}枚の氷が浜に乗り上げています。` : SEASON.ice < 0.9 ? '春が近づいて、氷が少しずつとけています。' : '湾をめぐる海流にのって、ゆっくり回っています。';
     },
   },
+  umineko: {
+    name: 'ウミネコ', sci: 'Larus crassirostris', kind: '鳥類・カモメのなかま', side: 'ice', active: () => SEASON.m >= 2.5 && SEASON.m < 10.5,
+    desc: 'ネコのような「ミャオ」という声で鳴くカモメ。春に北の海岸へやってきて、崖や島で子育てをします。',
+    size: '全長 約46cm', habitat: '海岸・岬・漁港',
+    status: (ind) => ind.react > 0 ? '「ミャオ」と鳴いて、向きを変えました。' : SEASON.m < 7.5 ? '子育ての季節。海の上を回って、エサの魚を探しています。' : '潮風にのって、ゆったり飛んでいます。',
+  },
+  sake: {
+    name: 'シロザケ', sci: 'Oncorhynchus keta', kind: '魚類・サケのなかま', side: 'ice', active: () => SEASON.m >= 8.3 && SEASON.m < 11,
+    desc: '北の海を4年ほど旅して、秋に生まれた川へ帰ってくるサケ。川に近づくと体に赤むらさきの模様（婚姻色）が出ます。',
+    size: '全長 約70cm', habitat: '北の海から、生まれた川へ',
+    status: () => '生まれた川を目指して、岸の近くを群れで泳いでいます。',
+  },
+  sakura: {
+    name: 'エゾヤマザクラ', sci: 'Cerasus sargentii', kind: '植物・バラのなかま', side: 'ice',
+    desc: '北海道の春を告げる桜。本州より1か月ほど遅い5月ごろ、葉と同時に濃いピンクの花を咲かせます。',
+    size: '高さ 約10〜15m', habitat: '北海道の山野・海岸の林',
+    status: () => SEASON.bloom > 0.4 ? '満開です。北海道の桜は5月に咲きます。' : SEASON.leaf < 0.05 ? '葉を落として、春を待っています。'
+      : SEASON.autumn > 0.5 ? '葉が黄色やだいだい色に色づいています。' : '青々とした葉を広げています。',
+  },
+  nanakamado: {
+    name: 'ナナカマド', sci: 'Sorbus commixta', kind: '植物・バラのなかま', side: 'ice',
+    desc: '「7回かまどに入れても燃えない」と言われるほど燃えにくい木。秋は真っ赤な葉と赤い実がきれいで、実は冬も枝に残ります。',
+    size: '高さ 約7〜10m', habitat: '北海道の山野・街路樹',
+    status: () => SEASON.leaf < 0.05 ? (SEASON.berries > 0.5 ? '葉を落とした枝に、赤い実が残っています。鳥のごちそうです。' : '葉を落として、春を待っています。')
+      : SEASON.autumn > 0.5 ? '葉が真っ赤に色づき、赤い実がたわわです。' : SEASON.m < 6.5 ? '白い小さな花が集まって咲いています。' : '青い実が、秋に向けて育っています。',
+  },
+  hamanasu: {
+    name: 'ハマナス', sci: 'Rosa rugosa', kind: '植物・バラのなかま', side: 'ice', active: () => SEASON.roseLeaf > 0.1,
+    desc: '北の海岸の砂地に咲く野生のバラ。夏に濃いピンクの花を咲かせ、秋には赤く丸い実がなります。',
+    size: '高さ 約1〜1.5m', habitat: '北の海岸の砂浜',
+    status: () => SEASON.roseFlower > 0.4 ? 'ピンクの花が咲き、甘い香りがただよっています。' : SEASON.hips > 0.4 ? '赤く丸い実がなっています。' : '葉をしげらせて、花の季節を待っています。',
+  },
 });
-const ORDER_ICE = ['gomafu', 'clione', 'oowashi', 'kitsune', 'ryuhyo'];
+const ORDER_ICE = ['ryuhyo', 'gomafu', 'clione', 'oowashi', 'kitsune', 'umineko', 'sake', 'sakura', 'nanakamado', 'hamanasu'];
+const isActive = (ind) => (ind.activeFn ? ind.activeFn() : SPECIES[ind.species].active?.() ?? true);
 
 // floes are clickable too; seals ride on the three biggest
 floes.forEach((f) => {
-  register({ species: 'ryuhyo', sideName: 'ice', group: f.mesh, fixed: true, update() {}, pick: f.r, pickShape: [f.r, 0.28, f.r], pickY: 0.05, focus: 5.5, floe: f, ringY: () => f.y + 0.2 });
+  register({ species: 'ryuhyo', sideName: 'ice', group: f.mesh, fixed: true, update() {}, activeFn: () => SEASON.ice > 0.3, pick: f.r, pickShape: [f.r, 0.28, f.r], pickY: 0.05, focus: 5.5, floe: f, ringY: () => f.y + 0.2 });
 });
 [0, 1, 2].forEach((i) => {
   const f = floes[i];
@@ -1751,7 +2010,7 @@ floes.forEach((f) => {
   s.group.position.set(rr(-0.3, 0.3) * f.r, 0.18, rr(-0.3, 0.3) * f.r);
   s.group.rotation.y = rr(0, TAU);
   register({
-    species: 'gomafu', sideName: 'ice', ...s, parent: f.mesh, floe: f, fixed: true, pick: 0.55, pickY: 0.28, focus: 3.4, ph: rr(0, TAU),
+    species: 'gomafu', sideName: 'ice', ...s, parent: f.mesh, floe: f, fixed: true, activeFn: () => SEASON.ice > 0.3, pick: 0.55, pickY: 0.28, focus: 3.4, ph: rr(0, TAU),
     ringY: () => f.y + 0.2,
     update(ind, dt, t) {
       const up = ind.react > 0 ? -0.55 : -0.12 + Math.max(0, Math.sin(t * 0.35 + ind.ph)) * -0.35;
@@ -1839,6 +2098,57 @@ for (let k = 0; k < 2; k++) {
       ind.head.rotation.x = ind.react > 0 ? -0.3 : mv ? 0 : 0.35 + Math.sin(t * 0.8) * 0.1;
     },
   }));
+}
+// seasonal plants are clickable too
+seasonalTrees.forEach((t) => register({ species: t.kind, sideName: 'ice', ...t, fixed: true, staticPos: true, update() {}, pick: 0.8, pickY: 1.4, focus: 4.2 }));
+roses.forEach((r) => register({ species: 'hamanasu', sideName: 'ice', ...r, fixed: true, staticPos: true, update() {}, pick: 0.45, pickY: 0.25, focus: 2.4 }));
+
+function makeGull() {
+  const g = new THREE.Group(), white = M('#f7f7f4', { roughness: 0.6 }), grey = M('#5f6770', { roughness: 0.6 }), yellow = M('#f0c83c');
+  blob(g, white, 0, 0, 0, 0.1, 0.09, 0.26);
+  blob(g, white, 0, 0.05, 0.22, 0.075);
+  const bk = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.1, 5), yellow); bk.rotation.x = Math.PI / 2; bk.position.set(0, 0.04, 0.32); g.add(bk);
+  blob(g, M('#16181a'), 0, 0.01, -0.28, 0.06, 0.02, 0.07);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(s * 0.08, 0.03, 0.02); g.add(w);
+    const m = blob(w, grey, s * 0.3, 0, 0, 0.3, 0.02, 0.11); m.rotation.y = s * -0.1;
+    blob(w, M('#16181a'), s * 0.56, 0, -0.02, 0.07, 0.018, 0.07);
+    wings.push(w);
+  }
+  return { group: g, wings };
+}
+for (let k = 0; k < 3; k++) {
+  const gl = makeGull();
+  register({
+    species: 'umineko', sideName: 'ice', ...gl, fixed: true, pick: 0.45, pickY: 0, focus: 3.6, a: rr(0, TAU), r: rr(3, 6.5), cx: rr(-3, 2), cz: rr(1.5, 5), ph: rr(0, TAU),
+    ringY: (p) => p.y - 0.5,
+    update(ind, dt, t) {
+      ind.a += dt * (0.9 / ind.r);
+      const x = ind.cx + Math.cos(ind.a) * ind.r, z = ind.cz + Math.sin(ind.a) * ind.r * 0.7;
+      ind.group.position.set(x, tideY + 2.6 + Math.sin(t * 0.7 + ind.ph) * 0.4, z);
+      ind.group.rotation.set(0, Math.atan2(-Math.sin(ind.a) * ind.r, Math.cos(ind.a) * ind.r * 0.7), -0.25);
+      const flap = Math.sin(t * (ind.react > 0 ? 12 : 5) + ind.ph) * 0.45;
+      ind.wings[0].rotation.z = flap; ind.wings[1].rotation.z = -flap;
+    },
+  });
+}
+const SALMON = { len: 0.7, w: 0.07, d: 0.12, body: '#8f9ea4', fin: '#5d6a70', belly: '#d9d2c8', spots: '#7a3f5c', iris: '#e0e0d8' };
+for (let k = 0; k < 6; k++) {
+  const f = makeFish(SALMON);
+  register({
+    species: 'sake', sideName: 'ice', ...f, fixed: true, pick: 0.35, pickY: 0, focus: 3, a: k * 0.35, ph: rr(0, TAU), off: rr(-0.5, 0.5),
+    ringY: (p) => p.y - 0.3,
+    update(ind, dt, t) {
+      ind.a += dt * 0.05;
+      // a loop along the shore
+      const u = ind.a * TAU, x = -1 + Math.cos(u) * 5.5, z = 0.4 + Math.sin(u) * 1.1 + ind.off;
+      const floor = iceHeight(x, z), y = clamp(tideY - 0.6, floor + 0.3, tideY - 0.3);
+      ind.group.position.set(x, y, z);
+      ind.group.rotation.y = Math.atan2(-Math.sin(u) * 5.5, Math.cos(u) * 1.1);
+      ind.tail.rotation.y = Math.sin(t * 7 + ind.ph) * 0.35;
+    },
+  });
 }
 const heightOnSide = (name) => name === 'ice' ? iceHeight : heightAt;
 
@@ -1928,7 +2238,7 @@ function viewPose(name) {
 let camAnim = null;
 function flyTo(pos, target, dur = 1.6) {
   if (reduceMotion) dur = 0.01;
-  camAnim = { p0: camera.position.clone(), p1: pos, t0: controls.target.clone(), t1: target, t: 0, dur };
+  camAnim = { p0: camera.position.clone(), p1: pos, t0: controls.target.clone(), t1: target, u0: camera.up.clone(), t: 0, dur };
 }
 controls.addEventListener('start', () => { camAnim = null; });
 
@@ -2007,8 +2317,8 @@ function updateDay(dt) {
   hemi.groundColor.copy(m.ground);
   hemi.intensity = m.hemi;
   scene.environmentIntensity = m.env;
-  seaMat.color.copy(m.water);
-  iceSeaMat.color.copy(m.water).lerp(ICE_WATER, 0.55);
+  // vertex colours carry warm/cold; the material colour only dims them through the day
+  seaMat.color.setRGB(m.water.r / DAY_WATER.r, m.water.g / DAY_WATER.g, m.water.b / DAY_WATER.b);
   poolMat.color.copy(m.water).lerp(WHITE, 0.22);
   U.uNight.value = m.night;
   atmoMat.uniforms.uStrength.value = lerp(0.7, 0.3, m.night);
@@ -2030,7 +2340,7 @@ function updateDay(dt) {
     const hh = Math.floor(hour), mm = Math.floor((hour - hh) * 60);
     const name = timeName(hour);
     ui.clockName.textContent = name;
-    ui.capTime.textContent = name;
+    ui.capTime.textContent = side === 'ice' ? `${seasonName(SEASON.m)}・${name}` : name;
     ui.clockTime.textContent = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     if (!todDragging) ui.tod.value = Math.floor(hour * 60);
   }
@@ -2073,7 +2383,7 @@ function setAuto(on) {
   autoMode = on;
   ui.auto.setAttribute('aria-pressed', String(on));
   ui.auto.textContent = on ? '止める' : '自動で眺める';
-  controls.autoRotate = on && !reduceMotion;
+
   if (on) {
     tideAnim = null;
     autoPhase = Math.acos(clamp(1 - 2 * tn, -1, 1));
@@ -2094,11 +2404,19 @@ const POEMS_ICE = {
   flood: ['上げ潮', '浜の氷が、<br>ふたたび海に浮かぶ。'],
   high: ['満潮', '流氷が、<br>静かに持ち上がる。'],
 };
+const POEMS_OKHOTSK = {
+  春: { low: ['干潮', '潮が引くと、<br>雪どけの浜が広がる。'], ebb: ['下げ潮', '氷の去った海に、<br>春の光がさす。'], flood: ['上げ潮', '満ちる潮が、<br>桜の岸へ寄せてくる。'], high: ['満潮', '春の海が、<br>岬をやさしく包む。'] },
+  夏: { low: ['干潮', '潮が引くと、<br>ハマナスの浜が続く。'], ebb: ['下げ潮', '夏の潮が、<br>ゆっくり沖へ帰る。'], flood: ['上げ潮', '満ちる潮の上を、<br>ウミネコが舞う。'], high: ['満潮', '青い海が、<br>浜いっぱいに満ちる。'] },
+  秋: { low: ['干潮', '潮が引いた浜に、<br>秋の風が吹く。'], ebb: ['下げ潮', '紅葉の岸から、<br>潮が離れていく。'], flood: ['上げ潮', '満ちる潮にのって、<br>サケが帰ってくる。'], high: ['満潮', '秋の海が、<br>岸まで満ちる。'] },
+  冬: { low: ['干潮', '潮が引くと、<br>凍った浜が顔を出す。'], ebb: ['下げ潮', '冬の海が、<br>静かに引いていく。'], flood: ['上げ潮', '満ちる潮が、<br>雪の岸を洗う。'], high: ['満潮', '冬の海が、<br>流氷の季節を待つ。'] },
+};
+const icePoems = () => (SEASON.ice > 0.3 ? POEMS_ICE : POEMS_OKHOTSK[seasonName(SEASON.m)]);
 let poemKey = 'ebb', poemTimer = 0;
 function tideKey() { return tn < 0.18 ? 'low' : tn > 0.84 ? 'high' : tideDir > 0 ? 'flood' : 'ebb'; }
 function updateTideUI() {
-  const key = tideKey(), poems = side === 'ice' ? POEMS_ICE : POEMS;
-  ui.state.textContent = poems[key][0];
+  const poems = side === 'ice' ? icePoems() : POEMS;
+  const tk = tideKey(), key = side === 'ice' ? tk + (SEASON.ice > 0.3 ? 'ice' : seasonName(SEASON.m)) : tk;
+  ui.state.textContent = poems[tk][0];
   ui.cm.textContent = `潮位 ${Math.round(lerp(10, 180, tn))}cm`;
   if (document.activeElement !== ui.slider) ui.slider.value = Math.round(tn * 1000);
   if (key !== poemKey) {
@@ -2106,8 +2424,8 @@ function updateTideUI() {
     clearTimeout(poemTimer);
     ui.capPoem.classList.add('fade');
     poemTimer = setTimeout(() => {
-      ui.capState.textContent = poems[key][0];
-      ui.capPoem.innerHTML = poems[key][1];
+      ui.capState.textContent = poems[tk][0];
+      ui.capPoem.innerHTML = poems[tk][1];
       ui.capPoem.classList.remove('fade');
     }, 450);
   }
@@ -2119,7 +2437,7 @@ const cycle = {};
 function buildChips() {
   ui.species.replaceChildren();
   chipBtns = {};
-  (side === 'ice' ? ORDER_ICE : ORDER).forEach(addChip);
+  (side === 'ice' ? ORDER_ICE.filter(k => inds.some(i => i.species === k && isActive(i))) : ORDER).forEach(addChip);
 }
 function addChip(key) {
   const b = document.createElement('button');
@@ -2127,7 +2445,7 @@ function addChip(key) {
   b.textContent = SPECIES[key].name.replace('（幼魚）', '');
   b.setAttribute('aria-pressed', 'false');
   b.addEventListener('click', () => {
-    const list = inds.filter(i => i.species === key);
+    const list = inds.filter(i => i.species === key && !i.hidden);
     cycle[key] = ((cycle[key] ?? -1) + 1) % list.length;
     select(list[cycle[key]], true);
   });
@@ -2184,7 +2502,7 @@ function setNdc(e) {
 }
 function pick(e, occlude) {
   setNdc(e);
-  const hit = raycaster.intersectObjects(proxies, false)[0];
+  const hit = raycaster.intersectObjects(proxies, false).find(h => !h.object.userData.ind.hidden);
   if (!hit) return null;
   if (occlude) {
     const wall = raycaster.intersectObjects([terrainMesh, ...rockMeshes, iceTerrain, ...iceRocks], false)[0];
@@ -2220,8 +2538,8 @@ canvas.addEventListener('pointerleave', () => { ui.tip.hidden = true; });
 
 // turning the diorama over
 const SIDE_TEXT = {
-  shore: { eyebrow: 'MOONLIT TIDEPOOL', name: '月と潮の磯', lede: '月が潮を引くと、小さな世界が現れる。', flip: '裏返す・流氷の海へ', views: ['海辺', '潮だまり', '水中'] },
-  ice: { eyebrow: 'DRIFT ICE SEA', name: '流氷の海', lede: '箱庭の裏側は、冬のオホーツク。', flip: '表にもどす・月と潮の磯へ', views: ['海辺', '流氷', '氷の下'] },
+  shore: { eyebrow: 'MOONLIT TIDEPOOL', name: '月と潮の磯', lede: '月が潮を引くと、小さな世界が現れる。', flip: '裏返す・オホーツクの海へ', views: ['海辺', '潮だまり', '水中'] },
+  ice: { eyebrow: 'OKHOTSK SEA', name: 'オホーツクの海', lede: '', flip: '表にもどす・月と潮の磯へ', views: ['海辺', '湾', '海の中'] },
 };
 function applySideUI() {
   const tx = SIDE_TEXT[side];
@@ -2230,9 +2548,69 @@ function applySideUI() {
   $('lede').textContent = tx.lede;
   $('flipLabel').textContent = tx.flip;
   viewBtns.forEach((b, i) => { b.textContent = tx.views[i]; });
+  $('seasons').hidden = side !== 'ice';
   buildChips();
   poemKey = '';
+  iceTitleKey = '';
+  updateIceTitle();
 }
+let iceTitleKey = '';
+function updateIceTitle() {
+  if (side !== 'ice') return;
+  const ice = SEASON.ice > 0.3, sn = seasonName(SEASON.m), k = ice + sn;
+  if (k === iceTitleKey) return;
+  iceTitleKey = k;
+  $('eyebrow').textContent = ice ? 'DRIFT ICE SEA' : 'OKHOTSK SEA';
+  $('worldName').textContent = ice ? '流氷の海' : 'オホーツクの海';
+  $('lede').textContent = ice ? '裏側は、流氷の季節のオホーツク。' : `裏側は、${sn}のオホーツク。`;
+}
+// season buttons fast-forward the Okhotsk calendar to the middle of that season
+let seasonAnim = null;
+document.querySelectorAll('#seasons button').forEach((b) => b.addEventListener('click', () => {
+  const from = yearT;
+  let to = Math.floor(yearT) + SEASON_MID[b.dataset.season] / 12;
+  if (to <= from + 0.01) to += 1;
+  seasonAnim = { from, to, t: 0, dur: reduceMotion ? 0.01 : 3.2 };
+}));
+let seasonSig = '', seasonUiTimer = 0, lastRecolorM = -99, recolorWait = 0;
+function updateSeasons(dt) {
+  if (seasonAnim) {
+    seasonAnim.t += dt / seasonAnim.dur;
+    yearT = lerp(seasonAnim.from, seasonAnim.to, easeInOut(Math.min(1, seasonAnim.t)));
+    if (seasonAnim.t >= 1) seasonAnim = null;
+  } else if (autoMode) yearT += dt / 240;           // a year in four minutes while watching
+  computeSeason();
+  // repainting the ground is the one costly step, so it runs at most ~8 times a second
+  recolorWait -= dt;
+  if (iceLiveNow() && recolorWait <= 0 && Math.abs(SEASON.m - lastRecolorM) > 0.03) { recolorIce(); lastRecolorM = SEASON.m; recolorWait = 0.12; }
+  updateTrees();
+  updateRoses();
+  // drift ice comes in February and melts away in spring
+  for (const f of floes) {
+    const show = SEASON.ice;
+    f.mesh.visible = show > 0.02;
+    f.mesh.scale.set(Math.max(0.02, show), Math.max(0.2, show), Math.max(0.02, show));
+  }
+  snowCaps.forEach(c => { c.visible = SEASON.snow > 0.35; });
+  snowMounds.visible = SEASON.snow > 0.5;
+  for (const ind of inds) {
+    if (ind.sideName !== 'ice') continue;
+    ind.hidden = !isActive(ind);
+    if (ind.species !== 'ryuhyo') ind.group.visible = !ind.hidden;
+  }
+  if (sel && sel.hidden) deselect();
+  seasonUiTimer -= dt;
+  if (seasonUiTimer <= 0) {
+    seasonUiTimer = 0.3;
+    const sn = seasonName(SEASON.m);
+    $('seasonLabel').textContent = `${sn}・${Math.floor(SEASON.m) + 1}月`;
+    document.querySelectorAll('#seasons button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.season === sn)));
+    const sig = ORDER_ICE.filter(k => inds.some(i => i.species === k && !i.hidden)).join();
+    if (sig !== seasonSig) { seasonSig = sig; if (side === 'ice') buildChips(); }
+    updateIceTitle();
+  }
+}
+const iceLiveNow = () => flipF > 0.001;
 function flipWorld() {
   if (flipAnim) return;
   deselect();
@@ -2251,6 +2629,7 @@ function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   fitFov();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  controls.handleResize();
   drawSky();
 }
 window.addEventListener('resize', onResize);
@@ -2289,7 +2668,6 @@ function frame() {
   U.uTide.value = tideY;
   U.uTime.value = t;
   sea.scale.setScalar(PR + tideY);
-  iceSea.scale.setScalar(PR + tideY);
   if (flipAnim) {
     flipAnim.t += dt / flipAnim.dur;
     flipGroup.rotation.z = lerp(flipAnim.from, flipAnim.to, easeInOut(Math.min(1, flipAnim.t)));
@@ -2303,11 +2681,13 @@ function frame() {
   poolDiscs.forEach((d, i) => { d.visible = tideY < POOLS[i].level - 0.005; });
   waterNormal.offset.set(t * 0.012, t * 0.008);
   updateDay(dt);
+  updateSeasons(dt);
 
   // creatures
   if (iceLive) updateFloes(dt, t);
-  snow.visible = flipF > 0.6;
-  if (snow.visible) updateSnow(dt, t);
+  if (flipF > 0.6) updateSnow(dt, t); else snow.visible = false;
+  streaks.visible = iceLive;
+  if (iceLive) updateStreaks(dt);
   for (const ind of inds) {
     if (!(ind.sideName === 'ice' ? iceLive : shoreLive)) continue;
     if (ind.react > 0) ind.react -= dt;
@@ -2343,8 +2723,14 @@ function frame() {
     camAnim.t += dt / camAnim.dur;
     const e = easeInOut(Math.min(1, camAnim.t));
     camera.position.lerpVectors(camAnim.p0, camAnim.p1, e);
+    camera.up.lerpVectors(camAnim.u0, UP, e).normalize();
     controls.target.lerpVectors(camAnim.t0, camAnim.t1, e);
     if (camAnim.t >= 1) camAnim = null;
+  }
+  if (autoMode && !reduceMotion && !camAnim && !dragging) {
+    // slow turn around the planet's axis while watching
+    const off = camera.position.clone().sub(controls.target).applyAxisAngle(UP, dt * 0.08);
+    camera.position.copy(controls.target).add(off);
   }
   controls.update();
 
@@ -2388,6 +2774,7 @@ window.__tidal = {
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
   goView, flip: flipWorld,
+  season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
   jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
 };
