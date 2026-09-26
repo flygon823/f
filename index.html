@@ -72,15 +72,6 @@
     margin: 6px 0 12px; font-family: var(--serif); font-weight: 600;
     font-size: clamp(28px, 3.4vw, 40px); letter-spacing: 0.2em; line-height: 1.1;
   }
-  .flip {
-    pointer-events: auto; margin-top: 14px; display: inline-flex; align-items: center; gap: 8px;
-    border: 0; border-radius: 999px; padding: 7px 14px 7px 10px; cursor: pointer;
-    background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(10px);
-    font-size: 12px; letter-spacing: 0.06em; color: var(--ink);
-  }
-  .flip:hover { background: #ffffff; }
-  .flip-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--tide); color: #f4faf9; font-size: 13px; }
-  .flip:disabled { opacity: 0.6; cursor: default; }
   .buy[hidden], .pov[hidden], .povbar[hidden] { display: none; }
   .card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
   .card-actions:has(> :not([hidden])) { display: flex; }
@@ -244,8 +235,7 @@
     .brand { left: 16px; top: calc(16px + env(safe-area-inset-top, 0px)); }
     .brand h1 { font-size: 26px; margin: 4px 0 6px; }
     .brand .lede { font-size: 11px; }
-    .flip { margin-top: 8px; padding: 6px 12px 6px 8px; font-size: 11px; }
-    .controls { right: 16px; left: 16px; width: auto; top: auto; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); justify-items: stretch; }
+      .controls { right: 16px; left: 16px; width: auto; top: auto; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); justify-items: stretch; }
     .views { justify-self: end; }
     .views button { padding: 6px 11px; }
     .dock { bottom: calc(var(--controls-h) + 18px + env(safe-area-inset-bottom, 0px)); }
@@ -280,7 +270,6 @@
   <p class="eyebrow" id="eyebrow">MOONLIT TIDEPOOL</p>
   <h1 id="worldName">月と潮の磯</h1>
   <p class="lede" id="lede">月が潮を引くと、小さな世界が現れる。</p>
-  <button type="button" class="flip" id="flip"><span class="flip-icon" aria-hidden="true">↻</span><span id="flipLabel">裏返す・オホーツクの海へ</span></button>
 </header>
 
 <div class="controls" id="controls">
@@ -495,13 +484,14 @@ controls.zoomSpeed = 1.1;
 controls.panSpeed = 0.6;
 controls.staticMoving = false;
 controls.dynamicDampingFactor = 0.08;
-controls.minDistance = 1.6;
+controls.minDistance = PR + 3.6;
 controls.maxDistance = 110;
 controls.keys = ['', '', ''];   // no keyboard mode switching
 let dragging = false;
 controls.addEventListener('start', () => { dragging = true; });
 controls.addEventListener('end', () => { dragging = false; });
-controls.target.set(0, 0.1, 0.8);
+controls.target.set(0, CEN, 0);
+controls.noPan = true;   // no sliding the planet off-centre with a right drag or two fingers
 
 const hemi = new THREE.HemisphereLight('#f3f7fb', '#cdbb94', 0.9);
 scene.add(hemi);
@@ -809,7 +799,9 @@ let bigRock;
 
 const leafMats = ['#5f9a49', '#6fac55', '#4f8840', '#7cb45f'].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, flatShading: true }));
 const crownGeo = rockGeo(9, 0);
+const shoreTrees = [];
 function makeTree(x, z, s = 1, base) {
+  shoreTrees.push({ x, z, s });
   const g = new THREE.Group();
   const y0 = base ?? heightAt(x, z);
   const trunkM = M('#8a7159', { roughness: 0.9 });
@@ -4484,6 +4476,88 @@ function updateMeteors(dt) {
   }
 }
 
+/* ------------------------------------------------------------------ no two animals in one place */
+// Every frame, bodies closer than their two radii are pushed apart. Walkers are moved for
+// good (only onto ground they may stand on); animals on fixed paths are nudged aside by an
+// offset that eases away once they have passed; plants and fixed animals stay put and act
+// as obstacles.
+const SEP_SKIP = new Set(['ryuhyo']);
+const sepBodies = { shore: [], ice: [] }, sepTmp = new THREE.Vector3();
+function bodyRadius(ind) { return ind.bodyR ?? (ind.young ? 0.6 : 0.7) * ind.pick; }
+function separate(dt) {
+  for (const k in sepBodies) sepBodies[k].length = 0;
+  for (const ind of inds) {
+    if (ind.hidden || !ind.group.visible || ind.parent || SEP_SKIP.has(ind.species) || !sepBodies[ind.sideName]) continue;
+    if (RARE.includes(ind) && !ind.present) continue;
+    const still = !!ind.staticPos;
+    const P = still ? sepTmp.set(ind.x ?? 0, 0, ind.z ?? 0) : ind.group.position;
+    if (still && ind.x === undefined) continue;
+    const b = ind.sepB || (ind.sepB = { px: 0, pz: 0, ox: 0, oz: 0 });
+    b.ind = ind; b.x = P.x; b.y = still ? heightOnSide(ind.sideName)(P.x, P.z) : P.y; b.z = P.z; b.r = bodyRadius(ind);
+    b.move = !still && !RARE.includes(ind);
+    b.walker = b.move && ind.valid && 'tx' in ind;
+    // schooling and drifting animals keep their own position too, so they can be moved for good
+    b.state = b.move && !b.walker && typeof ind.x === 'number' && (ind.school || !!ind.grp || (typeof ind.pause === 'number' && !ind.valid));
+    b.px = 0; b.pz = 0; b.hit = false;
+    // measure on the sphere, where the flat map is squeezed toward the equator
+    const w = bendVec(b.x, b.y, b.z, b.w || (b.w = new THREE.Vector3()));
+    const rr0 = Math.hypot(b.x, b.z), th = rr0 / RIM * Math.PI / 2, rad = PR + b.y;
+    b.k = Math.max(0.3, Math.min(rad * Math.PI / 2 / RIM, rr0 > 1e-3 ? rad * Math.sin(th) / rr0 : rad * Math.PI / 2 / RIM));
+    b.wx = w.x; b.wy = w.y; b.wz = w.z;
+    sepBodies[ind.sideName].push(b);
+  }
+  // tree trunks are obstacles too
+  for (const [name, trees] of [['shore', shoreTrees], ['ice', conifers]]) for (const tr of trees) {
+    const b = tr.sepB || (tr.sepB = { ind: null, move: false, walker: false, state: false, w: new THREE.Vector3() });
+    b.x = tr.x; b.z = tr.z; b.y = heightOnSide(name)(tr.x, tr.z) + 0.3; b.r = 0.22 * tr.s; b.hit = false; b.px = b.pz = 0;
+    bendVec(b.x, b.y, b.z, b.w); b.wx = b.w.x; b.wy = b.w.y; b.wz = b.w.z; b.k = 1;
+    sepBodies[name].push(b);
+  }
+  for (const list of Object.values(sepBodies)) {
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (!a.move && !b.move) continue;
+        const ex = b.wx - a.wx, ey = b.wy - a.wy, ez = b.wz - a.wz, min = a.r + b.r;
+        if (Math.abs(ex) > min || Math.abs(ey) > min || Math.abs(ez) > min) continue;
+        const d2 = ex * ex + ey * ey + ez * ez;
+        if (d2 >= min * min) continue;
+        const dx = b.x - a.x, dz = b.z - a.z;
+        let h = Math.hypot(dx, dz), ux, uz;
+        if (h < 1e-4) { const ang = (i * 7.3 + j * 3.1) % TAU; ux = Math.cos(ang); uz = Math.sin(ang); h = 0; } else { ux = dx / h; uz = dz / h; }
+        const over = (min - Math.sqrt(d2)) / ((a.k + b.k) / 2) + 0.005;   // back into map units
+        const wa = a.move ? (b.move ? 0.5 : 1) : 0, wb = b.move ? (a.move ? 0.5 : 1) : 0;
+        a.px -= ux * over * wa; a.pz -= uz * over * wa; b.px += ux * over * wb; b.pz += uz * over * wb;
+        a.hit = b.hit = true;
+      }
+    }
+    for (const b of list) {
+      const ind = b.ind;
+      if (!ind) continue;
+      if (b.walker) {
+        if (!b.hit) { ind.stuck = 0; continue; }
+        const nx = ind.x + b.px, nz = ind.z + b.pz;
+        if (ind.valid(nx, nz)) { ind.x = nx; ind.z = nz; }
+        else if (ind.valid(ind.x + b.px, ind.z)) ind.x += b.px;
+        else if (ind.valid(ind.x, ind.z + b.pz)) ind.z += b.pz;
+        ind.group.position.x = ind.x; ind.group.position.z = ind.z;
+        // two walkers heading for the same spot: one of them changes its mind
+        ind.stuck = (ind.stuck || 0) + dt;
+        if (ind.stuck > 1.2) { ind.tx = null; ind.pause = rr(0.3, 1.5); ind.stuck = 0; }
+      } else if (b.state) {
+        if (!b.hit) continue;
+        ind.x += b.px; ind.z += b.pz;
+        ind.group.position.x += b.px; ind.group.position.z += b.pz;
+      } else if (b.move) {
+        const k = Math.min(1, dt * 16);
+        b.ox += (b.px * 1.15 - b.ox) * k; b.oz += (b.pz - b.oz) * k;
+        ind.group.position.x += b.ox; ind.group.position.z += b.oz;
+      }
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ camera views */
 const VIEWS = {
   shore: { dir: new THREE.Vector3(-15.5, 17, 21.7).normalize(), dist: 32, target: new THREE.Vector3(0, 0.1, 0.8) },
@@ -4498,35 +4572,76 @@ const VIEWS_ICE = {
 let side = 'shore', flipAnim = null, flipF = 0;
 const sideGroup = (name) => name === 'ice' ? iceSide : shoreSide;
 function fitFov() { camera.fov = camera.aspect < 1 ? 42 : 30; camera.updateProjectionMatrix(); }
-// overview: the whole planet, the upward side facing the viewer
+// overview: the whole planet, the side being looked at facing the viewer
 function shorePose() {
   const v = VIEWS.shore;
   const vHalf = THREE.MathUtils.degToRad(camera.fov / 2), hHalf = Math.atan(Math.tan(vHalf) * camera.aspect);
-  // fit the planet (plus its thin atmosphere) and lift it clear of the tide panel
   const dist = clamp((PR + 4) / Math.sin(Math.min(vHalf, hHalf)) * 1.12, 40, 110);
-  const target = new THREE.Vector3(0, CEN - PR * 0.12, 0);
-  return { pos: target.clone().addScaledVector(v.dir, dist), target };
+  const q = sideGroup(side).getWorldQuaternion(new THREE.Quaternion());
+  const dir = v.dir.clone().applyQuaternion(q);
+  return { pos: PLANET_C.clone().addScaledVector(dir, dist), target: PLANET_C.clone(), up: UP.clone().applyQuaternion(q) };
 }
-// close views are written in flat map terms; the side facing up has world = side-local,
-// so a bent point is already a world point once the flip has finished
+// close views are written in flat map terms on the side being looked at
 function viewPose(name) {
   if (name === 'shore') return shorePose();
-  const v = (side === 'ice' ? VIEWS_ICE : VIEWS)[name];
-  const target = bendVec(v.target.x, v.target.y, v.target.z);
-  let pos;
-  if (name === 'under') pos = bendVec(v.pos.x, v.pos.y, v.pos.z);
+  const v = (side === 'ice' ? VIEWS_ICE : VIEWS)[name], sg = sideGroup(side);
+  const tl = bendVec(v.target.x, v.target.y, v.target.z);
+  let pl;
+  if (name === 'under') pl = bendVec(v.pos.x, v.pos.y, v.pos.z);
   else {
     // keep the flat camera offset, but in the target's tilted frame
     const q = new THREE.Quaternion().setFromUnitVectors(UP, normalAt(v.target.x, v.target.z));
-    pos = v.pos.clone().sub(v.target).applyQuaternion(q).add(target);
+    pl = v.pos.clone().sub(v.target).applyQuaternion(q).add(tl);
   }
-  if (camera.aspect < 1) pos.sub(target).multiplyScalar(1.45).add(target);
-  return { pos, target };
+  if (camera.aspect < 1) pl.sub(tl).multiplyScalar(1.45).add(tl);
+  const target = sg.localToWorld(tl.clone()), pos = sg.localToWorld(pl.clone());
+  return { pos, target, up: target.clone().sub(PLANET_C).normalize() };
 }
+// The camera always turns round the planet's centre (the controls' target never moves).
+// To look at something on the surface it stands off to one side and tips its gaze
+// toward it by camTilt, which eases back to zero as the view pulls out to the whole planet.
+const tiltRef = { phi: 0, d0: 40 };
+let camTilt = 0;
+const NEAR_LIMIT = PR + 3.6;
+function poseFor(pos, look, upHint = UP) {
+  const v = PLANET_C.clone().sub(pos), w = look.clone().sub(pos);
+  const phi = v.lengthSq() > 1e-6 && w.lengthSq() > 1e-6 ? v.angleTo(w) : 0;
+  const up = w.clone().addScaledVector(v.clone().normalize(), -w.dot(v) / v.length());
+  if (phi < 1e-3 || up.lengthSq() < 1e-8) up.copy(upHint);
+  return { pos: pos.clone(), up: up.normalize(), phi };
+}
+const currentPose = () => ({ pos: camera.position.clone(), up: camera.up.clone(), phi: tiltRef.phi, d0: tiltRef.d0 });
 let camAnim = null;
-function flyTo(pos, target, dur = 1.6, up = UP) {
+function flyToPose(pose, dur = 1.6) {
   if (reduceMotion) dur = 0.01;
-  camAnim = { p0: camera.position.clone(), p1: pos, t0: controls.target.clone(), t1: target, u0: camera.up.clone(), u1: up.clone(), t: 0, dur };
+  const r0 = camera.position.distanceTo(PLANET_C), r1 = pose.pos.distanceTo(PLANET_C);
+  controls.minDistance = Math.min(NEAR_LIMIT, r0, r1) * 0.96;
+  camAnim = {
+    d0: camera.position.clone().sub(PLANET_C).normalize(), d1: pose.pos.clone().sub(PLANET_C).normalize(), r0, r1,
+    u0: camera.up.clone(), u1: pose.up.clone(), f0: camTilt, f1: pose.phi, ref: pose.d0 ?? r1, t: 0, dur,
+  };
+}
+function flyTo(pos, look, dur = 1.6, up = UP) { flyToPose(poseFor(pos, look, up), dur); }
+function stepCamAnim(dt) {
+  const a = camAnim;
+  a.t += dt / a.dur;
+  const e = easeInOut(Math.min(1, a.t));
+  // swing round the centre rather than cut through the planet
+  const q = new THREE.Quaternion().setFromUnitVectors(a.d0, a.d1), qe = new THREE.Quaternion().slerp(q, e);
+  camera.position.copy(a.d0).applyQuaternion(qe).multiplyScalar(lerp(a.r0, a.r1, e)).add(PLANET_C);
+  camera.up.copy(a.u0).applyQuaternion(qe).lerp(a.u1, e);
+  if (camera.up.lengthSq() < 1e-6) camera.up.copy(a.u1);
+  camera.up.normalize();
+  camTilt = lerp(a.f0, a.f1, e);
+  if (a.t >= 1) {
+    camAnim = null;
+    Object.assign(tiltRef, { phi: a.f1, d0: a.ref });
+    controls.minDistance = Math.min(NEAR_LIMIT, a.r1 * 0.96);
+  }
+}
+function jumpCam() {
+  if (!camAnim) return;
+  camAnim.t = 1; stepCamAnim(0);
 }
 controls.addEventListener('start', () => { camAnim = null; });
 
@@ -4571,7 +4686,7 @@ const SUN_H = new THREE.Vector3(VIEWS.shore.dir.x, 0, VIEWS.shore.dir.z).normali
 const SUN_A = new THREE.Vector3(VIEWS.shore.dir.z, 0, -VIEWS.shore.dir.x).normalize();
 const SUN_N = UP.clone().multiplyScalar(Math.cos(0.6)).addScaledVector(SUN_H, Math.sin(0.6));
 const SUN_B = new THREE.Vector3().crossVectors(SUN_N, SUN_A).normalize();
-const sunDir = new THREE.Vector3(), moonDir = new THREE.Vector3();
+const sunDir = new THREE.Vector3(), moonDir = new THREE.Vector3(), AXIS_Z = new THREE.Vector3(0, 0, 1);
 function skyDir(h, lag, out) {
   const f = (h - 12) / 24 * TAU - lag;
   return out.copy(SUN_N).multiplyScalar(Math.cos(f)).addScaledVector(SUN_A, -Math.sin(f));
@@ -4668,6 +4783,8 @@ function updateDay(dt) {
   skyDir(hour, 0, sunDir);
   const elong = moonAge() / SYNODIC * TAU, lit = (1 - Math.cos(elong)) / 2;
   skyDir(hour, elong, moonDir).addScaledVector(SUN_B, 0.09).normalize();
+  // the clock is the time on the side being looked at, so the sky turns round with the view
+  sunDir.applyAxisAngle(AXIS_Z, -Math.PI * flipF); moonDir.applyAxisAngle(AXIS_Z, -Math.PI * flipF);
   sun.position.copy(PLANET_C).addScaledVector(sunDir, 40);
   sun.target.position.copy(PLANET_C);
   sun.intensity = 2.3;
@@ -4748,8 +4865,8 @@ function goView(name) {
   if (pov) exitPov(false);
   deselect();
   setViewButtons(name);
-  const { pos, target } = viewPose(name);
-  flyTo(pos, target, 1.8);
+  const { pos, target, up } = viewPose(name);
+  flyTo(pos, target, 1.8, up);
   if (name === 'under' && side === 'shore' && tn < 0.72 && !autoMode) tideAnim = { from: tn, to: 0.9, t: 0, dur: 2.4 };
 }
 viewBtns.forEach(b => b.addEventListener('click', () => goView(b.dataset.view)));
@@ -4921,7 +5038,7 @@ function exitPov(reselect = true) {
   camera.near = 0.1; fitFov();
   $('povbar').hidden = true;
   document.body.classList.remove('pov-on');
-  if (reselect && !ind.hidden) { ind.group.getWorldPosition(controls.target); select(ind, true); }
+  if (reselect && !ind.hidden) select(ind, true);
 }
 function updatePov(dt) {
   const g = pov.group;
@@ -4973,7 +5090,8 @@ let homePose = null;   // where the camera was before the first creature was pic
 buildChips();
 function select(ind, fly) {
   if (pov) exitPov(false);
-  if (!sel && fly) homePose = { pos: camera.position.clone(), target: controls.target.clone(), up: camera.up.clone(), view: currentView };
+  if (!sel && fly) homePose = { ...currentPose(), view: currentView };
+  selDir.set(0, 0, 0);
   sel = ind;
   const sp = SPECIES[ind.species];
   $('cardKind').textContent = sp.kind + (ind.variantLabel ? `・${ind.variantLabel}` : '');
@@ -5000,8 +5118,8 @@ function select(ind, fly) {
     target.y += 0.15;
     // look from above the creature's own patch of ground: the planet's "up" there is
     // the direction from the planet's centre, not the screen's up
-    const up = target.clone().sub(flipGroup.getWorldPosition(new THREE.Vector3())).normalize();
-    const dir = camera.position.clone().sub(controls.target).normalize();
+    const up = target.clone().sub(PLANET_C).normalize();
+    const dir = camera.position.clone().sub(PLANET_C).normalize();
     const lift = dir.dot(up);
     if (!camUnder && lift < 0.5) { dir.addScaledVector(up, 0.5 - lift).normalize(); }
     const dist = ind.focus * 2.6 * (camera.aspect < 1 ? 1.4 : 1);   // stay back — the eye view is for close-ups
@@ -5011,7 +5129,7 @@ function select(ind, fly) {
 }
 function deselect(back = false) {
   if (back && sel && homePose) {
-    flyTo(homePose.pos, homePose.target, 1.4, homePose.up);
+    flyToPose(homePose, 1.4);
     setViewButtons(homePose.view);
   }
   homePose = null;
@@ -5088,7 +5206,6 @@ function applySideUI() {
   $('eyebrow').textContent = tx.eyebrow;
   $('worldName').textContent = tx.name;
   $('lede').textContent = tx.lede;
-  $('flipLabel').textContent = tx.flip;
   viewBtns.forEach((b, i) => { b.textContent = tx.views[i]; });
   $('seasons').hidden = side !== 'ice';
   buildChips();
@@ -5140,7 +5257,7 @@ function updateSeasons(dt) {
     ind.hidden = !isActive(ind);
     if (ind.species !== 'ryuhyo') ind.group.visible = !ind.hidden;
   }
-  if (sel && sel.hidden) deselect();
+  if (sel && sel.hidden) deselect(true);
   seasonUiTimer -= dt;
   if (seasonUiTimer <= 0) {
     seasonUiTimer = 0.3;
@@ -5152,18 +5269,22 @@ function updateSeasons(dt) {
     updateIceTitle();
   }
 }
-const iceLiveNow = () => flipF > 0.001;
-function flipWorld() {
-  if (flipAnim) return;
-  if (pov) exitPov(false);
-  deselect();
-  side = side === 'shore' ? 'ice' : 'shore';
-  flipAnim = { from: flipGroup.rotation.z, to: side === 'ice' ? Math.PI : 0, t: 0, dur: reduceMotion ? 0.01 : 2.6 };
-  $('flip').disabled = true;
-  applySideUI();
-  goView('shore');
+const iceLiveNow = () => flipF > 0.02;
+// There is no flip button: whichever half of the planet faces the camera is the side
+// being looked at. flipF says how far the view has come round to the Okhotsk side.
+function updateSide() {
+  const cy = (camera.position.y - CEN) / (camera.position.distanceTo(PLANET_C) || 1);
+  flipF = smooth(0.2, -0.2, cy);
+  const next = side === 'shore' ? (cy < -0.1 ? 'ice' : 'shore') : (cy > 0.1 ? 'shore' : 'ice');
+  if (next !== side) { side = next; applySideUI(); if (!sel) setViewButtons(''); }
 }
-$('flip').addEventListener('click', flipWorld);
+// the whole-planet view of one side (used by tests and the debug hooks)
+function sideOverview(name) {
+  const keep = side; side = name;
+  const pose = shorePose();
+  side = keep;
+  return pose;
+}
 
 // dock height for the mobile card placement
 new ResizeObserver(() => document.documentElement.style.setProperty('--dock-h', $('dock').offsetHeight + 'px')).observe($('dock'));
@@ -5187,11 +5308,12 @@ fitFov();
     camera.position.copy(target).addScaledVector(pos.clone().sub(target), 1.5).add(new THREE.Vector3(0, 6, 0));
     flyTo(pos, target, 2.8);
   }
+  tiltRef.d0 = pos.distanceTo(PLANET_C);
 }
 let camUnder = false;
 const clock = new THREE.Clock();
 const easeInOut = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-const followDelta = new THREE.Vector3(), selWorld = new THREE.Vector3(), selLocal = new THREE.Vector3();
+const followDelta = new THREE.Vector3(), selWorld = new THREE.Vector3(), selLocal = new THREE.Vector3(), selDir = new THREE.Vector3(), followQ = new THREE.Quaternion();
 const viewOff = { x: 0, y: 0 };
 const cullC = new THREE.Vector3(), cullP = new THREE.Vector3(), cullO = new THREE.Vector3(), CORE_R = PR + SEA_FLOOR - 0.4;
 
@@ -5212,16 +5334,10 @@ function frame() {
   U.uTide.value = tideY;
   U.uTime.value = t;
   sea.scale.setScalar(PR + tideY);
-  if (flipAnim) {
-    flipAnim.t += dt / flipAnim.dur;
-    flipGroup.rotation.z = lerp(flipAnim.from, flipAnim.to, easeInOut(Math.min(1, flipAnim.t)));
-    if (flipAnim.t >= 1) { flipAnim = null; $('flip').disabled = false; }
-  }
-  flipF = flipGroup.rotation.z / Math.PI;
   flipGroup.updateMatrixWorld(true);
   SHORE_U.uSideInv.value.copy(shoreSide.matrixWorld).invert();
   ICE_U.uSideInv.value.copy(iceSide.matrixWorld).invert();
-  const shoreLive = flipF < 0.999, iceLive = flipF > 0.001;
+  const shoreLive = true, iceLive = true;
   poolDiscs.forEach((d, i) => { d.visible = tideY < POOLS[i].level - 0.005; });
   waterNormal.offset.set(waterPhase * 0.012, waterPhase * 0.008);
   updateDay(dt);
@@ -5229,7 +5345,7 @@ function frame() {
 
   // creatures
   if (iceLive) updateFloes(dt, t);
-  if (flipF > 0.6) updateSnow(dt, t); else snow.visible = false;
+  if (flipF > 0.3) updateSnow(dt, t); else snow.visible = false;
   streaks.visible = iceLive;
   if (iceLive) updateStreaks(dt);
   for (const ind of inds) {
@@ -5245,7 +5361,8 @@ function frame() {
   if (shoreLive) updateSchool(dt, t);
   updateRare(dt);
   updateWeather(dt, t);
-  for (const e of bendRoots) if (e.dynamic && e.obj !== ring && (e.side === 'ice' ? iceLive : shoreLive)) applyBend(e);
+  separate(dt);
+  for (const e of bendRoots) if (e.dynamic && e.obj !== ring) applyBend(e);
 
   // selection
   if (pov && (pov.hidden || !pov.group.visible)) { exitPov(false); goView('shore'); }
@@ -5258,31 +5375,39 @@ function frame() {
       ring.scale.setScalar(sel.pick * 1.25 * (1 + Math.sin(t * 3) * 0.05));
       ring.material.opacity = 0.55 + Math.sin(t * 3) * 0.25;
     }
-    if (!camAnim) {
-      followDelta.set(p.x, p.y + 0.15, p.z).sub(controls.target).multiplyScalar(Math.min(1, dt * 2.5));
-      controls.target.add(followDelta);
-      camera.position.add(followDelta);
+    // keep it in view as it moves: turn the camera round the centre along with it
+    followDelta.copy(p).sub(PLANET_C).normalize();
+    if (!camAnim && selDir.lengthSq() > 0) {
+      const q = followQ.setFromUnitVectors(selDir, followDelta);
+      camera.position.sub(PLANET_C).applyQuaternion(q).add(PLANET_C);
+      camera.up.applyQuaternion(q);
     }
+    selDir.copy(followDelta);
     statusTimer -= dt;
     if (statusTimer <= 0) { statusTimer = 0.4; $('cardNow').textContent = SPECIES[sel.species].status(sel); }
   }
 
   // camera
   if (pov) updatePov(dt);
-  else if (camAnim) {
-    camAnim.t += dt / camAnim.dur;
-    const e = easeInOut(Math.min(1, camAnim.t));
-    camera.position.lerpVectors(camAnim.p0, camAnim.p1, e);
-    camera.up.lerpVectors(camAnim.u0, camAnim.u1, e).normalize();
-    controls.target.lerpVectors(camAnim.t0, camAnim.t1, e);
-    if (camAnim.t >= 1) camAnim = null;
+  else {
+    controls.target.copy(PLANET_C);
+    if (camAnim) stepCamAnim(dt);
   }
   if (autoMode && !reduceMotion && !camAnim && !dragging && !pov) {
     // slow turn around the planet's axis while watching
     const off = camera.position.clone().sub(controls.target).applyAxisAngle(UP, dt * 0.08);
     camera.position.copy(controls.target).add(off);
   }
-  if (!pov) controls.update();
+  if (!pov) {
+    controls.update();
+    // tip the gaze toward the surface; none at all once pulled out to the whole planet
+    if (!camAnim) {
+      const d = camera.position.distanceTo(PLANET_C), far = Math.max(tiltRef.d0 + 1, 34);
+      camTilt = tiltRef.phi * clamp((far - d) / (far - tiltRef.d0), 0, 1);
+    }
+    if (camTilt > 1e-4) camera.rotateX(camTilt);
+  }
+  updateSide();
 
   // keep the selected creature clear of the info card
   const narrow = window.innerWidth <= 720;
@@ -5334,7 +5459,7 @@ window.__tidal = {
   select: (k) => select(inds.find(i => i.species === k), true),
   rare(k, v) { if (rareNow) endRare(); const r = RARE.find(r => r.species === k && r.sideName === side); const ok = r && spawnRare(r); if (ok && v != null) r.variant = v; return !!ok; },
   skip(sec) { for (const ind of inds) if (ind.present) { for (let i = 0; i < sec * 30; i++) ind.update(ind, 1 / 30, 0); } },
-  goView, flip: flipWorld, pov: (k) => enterPov(inds.find(i => i.species === k && !i.hidden)), exitPov,
+  goView, flip: () => { const o = sideOverview(side === 'shore' ? 'ice' : 'shore'); deselect(); flyTo(o.pos, o.target, 2, o.up); }, pov: (k) => enterPov(inds.find(i => i.species === k && !i.hidden)), exitPov,
   season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
   get rareNow() { return rareNow; },
@@ -5342,7 +5467,7 @@ window.__tidal = {
   meteorBurst(n) { for (let i = 0; i < n; i++) { spawnMeteor(null); } meteors.forEach(m => { m.age = 0.3; }); },
   wx(k) { if (wxNow) endWx(); startWx(WX.find(e => e.key === k), side); return !!wxNow; },
   wxSkip(sec) { for (let i = 0; i < sec * 30 && wxNow; i++) { wxNow.u += 1 / 30; wxNow.update(wxNow, 1 / 30, wxNow.u, i / 30); } },
-  jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camera.up.copy(camAnim.u1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
+  jump() { jumpCam(); if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
 };
 </script>
 </body>
