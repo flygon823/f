@@ -387,6 +387,8 @@ const A = 11.5, B = 11.5, SE = 2, BOTTOM = -4.2;
 // so the map's rim meets the other side's rim at the equator.
 const RIM = A, PR = 9, CEN = BOTTOM, SEA_FLOOR = -3.1;
 const TIDE_LOW = -0.95, TIDE_HIGH = 1.8;
+// land animals keep above the highest tide, so a rising tide never leaves one standing on the sea floor
+const DRY = TIDE_HIGH + 0.1;
 const POOLS = [
   { x: -3.4, z: 0.2, r: 2.3, rim: 1.38, floor: 0.22, level: 1.05, seed: 1 },
   { x: 1.9, z: 2.4, r: 1.8, rim: 1.22, floor: 0.12, level: 0.9, seed: 2 },
@@ -1263,11 +1265,14 @@ function register(ind) {
   return ind;
 }
 function walker(o) {
-  return Object.assign({ tx: null, tz: null, pause: rr(0, 2), speed: 0.3, pauseMin: 1, pauseMax: 4, turnRate: 3, yOff: 0 }, o);
+  const w = Object.assign({ tx: null, tz: null, pause: rr(0, 2), speed: 0.3, pauseMin: 1, pauseMax: 4, turnRate: 3, yOff: 0 }, o);
+  // land animals start somewhere dry
+  if (w.land && !w.valid(w.x, w.z)) { pickTarget(w); w.x = w.tx; w.z = w.tz; w.tx = w.tz = null; }
+  return w;
 }
 function pickTarget(ind) {
   const zn = ind.zone();
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 48; i++) {
     const a = rr(0, TAU), r = Math.sqrt(Math.random()) * zn.r;
     const x = zn.x + Math.cos(a) * r, z = zn.z + Math.sin(a) * r;
     if (ind.valid(x, z)) { ind.tx = x; ind.tz = z; return; }
@@ -1468,7 +1473,6 @@ function iceHeight(x, z) {
   h = lerp(h, Math.max(h, 1.15 + (fbm(x * 1.2, z * 1.2) - 0.5) * 0.3), smooth(0.25, 0.6, g));
   return rimBlend(x, z, h);
 }
-const iceOnLand = (x, z) => iceHeight(x, z) > tideY + 0.15;
 
 // Seasons. Only the Okhotsk side (Hokkaido) has four seasons; the southern shore stays
 // the same all year. yearT runs 0..1 from 1 January and starts at today's date.
@@ -2110,9 +2114,9 @@ for (let k = 0; k < 8; k++) {
 for (let k = 0; k < 2; k++) {
   const f = makeFox();
   register(walker({
-    species: 'kitsune', sideName: 'ice', ...f, fixed: true, x: -5 + k * 7, z: -6, speed: 0.55, pauseMin: 1.5, pauseMax: 5, turnRate: 3, pick: 0.4, pickY: 0.3, focus: 2.8, freeze: true,
+    species: 'kitsune', land: true, sideName: 'ice', ...f, fixed: true, x: -5 + k * 7, z: -6, speed: 0.55, pauseMin: 1.5, pauseMax: 5, turnRate: 3, pick: 0.4, pickY: 0.3, focus: 2.8, freeze: true,
     zone: () => ({ x: -1, z: -6, r: 6 }),
-    valid: (x, z) => seF(x, z) < 0.82 && iceOnLand(x, z) && iceHeight(x, z) > 1.3,
+    valid: (x, z) => seF(x, z) < 0.82 && iceHeight(x, z) > DRY,
     update(ind, dt, t) {
       stepWalker(ind, dt);
       ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02, ind.z);
@@ -2231,10 +2235,10 @@ function makeChipmunk() {
 {
   const b = makeBear();
   register(walker({
-    species: 'higuma', sideName: 'ice', ...b, fixed: true, x: -3, z: -6.2, speed: 0.35, pauseMin: 3, pauseMax: 7, turnRate: 1.5, pick: 0.8, pickY: 0.5, focus: 4.5, freeze: true,
+    species: 'higuma', land: true, sideName: 'ice', ...b, fixed: true, x: -3, z: -6.2, speed: 0.35, pauseMin: 3, pauseMax: 7, turnRate: 1.5, pick: 0.8, pickY: 0.5, focus: 4.5, freeze: true,
     // in the salmon season it comes down to the water's edge
     zone: () => (SEASON.m >= 8.3 ? { x: -1, z: -3.6, r: 4.5 } : { x: -1, z: -6.4, r: 4.5 }),
-    valid: (x, z) => seF(x, z) < 0.78 && iceHeight(x, z) > tideY + 0.1 && iceHeight(x, z) < 2.6,
+    valid: (x, z) => seF(x, z) < 0.78 && iceHeight(x, z) > DRY && iceHeight(x, z) < 2.9,
     update(ind, dt, t) {
       stepWalker(ind, dt);
       ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02, ind.z);
@@ -2250,9 +2254,9 @@ for (let k = 0; k < 2; k++) {
   const h = makeHare();
   const brown = new THREE.Color('#8b7358'), white = new THREE.Color('#f4f4f0');
   register(walker({
-    species: 'usagi', sideName: 'ice', ...h, fixed: true, x: 2 + k * 2, z: -6.8, speed: 0.9, pauseMin: 1, pauseMax: 4, turnRate: 4, pick: 0.3, pickY: 0.2, focus: 2.4, freeze: true, ph: rr(0, TAU),
+    species: 'usagi', land: true, sideName: 'ice', ...h, fixed: true, x: 2 + k * 2, z: -6.8, speed: 0.9, pauseMin: 1, pauseMax: 4, turnRate: 4, pick: 0.3, pickY: 0.2, focus: 2.4, freeze: true, ph: rr(0, TAU),
     zone: () => ({ x: 1.5, z: -6.5, r: 4 }),
-    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > 1.4,
+    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > DRY,
     update(ind, dt, t) {
       stepWalker(ind, dt);
       const hop = ind.moving ? Math.abs(Math.sin(t * 9 + ind.ph)) * 0.12 : 0;
@@ -2267,9 +2271,9 @@ for (let k = 0; k < 2; k++) {
   const c = makeChipmunk();
   c.group.scale.setScalar(1.4);
   register(walker({
-    species: 'shimarisu', sideName: 'ice', ...c, fixed: true, x: -5 + k * 3, z: -5.5, speed: 1.3, pauseMin: 0.6, pauseMax: 3, turnRate: 6, pick: 0.25, pickY: 0.12, focus: 1.8, freeze: true, ph: rr(0, TAU),
+    species: 'shimarisu', land: true, sideName: 'ice', ...c, fixed: true, x: -5 + k * 3, z: -5.5, speed: 1.3, pauseMin: 0.6, pauseMax: 3, turnRate: 6, pick: 0.25, pickY: 0.12, focus: 1.8, freeze: true, ph: rr(0, TAU),
     zone: () => ({ x: -2, z: -6, r: 4.5 }),
-    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > 1.5,
+    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > DRY,
     update(ind, dt, t) {
       stepWalker(ind, dt);
       ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.01, ind.z);
@@ -2358,10 +2362,10 @@ function makeMomo() {
   const mo = makeMomo();
   const lampOff = mo.panelMat, lampOn = new THREE.MeshBasicMaterial({ color: '#9ff0da' });
   register(walker({
-    species: 'momo', ...mo, x: -1.2, z: -2.6, speed: 0.55, pauseMin: 2, pauseMax: 5, turnRate: 3, pick: 0.55, pickY: 0.35, focus: 3.2, freeze: true, ph: rr(0, TAU),
+    species: 'momo', land: true, ...mo, x: -1.2, z: -2.6, speed: 0.55, pauseMin: 2, pauseMax: 5, turnRate: 3, pick: 0.55, pickY: 0.35, focus: 3.2, freeze: true, ph: rr(0, TAU),
     zone: () => ({ x: -1, z: 0, r: 6.5 }),
-    // stays on dry ground: out of the sea, out of the pools, off the big rock
-    valid: (x, z) => inside(x, z, 0.75) && !nearBigRock(x, z) && depthAt(x, z) < -0.05 && heightAt(x, z) < 2.3,
+    // stays on dry ground above the high-tide line (so out of the pools too), off the big rock
+    valid: (x, z) => inside(x, z, 0.75) && !nearBigRock(x, z) && heightAt(x, z) > DRY && heightAt(x, z) < 2.6,
     anim(ind, dt, t) {
       const mv = ind.moving ? 1 : 0, sw = Math.sin(t * 8);
       ind.legs[0].rotation.x = sw * 0.55 * mv; ind.legs[1].rotation.x = -sw * 0.55 * mv;
@@ -3795,7 +3799,7 @@ const BUILDERS = {
   mejina: () => makeFish(MEJINA),
 };
 window.__tidal = {
-  THREE, BUILDERS, mergeGeometries, camera, controls, scene, lights: { hemi, sun, moon },
+  THREE, BUILDERS, mergeGeometries, camera, controls, scene, lights: { hemi, sun, moon }, iceHeight, heightAt, inds, stepWalker,
   get tn() { return tn; }, set tn(v) { tn = v; },
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
