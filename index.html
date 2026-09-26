@@ -72,6 +72,16 @@
     margin: 6px 0 12px; font-family: var(--serif); font-weight: 600;
     font-size: clamp(28px, 3.4vw, 40px); letter-spacing: 0.2em; line-height: 1.1;
   }
+  .flip {
+    pointer-events: auto; margin-top: 14px; display: inline-flex; align-items: center; gap: 8px;
+    border: 0; border-radius: 999px; padding: 7px 14px 7px 10px; cursor: pointer;
+    background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(10px);
+    font-size: 12px; letter-spacing: 0.06em; color: var(--ink);
+  }
+  .flip:hover { background: #ffffff; }
+  .flip-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--tide); color: #f4faf9; font-size: 13px; }
+  .flip:disabled { opacity: 0.6; cursor: default; }
+  .buy[hidden] { display: none; }
   .brand .lede { margin: 0; font-size: 12px; letter-spacing: 0.08em; color: var(--float-ink-2); }
 
   .views {
@@ -210,11 +220,12 @@
     .brand { left: 16px; top: calc(16px + env(safe-area-inset-top, 0px)); }
     .brand h1 { font-size: 26px; margin: 4px 0 6px; }
     .brand .lede { font-size: 11px; }
+    .flip { margin-top: 8px; padding: 6px 12px 6px 8px; font-size: 11px; }
     .views { right: 16px; top: calc(16px + env(safe-area-inset-top, 0px)); }
     .views button { padding: 7px 11px; font-size: 11px; }
     .clock { right: 16px; top: calc(64px + env(safe-area-inset-top, 0px)); width: 150px; padding: 8px 11px 4px; }
     .clock-name, .clock-time { font-size: 11px; }
-    .caption { left: 16px; bottom: auto; top: calc(112px + env(safe-area-inset-top, 0px)); }
+    .caption { left: 16px; bottom: auto; top: calc(150px + env(safe-area-inset-top, 0px)); }
     .caption .poem { font-size: 16px; line-height: 1.65; }
     .caption .state { margin-bottom: 4px; }
     body.has-card .caption { opacity: 0; }
@@ -240,9 +251,10 @@
 <div class="underwater" id="underwater"></div>
 
 <header class="brand">
-  <p class="eyebrow">MOONLIT TIDEPOOL</p>
-  <h1>月と潮の磯</h1>
-  <p class="lede">月が潮を引くと、小さな世界が現れる。</p>
+  <p class="eyebrow" id="eyebrow">MOONLIT TIDEPOOL</p>
+  <h1 id="worldName">月と潮の磯</h1>
+  <p class="lede" id="lede">月が潮を引くと、小さな世界が現れる。</p>
+  <button type="button" class="flip" id="flip"><span class="flip-icon" aria-hidden="true">↻</span><span id="flipLabel">裏返す・流氷の海へ</span></button>
 </header>
 
 <nav class="views" aria-label="視点">
@@ -432,6 +444,18 @@ const moon = new THREE.DirectionalLight('#a9bcff', 0);
 moon.position.set(12, 16, 6);
 scene.add(moon);
 
+// Two-sided world: the shore on top and the drift-ice sea underneath. flipGroup turns
+// around the slab's mid-plane (y = BOTTOM); each side keeps its own y-up local frame.
+const flipGroup = new THREE.Group();
+flipGroup.position.y = BOTTOM;
+scene.add(flipGroup);
+const shoreSide = new THREE.Group();
+shoreSide.position.y = -BOTTOM;
+const iceSide = new THREE.Group();
+iceSide.rotation.z = Math.PI;
+iceSide.position.y = BOTTOM;
+flipGroup.add(shoreSide, iceSide);
+
 /* ------------------------------------------------------------------ shared shader bits */
 const U = {
   uTide: { value: tideY },
@@ -439,17 +463,20 @@ const U = {
   uPools: { value: POOLS.map(p => new THREE.Vector4(p.x, p.z, p.r * 1.05, p.level)) },
   uNight: { value: 0 },
 };
+// per-side uniforms: the inverse of the side's world matrix keeps effects in side-local space
+const SHORE_U = { uSideInv: { value: new THREE.Matrix4() }, uPools: U.uPools, uGlow: { value: 1 } };
+const ICE_U = { uSideInv: { value: new THREE.Matrix4() }, uPools: { value: [new THREE.Vector4(0, 0, -1, -99), new THREE.Vector4(0, 0, -1, -99)] }, uGlow: { value: 0 } };
 // Wet sand, caustics and a foam line wherever a surface meets the water.
-function wetShader(mat) {
+function wetShader(mat, sideU = SHORE_U) {
   mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, U);
+    Object.assign(sh.uniforms, U, sideU);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform mat4 uSideInv;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (uSideInv * modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform float uTide;\nuniform float uTime;\nuniform float uNight;\nuniform vec4 uPools[2];')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform float uTide;\nuniform float uTime;\nuniform float uNight;\nuniform float uGlow;\nuniform vec4 uPools[2];')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      totalEmissiveRadiance += vec3(0.25, 0.8, 1.0) * foamGlow * uNight * 1.7;`)
+      totalEmissiveRadiance += vec3(0.25, 0.8, 1.0) * foamGlow * uNight * uGlow * 1.7;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       float foamGlow = 0.0;
       {
@@ -546,7 +573,7 @@ let terrainMesh;
   terrainMesh = new THREE.Mesh(g, terrainMat);
   terrainMesh.receiveShadow = true;
   terrainMesh.castShadow = true;
-  scene.add(terrainMesh);
+  shoreSide.add(terrainMesh);
 
   // Side walls: layered sand, like a slice of cake.
   const WR = 18, wp = [], wc = [], wi = [];
@@ -573,13 +600,13 @@ let terrainMesh;
   wg.computeVertexNormals();
   const wall = new THREE.Mesh(wg, wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 })));
   wall.receiveShadow = true;
-  scene.add(wall);
+  shoreSide.add(wall);
 
   const shape = new THREE.Shape(bnd.map(([x, z]) => new THREE.Vector2(x, -z)));
   const cap = new THREE.ShapeGeometry(shape, 1);
   cap.rotateX(Math.PI / 2);
   cap.translate(0, BOTTOM, 0);
-  scene.add(new THREE.Mesh(cap, M('#ad9a78')));
+  shoreSide.add(new THREE.Mesh(cap, M('#ad9a78')));
 }
 
 /* ------------------------------------------------------------------ water */
@@ -638,7 +665,7 @@ const sea = new THREE.Group();
   sea.scale.set(0.996, 1, 0.996);
   sea.position.y = WATER_BOTTOM;
   sea.renderOrder = 2;
-  scene.add(sea);
+  shoreSide.add(sea);
 }
 const poolDiscs = POOLS.map((p) => {
   let qd = 0.3;
@@ -648,7 +675,7 @@ const poolDiscs = POOLS.map((p) => {
   const m = new THREE.Mesh(g, poolMat);
   m.position.set(p.x, p.level, p.z);
   m.renderOrder = 1;
-  scene.add(m);
+  shoreSide.add(m);
   return m;
 });
 
@@ -677,7 +704,7 @@ function placeRock(x, z, s, kind, flat = 0.62) {
   m.rotation.y = sr(0, TAU);
   m.position.set(x, heightAt(x, z) + s * 0.12, z);
   m.castShadow = true; m.receiveShadow = true;
-  scene.add(m);
+  shoreSide.add(m);
   rockMeshes.push(m);
   return m;
 }
@@ -722,13 +749,13 @@ let bigRock;
   bigRock.scale.set(3.0, 2.3, 2.5);
   bigRock.position.set(BIG_ROCK.x, 1.6, BIG_ROCK.z);
   bigRock.castShadow = bigRock.receiveShadow = true;
-  scene.add(bigRock);
+  shoreSide.add(bigRock);
   const small = new THREE.Mesh(g, mat);
   small.scale.set(1.5, 1.3, 1.4);
   small.rotation.y = 1.2;
   small.position.set(6.0, 0.7, 1.9);
   small.castShadow = small.receiveShadow = true;
-  scene.add(small);
+  shoreSide.add(small);
   rockMeshes.push(bigRock, small);
 }
 
@@ -760,14 +787,14 @@ function makeTree(x, z, s = 1, base) {
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   g.position.set(x, y0, z);
   g.scale.setScalar(s);
-  scene.add(g);
+  shoreSide.add(g);
 }
 makeTree(-6.4, -6.0, 1.05);
 makeTree(-1.8, -6.6, 1.15);
 makeTree(3.0, -6.2, 1.0);
 makeTree(8.0, -1.0, 0.7, 3.0);
 
-function instanced(geo, mat, list, colorFn) {
+function instanced(geo, mat, list, colorFn, parent = shoreSide) {
   const im = new THREE.InstancedMesh(geo, mat, list.length);
   const o = new THREE.Object3D(), c = new THREE.Color();
   list.forEach((it, i) => {
@@ -780,7 +807,7 @@ function instanced(geo, mat, list, colorFn) {
   });
   im.castShadow = true;
   im.receiveShadow = true;
-  scene.add(im);
+  parent.add(im);
   return im;
 }
 {
@@ -1188,8 +1215,10 @@ function register(ind) {
   ind.react = 0;
   ind.moving = false;
   ind.yaw = ind.yaw ?? rr(0, TAU);
+  if (ind.pickShape) pr.scale.set(...ind.pickShape.map(v => v / gs));
+  ind.sideName = ind.sideName || 'shore';
   inds.push(ind);
-  scene.add(ind.group);
+  (ind.parent || (ind.sideName === 'ice' ? iceSide : shoreSide)).add(ind.group);
   return ind;
 }
 function walker(o) {
@@ -1387,12 +1416,471 @@ function updateSchool(dt, t) {
   }
 }
 
+/* ------------------------------------------------------------------ the other side: drift-ice sea */
+// Local frame of iceSide: same slab outline and tide as the shore, but a snowy
+// coast at the back and deep, cold water with drifting floes in front.
+const ISLET = { x: 6.2, z: 3.2 };
+function iceHeight(x, z) {
+  const shore = z + Math.sin(x * 0.33 + 1.2) * 1.1 + (vnoise(x * 0.4 + 20, 3) - 0.5) * 0.8;
+  let h = lerp(2.3, -3.1, smooth(-5.2, -1.2, shore)) + (fbm(x * 0.35 + 40, z * 0.35 + 9) - 0.5) * 0.5;
+  const g = Math.exp(-(((x - ISLET.x) ** 2) / 2.2 + ((z - ISLET.z) ** 2) / 1.8));
+  h = lerp(h, Math.max(h, 1.15 + (fbm(x * 1.2, z * 1.2) - 0.5) * 0.3), smooth(0.25, 0.6, g));
+  return h;
+}
+const iceOnLand = (x, z) => iceHeight(x, z) > tideY + 0.15;
+
+const cSnow = new THREE.Color('#f2f6f8'), cSnow2 = new THREE.Color('#dfe8ee'), cGravel = new THREE.Color('#8f979b'), cSeabed = new THREE.Color('#6f8087');
+let iceTerrain;
+const iceRocks = [];
+{
+  const pos = new Float32Array((K + 1) * MSEG * 3), col = new Float32Array((K + 1) * MSEG * 3), c = new THREE.Color();
+  for (let k = 0; k <= K; k++) {
+    const s = k / K;
+    for (let m = 0; m < MSEG; m++) {
+      const x = bnd[m][0] * s, z = bnd[m][1] * s, h = iceHeight(x, z), i = (k * MSEG + m) * 3;
+      pos[i] = x; pos[i + 1] = h; pos[i + 2] = z;
+      c.copy(cSeabed).lerp(cGravel, smooth(-2.5, 0.2, h)).lerp(cSnow2, smooth(0.9, 1.5, h + (fbm(x * 2, z * 2) - 0.5) * 0.5));
+      c.lerp(cSnow, smooth(1.5, 2.1, h) * 0.8);
+      col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b;
+    }
+  }
+  const idx = [];
+  for (let k = 0; k < K; k++) for (let m = 0; m < MSEG; m++) {
+    const a = k * MSEG + m, b = k * MSEG + (m + 1) % MSEG, cc = (k + 1) * MSEG + m, d = (k + 1) * MSEG + (m + 1) % MSEG;
+    idx.push(a, b, cc, b, d, cc);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  iceTerrain = new THREE.Mesh(g, wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), ICE_U));
+  iceTerrain.receiveShadow = iceTerrain.castShadow = true;
+  iceSide.add(iceTerrain);
+
+  // side walls: layers of dark rock and old ice
+  const WR = 18, wp = [], wc = [], wi = [];
+  const w1 = new THREE.Color('#c3d0d6'), w2 = new THREE.Color('#8f9ea7'), w3 = new THREE.Color('#66737c');
+  for (let m = 0; m <= MSEG; m++) {
+    const [bx, bz] = bnd[m % MSEG], top = iceHeight(bx, bz);
+    for (let r = 0; r <= WR; r++) {
+      const y = lerp(top, BOTTOM, r / WR), band = 0.5 + 0.5 * Math.sin(y * 3.1 + vnoise(bx * 0.6 + 7, bz * 0.6) * 2.5);
+      c.copy(w1).lerp(w2, band * 0.6).lerp(w3, smooth(-1.5, BOTTOM, y) * 0.7);
+      wp.push(bx, y, bz); wc.push(c.r, c.g, c.b);
+    }
+  }
+  for (let m = 0; m < MSEG; m++) for (let r = 0; r < WR; r++) {
+    const a = m * (WR + 1) + r, b = (m + 1) * (WR + 1) + r;
+    wi.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  const wg = new THREE.BufferGeometry();
+  wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3));
+  wg.setAttribute('color', new THREE.Float32BufferAttribute(wc, 3));
+  wg.setIndex(wi);
+  wg.computeVertexNormals();
+  const wall = new THREE.Mesh(wg, wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 }), ICE_U));
+  wall.receiveShadow = true;
+  iceSide.add(wall);
+
+  // dark shore rocks with a cap of snow
+  const dark = wetShader(new THREE.MeshStandardMaterial({ color: '#5b666c', roughness: 0.9, flatShading: true }), ICE_U);
+  const snowM = new THREE.MeshStandardMaterial({ color: '#f4f7f9', roughness: 0.85, flatShading: true });
+  for (let n = 0, tries = 0; n < 16 && tries < 400; tries++) {
+    const x = sr(-A, A), z = sr(-B, 1);
+    const h = iceHeight(x, z);
+    if (seF(x, z) > 0.8 || h < -1.4 || h > 1.9) continue;
+    const s = sr(0.3, 0.65), m = new THREE.Mesh(rockGeos[n % rockGeos.length], dark);
+    m.scale.set(s, s * 0.7, s * sr(0.8, 1.1)); m.rotation.y = sr(0, TAU); m.position.set(x, h + s * 0.1, z);
+    const cap = new THREE.Mesh(rockGeos[(n + 2) % rockGeos.length], snowM);
+    cap.scale.set(0.85, 0.35, 0.85); cap.position.y = 0.55; m.add(cap);
+    m.castShadow = m.receiveShadow = true; cap.castShadow = true;
+    iceSide.add(m); iceRocks.push(m);
+    n++;
+  }
+}
+
+// cold sea (same water shape as the shore side)
+const iceSeaMat = seaMat.clone();
+iceSeaMat.color.set('#3c7f93');
+iceSeaMat.opacity = 0.66;
+const iceSea = new THREE.Group();
+sea.children.forEach(ch => iceSea.add(new THREE.Mesh(ch.geometry, iceSeaMat)));
+iceSea.scale.copy(sea.scale);
+iceSea.position.y = WATER_BOTTOM;
+iceSea.renderOrder = 2;
+iceSide.add(iceSea);
+
+// conifers with snow, and a bare snag for the eagle
+{
+  const needle = M('#2e5a49', { roughness: 0.85, flatShading: true }), snowTop = M('#f3f7f9', { roughness: 0.8, flatShading: true });
+  const trunk = M('#6b5a4c', { roughness: 0.9 });
+  const cone = new THREE.ConeGeometry(1, 1, 7);
+  for (let n = 0, tries = 0; n < 13 && tries < 500; tries++) {
+    const x = sr(-A, A), z = sr(-B, -4.2);
+    if (seF(x, z) > 0.86 || iceHeight(x, z) < 1.9) continue;
+    const g = new THREE.Group(), s = sr(0.8, 1.35);
+    const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.5, 5), trunk); tr.position.y = 0.25; g.add(tr);
+    for (let i = 0; i < 3; i++) {
+      const w = 0.62 - i * 0.16, y = 0.45 + i * 0.42;
+      const c1 = new THREE.Mesh(cone, needle); c1.scale.set(w, 0.7, w); c1.position.y = y + 0.35; g.add(c1);
+      const c2 = new THREE.Mesh(cone, snowTop); c2.scale.set(w * 0.72, 0.3, w * 0.72); c2.position.y = y + 0.56; g.add(c2);
+    }
+    g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    g.position.set(x, iceHeight(x, z) - 0.05, z); g.scale.setScalar(s); g.rotation.y = sr(0, TAU);
+    iceSide.add(g);
+    n++;
+  }
+  const mounds = [];
+  for (let i = 0; i < 900 && mounds.length < 70; i++) {
+    const x = sr(-A, A), z = sr(-B, -3.8);
+    if (seF(x, z) > 0.9 || iceHeight(x, z) < 1.7) continue;
+    const s = sr(0.5, 1.2);
+    mounds.push({ x, y: iceHeight(x, z) - 0.05, z, ry: sr(0, TAU), sx: s, sy: s * 0.35, sz: s });
+  }
+  instanced(new THREE.IcosahedronGeometry(0.35, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.85 }), mounds,
+    (c) => c.set('#f1f5f8').offsetHSL(0, 0, sr(-0.03, 0.01)), iceSide);
+}
+const SNAG = { x: ISLET.x - 0.3, z: ISLET.z - 0.2 };
+const snagTopY = (() => {
+  const g = new THREE.Group(), wood = M('#8a7a6a', { roughness: 0.95 });
+  const t1 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.12, 1.7, 6), wood); t1.position.y = 0.85; t1.rotation.z = 0.06; g.add(t1);
+  [[0.9, 0.7], [1.25, -0.8], [1.5, 2.2]].forEach(([y, a]) => {
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, 0.6, 5), wood);
+    b.position.set(Math.cos(a) * 0.18, y, Math.sin(a) * 0.18); b.rotation.set(Math.sin(a) * 0.9, 0, -Math.cos(a) * 0.9); g.add(b);
+  });
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  const y0 = iceHeight(SNAG.x, SNAG.z) - 0.05;
+  g.position.set(SNAG.x, y0, SNAG.z);
+  iceSide.add(g);
+  return y0 + 1.7;
+})();
+
+// drift ice
+const floes = [];
+function floeGeo(r, seed) {
+  const n = 18, s = new THREE.Shape(), stretch = 0.75 + (seed % 4) * 0.15;
+  for (let i = 0; i < n; i++) {
+    const a = i / n * TAU + (hash2(seed, i) - 0.5) * 0.25;
+    const rad = r * (0.55 + 0.6 * fbm(Math.cos(a) * 1.1 + seed * 7.3, Math.sin(a) * 1.1 + seed * 3.1));
+    const px = Math.cos(a) * rad * stretch, py = Math.sin(a) * rad / stretch;
+    i ? s.lineTo(px, py) : s.moveTo(px, py);
+  }
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.3, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.09, bevelSegments: 2, curveSegments: 4 });
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, -0.2, 0);
+  const nrm = g.attributes.normal, cols = [], top = new THREE.Color('#f5f9fb'), side = new THREE.Color('#b5d7e3');
+  for (let i = 0; i < nrm.count; i++) { const c = nrm.getY(i) > 0.6 ? top : side; cols.push(c.r, c.g, c.b); }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  return g;
+}
+const floeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0 });
+for (let n = 0, tries = 0; n < 15 && tries < 800; tries++) {
+  const r = n < 3 ? sr(1.4, 1.8) : sr(0.6, 1.4);
+  const x = sr(-A * 0.8, A * 0.8), z = sr(-2.5, B * 0.8);
+  if (seF(x, z) > 0.62 || iceHeight(x, z) > TIDE_LOW - 0.5) continue;
+  if (floes.some(f => Math.hypot(f.x - x, f.z - z) < f.r + r + 0.25)) continue;
+  const mesh = new THREE.Mesh(floeGeo(r, n + 1), floeMat);
+  mesh.castShadow = mesh.receiveShadow = true;
+  const f = { mesh, x, z, r, vx: 0, vz: 0, rot: sr(0, TAU), spin: sr(-0.02, 0.02), ph: sr(0, TAU), y: tideY, grounded: false };
+  mesh.position.set(x, tideY, z);
+  iceSide.add(mesh);
+  floes.push(f);
+  n++;
+}
+// a few floes near the beach, tethered to where the ebb tide leaves them stranded
+for (let n = 0, tries = 0; n < 3 && tries < 800; tries++) {
+  const x = sr(-9, 3), z = sr(-4.5, -1.5), h = iceHeight(x, z), r = sr(0.6, 0.95);
+  if (seF(x, z) > 0.7 || h < -0.7 || h > 0.4) continue;
+  if (floes.some(f => Math.hypot(f.x - x, f.z - z) < f.r + r + 0.3)) continue;
+  const mesh = new THREE.Mesh(floeGeo(r, 40 + n), floeMat);
+  mesh.castShadow = mesh.receiveShadow = true;
+  const f = { mesh, x, z, r, vx: 0, vz: 0, rot: sr(0, TAU), spin: sr(-0.02, 0.02), ph: sr(0, TAU), y: Math.max(tideY, h + 0.26), grounded: false, home: { x, z } };
+  mesh.position.set(x, f.y, z);
+  iceSide.add(mesh);
+  floes.push(f);
+  n++;
+}
+function updateFloes(dt, t) {
+  for (const f of floes) {
+    // a slow, wandering current plus a little push away from the edge and the beach
+    f.vx += (Math.sin(t * 0.05 + f.ph) * 0.02 - f.x * 0.0015) * dt;
+    f.vz += (Math.cos(t * 0.04 + f.ph * 1.7) * 0.02 - (f.z - 2.5) * 0.0015) * dt;
+    for (const o of floes) {
+      if (o === f) continue;
+      const dx = f.x - o.x, dz = f.z - o.z, d = Math.hypot(dx, dz), min = f.r + o.r + 0.1;
+      if (d < min && d > 1e-4) { const k = (min - d) * 0.6 * dt; f.vx += dx / d * k; f.vz += dz / d * k; }
+    }
+    if (seF(f.x, f.z) > 0.6) { f.vx -= f.x * 0.01 * dt; f.vz -= f.z * 0.01 * dt; }
+    if (f.home) { f.vx += (f.home.x - f.x) * 0.02 * dt; f.vz += (f.home.z - f.z) * 0.02 * dt; }
+    const floor = iceHeight(f.x, f.z);
+    f.grounded = floor + 0.26 > tideY;
+    const damp = f.grounded ? 0.8 : 0.995;
+    f.vx *= Math.pow(damp, dt * 60); f.vz *= Math.pow(damp, dt * 60);
+    const nx = f.x + f.vx * dt * 6, nz = f.z + f.vz * dt * 6;
+    if (!f.home && iceHeight(nx, nz) + 0.26 > tideY + 0.05 && !f.grounded) { f.vx *= -0.3; f.vz *= -0.3; }
+    else { f.x = nx; f.z = nz; }
+    const bob = f.grounded ? 0 : Math.sin(t * 0.9 + f.ph) * 0.025;
+    const want = Math.max(tideY + bob, floor + 0.26);
+    f.y += (want - f.y) * Math.min(1, dt * 2);
+    f.rot += f.spin * dt * (f.grounded ? 0 : 1);
+    f.mesh.position.set(f.x, f.y, f.z);
+    f.mesh.rotation.set(f.grounded ? 0.03 : Math.sin(t * 0.7 + f.ph) * 0.012, f.rot, f.grounded ? -0.02 : Math.cos(t * 0.6 + f.ph) * 0.012);
+  }
+}
+
+// falling snow, drawn only while the ice side faces up
+const snow = (() => {
+  const N = 1400, p = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) { p[i * 3] = rr(-A, A); p[i * 3 + 1] = rr(-1, 10); p[i * 3 + 2] = rr(-B, B); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: 0.07, transparent: true, opacity: 0.85, depthWrite: false }));
+  pts.visible = false;
+  iceSide.add(pts);
+  return pts;
+})();
+function updateSnow(dt, t) {
+  const p = snow.geometry.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    let y = p.getY(i) - dt * (0.35 + (i % 7) * 0.04);
+    let x = p.getX(i) + Math.sin(t * 0.6 + i) * dt * 0.12;
+    if (y < iceHeight(x, p.getZ(i)) || y < tideY) { y = 10; x = rr(-A, A); }
+    p.setXY(i, x, y);
+  }
+  p.needsUpdate = true;
+}
+
+/* ice-side creatures */
+function makeSeal() {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const fur = M('#b8b6ae', { roughness: 0.55 }), belly = M('#d6d3c9', { roughness: 0.6 }), spot = M('#56585b'), dark = M('#2c2b2a');
+  blob(body, fur, 0, 0.19, 0, 0.27, 0.21, 0.55);
+  blob(body, belly, 0, 0.1, 0.05, 0.24, 0.12, 0.48);
+  blob(body, fur, 0, 0.15, -0.46, 0.17, 0.13, 0.3);
+  for (let i = 0; i < 34; i++) {
+    // points on the upper half of the body ellipsoid, sunk slightly so they read as markings
+    const a = rr(-1.3, 1.3), z = rr(-0.85, 0.75), ring = Math.sqrt(Math.max(0, 1 - z * z));
+    blob(body, spot, Math.sin(a) * 0.27 * ring * 0.985, 0.19 + Math.cos(a) * 0.21 * ring * 0.985, z * 0.55, 0.016);
+  }
+  const head = new THREE.Group(); head.position.set(0, 0.26, 0.45); body.add(head);
+  blob(head, fur, 0, 0.06, 0.05, 0.19, 0.17, 0.19);
+  blob(head, belly, 0, 0.02, 0.2, 0.1, 0.08, 0.09);
+  blob(head, dark, 0, 0.05, 0.285, 0.028, 0.02, 0.02);
+  for (const s of [-1, 1]) {
+    blob(head, dark, s * 0.09, 0.11, 0.17, 0.045, 0.05, 0.035);
+    const fl = blob(body, fur, s * 0.24, 0.08, 0.18, 0.1, 0.03, 0.06); fl.rotation.z = s * 0.4;
+  }
+  const tail = new THREE.Group(); tail.position.set(0, 0.13, -0.72); body.add(tail);
+  for (const s of [-1, 1]) { const f = blob(tail, fur, s * 0.07, 0, -0.08, 0.07, 0.03, 0.13); f.rotation.y = s * 0.35; }
+  return { group: g, body, head, tail };
+}
+function makeClione() {
+  const g = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: '#e3f1f7', roughness: 0.2, transparent: true, opacity: 0.55, emissive: '#9ed4f5', emissiveIntensity: 0.25, depthWrite: false });
+  const core = new THREE.MeshStandardMaterial({ color: '#e5553a', roughness: 0.4, emissive: '#e5553a', emissiveIntensity: 0.35 });
+  blob(g, skin, 0, 0, 0, 0.055, 0.13, 0.055);
+  blob(g, skin, 0, 0.14, 0, 0.05, 0.048, 0.05);
+  blob(g, core, 0, -0.01, 0, 0.026, 0.055, 0.026);
+  blob(g, core, 0, 0.17, 0, 0.018, 0.014, 0.018);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(s * 0.04, 0.07, 0); g.add(w);
+    const m = blob(w, skin, s * 0.07, 0, 0, 0.075, 0.012, 0.045); m.rotation.z = s * 0.2;
+    wings.push(w);
+  }
+  return { group: g, wings };
+}
+function makeEagle() {
+  const g = new THREE.Group();
+  const brown = M('#3a2b21', { roughness: 0.8 }), white = M('#f3efe6', { roughness: 0.7 }), beakM = M('#f0ad2a', { roughness: 0.45 }), eyeY = M('#e8c34a');
+  blob(g, brown, 0, 0.28, 0, 0.17, 0.26, 0.15);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(s * 0.14, 0.38, -0.02); g.add(w);
+    blob(w, brown, s * 0.03, -0.1, -0.02, 0.07, 0.22, 0.13);
+    blob(w, white, s * 0.05, 0.03, 0.06, 0.05, 0.07, 0.06);
+    wings.push(w);
+  }
+  const tl = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.26, 5), white); tl.position.set(0, 0.06, -0.12); tl.rotation.x = -2.6; g.add(tl);
+  const head = new THREE.Group(); head.position.set(0, 0.56, 0.03); g.add(head);
+  blob(head, brown, 0, 0, 0, 0.1, 0.1, 0.11);
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 6), beakM); beak.rotation.x = Math.PI / 2 + 0.35; beak.position.set(0, -0.02, 0.14); head.add(beak);
+  for (const s of [-1, 1]) blob(head, eyeY, s * 0.07, 0.025, 0.06, 0.018);
+  for (const s of [-1, 1]) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.08, 5), beakM); l.position.set(s * 0.05, 0.04, 0.02); g.add(l); }
+  return { group: g, head, wings };
+}
+function makeFox() {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const orange = M('#c9763c', { roughness: 0.7 }), white = M('#f2ede4', { roughness: 0.7 }), black = M('#2a2522');
+  blob(body, orange, 0, 0.3, 0, 0.12, 0.12, 0.28);
+  blob(body, white, 0, 0.26, 0.2, 0.08, 0.1, 0.08);
+  const head = new THREE.Group(); head.position.set(0, 0.42, 0.3); body.add(head);
+  blob(head, orange, 0, 0, 0, 0.1, 0.09, 0.1);
+  const sn = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.15, 6), white); sn.rotation.x = Math.PI / 2; sn.position.set(0, -0.025, 0.14); head.add(sn);
+  blob(head, black, 0, -0.02, 0.215, 0.016);
+  for (const s of [-1, 1]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.1, 4), black); ear.position.set(s * 0.055, 0.1, -0.01); ear.rotation.z = -s * 0.25; head.add(ear);
+    blob(head, black, s * 0.045, 0.02, 0.085, 0.014);
+  }
+  const legs = [];
+  for (const [x, z] of [[-0.06, 0.18], [0.06, 0.18], [-0.06, -0.18], [0.06, -0.18]]) {
+    const l = new THREE.Group(); l.position.set(x, 0.24, z); body.add(l);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.02, 0.24, 5), black); m.position.y = -0.12; l.add(m);
+    legs.push(l);
+  }
+  const tail = new THREE.Group(); tail.position.set(0, 0.33, -0.26); body.add(tail);
+  const tb = blob(tail, orange, 0, -0.04, -0.14, 0.07, 0.07, 0.17); tb.rotation.x = 0.5;
+  blob(tail, white, 0, -0.1, -0.28, 0.045);
+  return { group: g, body, head, legs, tail };
+}
+
+Object.assign(SPECIES, {
+  gomafu: {
+    name: 'ゴマフアザラシ', sci: 'Phoca largha', kind: '哺乳類・アザラシのなかま', side: 'ice',
+    desc: '冬に流氷に乗って北海道の沿岸へやってくるアザラシ。灰色の体に、ごまをふったような黒い斑点があります。',
+    size: '全長 約1.6m', habitat: '流氷の上・冷たい沿岸',
+    status: (ind) => ind.react > 0 ? '顔を上げて、こちらをじっと見ています。'
+      : ind.swim ? '氷の下を、すいすいと泳いでいます。' : ind.floe && ind.floe.grounded ? '浜に乗り上げた氷の上で、のんびり休んでいます。' : '流氷の上で、波にゆられて休んでいます。',
+  },
+  clione: {
+    name: 'クリオネ', sci: 'Clione limacina', kind: '軟体動物・巻き貝のなかま', side: 'ice',
+    desc: '「流氷の天使」と呼ばれる、殻のない小さな巻き貝。透きとおった体で、翼のような足をぱたぱた動かして泳ぎます。',
+    size: '体長 約1〜3cm', habitat: '流氷の下の冷たい海',
+    status: (ind) => ind.react > 0 ? '頭から触手を出しかけて、すぐにしまいました。' : nightF > 0.5 ? '暗い海の中で、赤い体がぼんやり透けています。' : '翼足をはばたかせて、ゆっくり浮かんでいます。',
+  },
+  oowashi: {
+    name: 'オオワシ', sci: 'Haliaeetus pelagicus', kind: '鳥類・タカのなかま', side: 'ice',
+    desc: '冬にロシアから渡ってくる、日本でいちばん大きなワシ。黄色い大きなくちばしと、肩の白い羽が目印です。',
+    size: '全長 約90cm・翼を広げると約2.4m', habitat: '流氷の海・海岸の林',
+    status: (ind) => ind.react > 0 ? '大きな翼を広げて、胸を張りました。' : nightF > 0.5 ? '枝の上で、夜が明けるのを待っています。' : '高い枝から、流氷の上の獲物を探しています。',
+  },
+  kitsune: {
+    name: 'キタキツネ', sci: 'Vulpes vulpes schrencki', kind: '哺乳類・イヌのなかま', side: 'ice',
+    desc: '北海道にすむキツネ。冬は毛がふかふかに伸びて、黒い足先と白い尾の先が雪の上でよく目立ちます。',
+    size: '体長 約60cm・尾 約40cm', habitat: '雪の海岸・林のまわり',
+    status: (ind) => ind.react > 0 ? '耳をぴんと立てて、立ち止まりました。' : ind.moving ? '雪の上を、足跡をつけながら歩いています。' : '雪の下の音に、耳をすませています。',
+  },
+  ryuhyo: {
+    name: '流氷', sci: 'Drift ice', kind: '海の氷', side: 'ice',
+    desc: 'アムール川から流れこんだ水が冷やされてできた海の氷が、風と海流に運ばれて北海道のオホーツク海沿岸までやってきます。',
+    size: '一枚の大きさは数mから数km', habitat: 'オホーツク海（1月〜3月ごろ）',
+    status: () => {
+      const g = floes.filter(f => f.grounded).length;
+      return g > 0 ? `潮が引いて、${g}枚の氷が浜に乗り上げています。` : '潮の流れにのって、ゆっくり漂っています。';
+    },
+  },
+});
+const ORDER_ICE = ['gomafu', 'clione', 'oowashi', 'kitsune', 'ryuhyo'];
+
+// floes are clickable too; seals ride on the three biggest
+floes.forEach((f) => {
+  register({ species: 'ryuhyo', sideName: 'ice', group: f.mesh, fixed: true, update() {}, pick: f.r, pickShape: [f.r, 0.28, f.r], pickY: 0.05, focus: 5.5, floe: f, ringY: () => f.y + 0.2 });
+});
+[0, 1, 2].forEach((i) => {
+  const f = floes[i];
+  if (!f) return;
+  const s = makeSeal();
+  s.group.position.set(rr(-0.3, 0.3) * f.r, 0.18, rr(-0.3, 0.3) * f.r);
+  s.group.rotation.y = rr(0, TAU);
+  register({
+    species: 'gomafu', sideName: 'ice', ...s, parent: f.mesh, floe: f, fixed: true, pick: 0.55, pickY: 0.28, focus: 3.4, ph: rr(0, TAU),
+    ringY: () => f.y + 0.2,
+    update(ind, dt, t) {
+      const up = ind.react > 0 ? -0.55 : -0.12 + Math.max(0, Math.sin(t * 0.35 + ind.ph)) * -0.35;
+      ind.head.rotation.x = lerp(ind.head.rotation.x, up, Math.min(1, dt * 3));
+      ind.head.rotation.y = Math.sin(t * 0.25 + ind.ph) * 0.4;
+      ind.tail.rotation.x = Math.sin(t * 1.3 + ind.ph) * 0.2 - 0.15;
+      ind.body.scale.y = 1 + Math.sin(t * 1.1 + ind.ph) * 0.015;
+    },
+  });
+});
+{
+  const s = makeSeal();
+  register({
+    species: 'gomafu', sideName: 'ice', ...s, fixed: true, swim: true, pick: 0.55, pickY: 0.2, focus: 3.6, a: rr(0, TAU),
+    ringY: (p) => p.y - 0.35,
+    update(ind, dt, t) {
+      ind.a += dt * 0.12;
+      const x = -4.5 + Math.cos(ind.a) * 4.2, z = 5 + Math.sin(ind.a * 2) * 1.6;
+      const floor = iceHeight(x, z), y = clamp(tideY - 0.75, floor + 0.35, tideY - 0.4);
+      const g = ind.group, px = g.position.x, pz = g.position.z;
+      g.position.set(x, y, z);
+      if (Math.hypot(x - px, z - pz) > 1e-4) g.rotation.y = Math.atan2(x - px, z - pz);
+      ind.tail.rotation.y = Math.sin(t * 5) * 0.5;
+      ind.head.rotation.x = ind.react > 0 ? -0.4 : 0;
+    },
+  });
+}
+for (let k = 0; k < 8; k++) {
+  const c = makeClione();
+  c.group.scale.setScalar(0.8);
+  register({
+    species: 'clione', sideName: 'ice', ...c, fixed: true, pick: 0.22, pickY: 0.06, focus: 1.8, ph: rr(0, TAU),
+    x: rr(-7, 3), z: rr(0.5, 6.5), tx: 0, tz: 0, y: -1.5, ty: -1.5, pause: 0,
+    ringY: (p) => p.y - 0.25,
+    update(ind, dt, t) {
+      ind.pause -= dt;
+      if (ind.pause <= 0) {
+        for (let i = 0; i < 12; i++) {
+          const x = ind.x + rr(-1.5, 1.5), z = ind.z + rr(-1.5, 1.5);
+          if (seF(x, z) < 0.7 && iceHeight(x, z) < tideY - 1.0) { ind.tx = x; ind.tz = z; break; }
+        }
+        ind.pause = rr(4, 9);
+      }
+      const floor = iceHeight(ind.x, ind.z);
+      ind.ty = clamp(lerp(floor, tideY, 0.55) + Math.sin(t * 0.4 + ind.ph) * 0.3, floor + 0.4, tideY - 0.45);
+      const k2 = Math.min(1, dt * 0.25);
+      ind.x += (ind.tx - ind.x) * k2; ind.z += (ind.tz - ind.z) * k2; ind.y += (ind.ty - ind.y) * Math.min(1, dt * 0.8);
+      ind.group.position.set(ind.x, ind.y + Math.sin(t * 2 + ind.ph) * 0.03, ind.z);
+      ind.group.rotation.y = t * 0.2 + ind.ph;
+      const flap = Math.sin(t * (ind.react > 0 ? 16 : 7) + ind.ph) * 0.7;
+      ind.wings[0].rotation.z = flap; ind.wings[1].rotation.z = -flap;
+    },
+  });
+}
+{
+  const e = makeEagle();
+  e.group.position.set(SNAG.x + 0.02, snagTopY - 0.03, SNAG.z);
+  e.group.rotation.y = -0.6;
+  e.group.scale.setScalar(1.25);
+  register({
+    species: 'oowashi', sideName: 'ice', ...e, fixed: true, pick: 0.45, pickY: 0.35, focus: 2.8, ph: rr(0, TAU),
+    ringY: () => snagTopY - 1.7 + 0.03,
+    update(ind, dt, t) {
+      const look = Math.sin(t * 0.3 + ind.ph) > 0.6 ? 0.9 : Math.sin(t * 0.3 + ind.ph) < -0.6 ? -0.9 : 0;
+      ind.head.rotation.y = lerp(ind.head.rotation.y, look, Math.min(1, dt * 4));
+      const spread = ind.react > 0 ? 1.1 : 0;
+      ind.wings.forEach((w, i) => { w.rotation.z = lerp(w.rotation.z, (i ? -1 : 1) * spread, Math.min(1, dt * 5)); });
+    },
+  });
+}
+for (let k = 0; k < 2; k++) {
+  const f = makeFox();
+  register(walker({
+    species: 'kitsune', sideName: 'ice', ...f, fixed: true, x: -5 + k * 7, z: -6, speed: 0.55, pauseMin: 1.5, pauseMax: 5, turnRate: 3, pick: 0.4, pickY: 0.3, focus: 2.8, freeze: true,
+    zone: () => ({ x: -1, z: -6, r: 6 }),
+    valid: (x, z) => seF(x, z) < 0.82 && iceOnLand(x, z) && iceHeight(x, z) > 1.3,
+    update(ind, dt, t) {
+      stepWalker(ind, dt);
+      ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02, ind.z);
+      ind.group.rotation.y = ind.yaw;
+      const mv = ind.moving ? 1 : 0;
+      ind.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 10 + (i % 2 ? Math.PI : 0) + (i > 1 ? Math.PI / 2 : 0)) * 0.5 * mv; });
+      ind.tail.rotation.y = Math.sin(t * 2) * 0.2;
+      ind.head.rotation.x = ind.react > 0 ? -0.3 : mv ? 0 : 0.35 + Math.sin(t * 0.8) * 0.1;
+    },
+  }));
+}
+const heightOnSide = (name) => name === 'ice' ? iceHeight : heightAt;
+
 /* ------------------------------------------------------------------ selection ring */
 const ring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 64).rotateX(-Math.PI / 2),
   new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false }));
 ring.renderOrder = 5;
 ring.visible = false;
-scene.add(ring);
+shoreSide.add(ring);
 
 /* ------------------------------------------------------------------ camera views */
 const VIEWS = {
@@ -1400,16 +1888,23 @@ const VIEWS = {
   pools: { pos: new THREE.Vector3(-6.9, 7.4, 7.8), target: new THREE.Vector3(-1.8, 0.8, 1.3) },
   under: { pos: new THREE.Vector3(-9.4, -0.7, 6.6), target: new THREE.Vector3(-3.8, -0.8, 3.6) },
 };
+const VIEWS_ICE = {
+  shore: VIEWS.shore,
+  pools: { pos: new THREE.Vector3(-6.5, 8, 9.5), target: new THREE.Vector3(-1, 0.4, 2.2) },
+  under: { pos: new THREE.Vector3(-7.5, -1.6, 5.8), target: new THREE.Vector3(-2.5, -0.6, 2.4) },
+};
+let side = 'shore', flipAnim = null, flipF = 0;
+const sideGroup = (name) => name === 'ice' ? iceSide : shoreSide;
 function fitFov() { camera.fov = camera.aspect < 1 ? 42 : 30; camera.updateProjectionMatrix(); }
 function shorePose() {
   const v = VIEWS.shore;
   const half = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
-  const dist = clamp(14.5 / Math.tan(half), v.dist, 62);
+  const dist = clamp(19 / Math.tan(half), 44, 72);
   return { pos: v.target.clone().addScaledVector(v.dir, dist), target: v.target.clone() };
 }
 function viewPose(name) {
   if (name === 'shore') return shorePose();
-  const v = VIEWS[name];
+  const v = (side === 'ice' ? VIEWS_ICE : VIEWS)[name];
   const pos = v.pos.clone();
   if (camera.aspect < 1) pos.sub(v.target).multiplyScalar(1.45).add(v.target);
   return { pos, target: v.target.clone() };
@@ -1497,18 +1992,20 @@ function updateDay(dt) {
   hemi.intensity = m.hemi;
   scene.environmentIntensity = m.env;
   seaMat.color.copy(m.water);
+  iceSeaMat.color.copy(m.water).lerp(ICE_WATER, 0.55);
   poolMat.color.copy(m.water).lerp(WHITE, 0.22);
   U.uNight.value = m.night;
   scene.fog.color.set('#4f9e9b').lerp(NIGHT_FOG, m.night * 0.8);
   dayUiTimer -= dt;
   if (dayUiTimer <= 0) {
     dayUiTimer = 0.2;
-    const key = m.bg.map(c => c.getHexString()).join('');
+    const hex = m.bg.map(c => '#' + BG_TMP.copy(c).lerp(BG_TMP2.copy(c).multiply(COLD_TINT), flipF).getHexString());
+    const key = hex.join('');
     if (key !== lastBgKey) {
       lastBgKey = key;
-      rootStyle.setProperty('--bg-hi', '#' + m.bg[0].getHexString());
-      rootStyle.setProperty('--bg-mid', '#' + m.bg[1].getHexString());
-      rootStyle.setProperty('--bg-lo', '#' + m.bg[2].getHexString());
+      rootStyle.setProperty('--bg-hi', hex[0]);
+      rootStyle.setProperty('--bg-mid', hex[1]);
+      rootStyle.setProperty('--bg-lo', hex[2]);
     }
     skyCanvas.style.opacity = smooth(0.45, 1, m.night).toFixed(3);
     document.body.classList.toggle('dusk', m.night > (document.body.classList.contains('dusk') ? 0.4 : 0.5));
@@ -1520,6 +2017,7 @@ function updateDay(dt) {
     if (!todDragging) ui.tod.value = Math.floor(hour * 60);
   }
 }
+const ICE_WATER = new THREE.Color('#2b6f88'), COLD_TINT = new THREE.Color(0.9, 0.97, 1.08), BG_TMP = new THREE.Color(), BG_TMP2 = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff'), NIGHT_FOG = new THREE.Color('#123a4a');
 let todDragging = false;
 
@@ -1543,7 +2041,7 @@ function goView(name) {
   setViewButtons(name);
   const { pos, target } = viewPose(name);
   flyTo(pos, target, 1.8);
-  if (name === 'under' && tn < 0.72 && !autoMode) tideAnim = { from: tn, to: 0.9, t: 0, dur: 2.4 };
+  if (name === 'under' && side === 'shore' && tn < 0.72 && !autoMode) tideAnim = { from: tn, to: 0.9, t: 0, dur: 2.4 };
 }
 viewBtns.forEach(b => b.addEventListener('click', () => goView(b.dataset.view)));
 
@@ -1571,11 +2069,17 @@ const POEMS = {
   flood: ['上げ潮', '磯がゆっくりと、<br>海へかえっていく。'],
   high: ['満潮', '岩場も、<br>ひとつの海の中。'],
 };
+const POEMS_ICE = {
+  low: ['干潮', '潮が引くと、<br>流氷が浜に取り残される。'],
+  ebb: ['下げ潮', '氷の原が、<br>ゆっくり沈んでいく。'],
+  flood: ['上げ潮', '浜の氷が、<br>ふたたび海に浮かぶ。'],
+  high: ['満潮', '流氷が、<br>静かに持ち上がる。'],
+};
 let poemKey = 'ebb', poemTimer = 0;
 function tideKey() { return tn < 0.18 ? 'low' : tn > 0.84 ? 'high' : tideDir > 0 ? 'flood' : 'ebb'; }
 function updateTideUI() {
-  const key = tideKey();
-  ui.state.textContent = POEMS[key][0];
+  const key = tideKey(), poems = side === 'ice' ? POEMS_ICE : POEMS;
+  ui.state.textContent = poems[key][0];
   ui.cm.textContent = `潮位 ${Math.round(lerp(10, 180, tn))}cm`;
   if (document.activeElement !== ui.slider) ui.slider.value = Math.round(tn * 1000);
   if (key !== poemKey) {
@@ -1583,17 +2087,22 @@ function updateTideUI() {
     clearTimeout(poemTimer);
     ui.capPoem.classList.add('fade');
     poemTimer = setTimeout(() => {
-      ui.capState.textContent = POEMS[key][0];
-      ui.capPoem.innerHTML = POEMS[key][1];
+      ui.capState.textContent = poems[key][0];
+      ui.capPoem.innerHTML = poems[key][1];
       ui.capPoem.classList.remove('fade');
     }, 450);
   }
 }
 
 // species list
-const chipBtns = {};
+let chipBtns = {};
 const cycle = {};
-ORDER.forEach(key => {
+function buildChips() {
+  ui.species.replaceChildren();
+  chipBtns = {};
+  (side === 'ice' ? ORDER_ICE : ORDER).forEach(addChip);
+}
+function addChip(key) {
   const b = document.createElement('button');
   b.type = 'button';
   b.textContent = SPECIES[key].name.replace('（幼魚）', '');
@@ -1605,7 +2114,8 @@ ORDER.forEach(key => {
   });
   ui.species.appendChild(b);
   chipBtns[key] = b;
-});
+}
+buildChips();
 
 let sel = null, statusTimer = 0;
 function select(ind, fly) {
@@ -1618,13 +2128,15 @@ function select(ind, fly) {
   $('cardSize').textContent = sp.size;
   $('cardHabitat').textContent = sp.habitat;
   $('cardBuy').href = BOOTH.set || BOOTH.shop;
+  $('cardBuy').hidden = sp.side === 'ice';
+  sideGroup(ind.sideName).add(ring);
   $('cardNow').textContent = sp.status(ind);
   ui.card.hidden = false;
   document.body.classList.add('has-card');
   Object.entries(chipBtns).forEach(([k, b]) => b.setAttribute('aria-pressed', String(k === ind.species)));
   ring.visible = true;
   if (fly) {
-    const target = ind.group.position.clone();
+    const target = ind.group.getWorldPosition(new THREE.Vector3());
     target.y += 0.15;
     const dir = camera.position.clone().sub(controls.target).normalize();
     if (!camUnder && dir.y < 0.45) { dir.y = 0.45; dir.normalize(); }
@@ -1656,7 +2168,7 @@ function pick(e, occlude) {
   const hit = raycaster.intersectObjects(proxies, false)[0];
   if (!hit) return null;
   if (occlude) {
-    const wall = raycaster.intersectObjects([terrainMesh, ...rockMeshes], false)[0];
+    const wall = raycaster.intersectObjects([terrainMesh, ...rockMeshes, iceTerrain, ...iceRocks], false)[0];
     if (wall && wall.distance < hit.distance - hit.object.userData.ind.pick * 0.2) return null;
   }
   return hit.object.userData.ind;
@@ -1687,6 +2199,32 @@ canvas.addEventListener('pointermove', (e) => {
 });
 canvas.addEventListener('pointerleave', () => { ui.tip.hidden = true; });
 
+// turning the diorama over
+const SIDE_TEXT = {
+  shore: { eyebrow: 'MOONLIT TIDEPOOL', name: '月と潮の磯', lede: '月が潮を引くと、小さな世界が現れる。', flip: '裏返す・流氷の海へ', views: ['海辺', '潮だまり', '水中'] },
+  ice: { eyebrow: 'DRIFT ICE SEA', name: '流氷の海', lede: '箱庭の裏側は、冬のオホーツク。', flip: '表にもどす・月と潮の磯へ', views: ['海辺', '流氷', '氷の下'] },
+};
+function applySideUI() {
+  const tx = SIDE_TEXT[side];
+  $('eyebrow').textContent = tx.eyebrow;
+  $('worldName').textContent = tx.name;
+  $('lede').textContent = tx.lede;
+  $('flipLabel').textContent = tx.flip;
+  viewBtns.forEach((b, i) => { b.textContent = tx.views[i]; });
+  buildChips();
+  poemKey = '';
+}
+function flipWorld() {
+  if (flipAnim) return;
+  deselect();
+  side = side === 'shore' ? 'ice' : 'shore';
+  flipAnim = { from: flipGroup.rotation.z, to: side === 'ice' ? Math.PI : 0, t: 0, dur: reduceMotion ? 0.01 : 2.6 };
+  $('flip').disabled = true;
+  applySideUI();
+  goView('shore');
+}
+$('flip').addEventListener('click', flipWorld);
+
 // dock height for the mobile card placement
 new ResizeObserver(() => document.documentElement.style.setProperty('--dock-h', $('dock').offsetHeight + 'px')).observe($('dock'));
 
@@ -1712,7 +2250,7 @@ fitFov();
 let camUnder = false;
 const clock = new THREE.Clock();
 const easeInOut = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-const followDelta = new THREE.Vector3();
+const followDelta = new THREE.Vector3(), selWorld = new THREE.Vector3(), selLocal = new THREE.Vector3();
 const viewOff = { x: 0, y: 0 };
 
 function frame() {
@@ -1732,12 +2270,27 @@ function frame() {
   U.uTide.value = tideY;
   U.uTime.value = t;
   sea.scale.y = tideY - WATER_BOTTOM;
+  iceSea.scale.y = tideY - WATER_BOTTOM;
+  if (flipAnim) {
+    flipAnim.t += dt / flipAnim.dur;
+    flipGroup.rotation.z = lerp(flipAnim.from, flipAnim.to, easeInOut(Math.min(1, flipAnim.t)));
+    if (flipAnim.t >= 1) { flipAnim = null; $('flip').disabled = false; }
+  }
+  flipF = flipGroup.rotation.z / Math.PI;
+  flipGroup.updateMatrixWorld(true);
+  SHORE_U.uSideInv.value.copy(shoreSide.matrixWorld).invert();
+  ICE_U.uSideInv.value.copy(iceSide.matrixWorld).invert();
+  const shoreLive = flipF < 0.999, iceLive = flipF > 0.001;
   poolDiscs.forEach((d, i) => { d.visible = tideY < POOLS[i].level - 0.005; });
   waterNormal.offset.set(t * 0.012, t * 0.008);
   updateDay(dt);
 
   // creatures
+  if (iceLive) updateFloes(dt, t);
+  snow.visible = flipF > 0.6;
+  if (snow.visible) updateSnow(dt, t);
   for (const ind of inds) {
+    if (!(ind.sideName === 'ice' ? iceLive : shoreLive)) continue;
     if (ind.react > 0) ind.react -= dt;
     if (ind.school) continue;
     if (ind.fixed) { ind.update(ind, dt, t); continue; }
@@ -1746,12 +2299,13 @@ function frame() {
     ind.group.rotation.y = ind.yaw;
     ind.anim(ind, dt, t);
   }
-  updateSchool(dt, t);
+  if (shoreLive) updateSchool(dt, t);
 
   // selection
   if (sel) {
-    const p = sel.group.position;
-    ring.position.set(p.x, heightAt(p.x, p.z) + 0.03, p.z);
+    const p = sel.group.getWorldPosition(selWorld);
+    const lp = sideGroup(sel.sideName).worldToLocal(selLocal.copy(p));
+    ring.position.set(lp.x, sel.ringY ? sel.ringY(lp) : heightOnSide(sel.sideName)(lp.x, lp.z) + 0.03, lp.z);
     ring.scale.setScalar(sel.pick * 1.25 * (1 + Math.sin(t * 3) * 0.05));
     ring.material.opacity = 0.55 + Math.sin(t * 3) * 0.25;
     if (!camAnim) {
@@ -1783,8 +2337,9 @@ function frame() {
     camera.setViewOffset(window.innerWidth, window.innerHeight, viewOff.x, viewOff.y, window.innerWidth, window.innerHeight);
   } else if (camera.view && camera.view.enabled) camera.clearViewOffset();
 
-  const cp = camera.position;
-  camUnder = seF(cp.x, cp.z) < 1 && cp.y < waterLevelAt(cp.x, cp.z) - 0.02 && cp.y > heightAt(cp.x, cp.z);
+  const cp = sideGroup(side).worldToLocal(selLocal.copy(camera.position));
+  const wl = side === 'ice' ? tideY : waterLevelAt(cp.x, cp.z);
+  camUnder = !flipAnim && seF(cp.x, cp.z) < 1 && cp.y < wl - 0.02 && cp.y > heightOnSide(side)(cp.x, cp.z);
   scene.fog.near = camUnder ? 0.5 : 400;
   scene.fog.far = camUnder ? 17 : 1000;
   ui.under.classList.toggle('on', camUnder);
@@ -1811,8 +2366,9 @@ window.__tidal = {
   get tn() { return tn; }, set tn(v) { tn = v; },
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
-  goView,
-  jump() { if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
+  goView, flip: flipWorld,
+  get side() { return side; },
+  jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
 };
 </script>
 </body>
