@@ -3,35 +3,47 @@
 //  2. room   : claude.ai の Artifact として開いたとき、同じページを開いている人どうし
 //  3. solo   : どちらもつながらないときは、ひとりで遊べる
 
-import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS, BUG_SPOTS, bugFor, fishFor, waterNear } from './world.js';
+import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS, BUG_SPOTS, bugFor, fishFor, waterNear, critterCat } from './world.js';
 
 const FRUIT_PER_TREE = 3;
 const GEM_REGROW_MS = 10 * 60 * 1000;
 const FRUIT_REGROW_MS = 3 * 60 * 1000;
+
+const isShore = (i) => ['shore', 'pool'].includes(BUG_SPOTS[i].hab);
+const LAND_SPOTS = BUG_SPOTS.map((_, i) => i).filter((i) => !isShore(i));
+const SHORE_SPOTS = BUG_SPOTS.map((_, i) => i).filter(isShore);
 
 // サーバーがいないときに、木の実と落とし物を手元で管理する
 class LocalWorld {
   constructor() { this.trees = new Map(); this.drops = new Map(); this.gems = new Map(); this.bugs = new Map(); this.nextBug = 1; }
   // ---- 虫（この端末だけで出す） ----
   bugList() { return [...this.bugs.values()].map((b) => [b.id, b.key, b.spot]); }
-  spawnBug() {
-    const spot = Math.floor(Math.random() * BUG_SPOTS.length);
+  // 陸の虫（10ぴき）と、砂浜の潮だまり（5ひき）は べつに数える。サーバーと同じ
+  spawnBug(shore = false) {
+    const list = shore ? SHORE_SPOTS : LAND_SPOTS;
+    const spot = list[Math.floor(Math.random() * list.length)];
     if ([...this.bugs.values()].some((b) => b.spot === spot)) return false;
     const key = bugFor(BUG_SPOTS[spot].hab, new Date().getHours(), Math.random());
     if (!key) return false;
     const id = 'b' + this.nextBug++;
-    this.bugs.set(id, { id, key, spot, until: Date.now() + (180 + Math.random() * 180) * 1000 });
+    this.bugs.set(id, { id, key, spot, shore, until: Date.now() + (180 + Math.random() * 180) * 1000 });
     return true;
   }
+  count(shore) { return [...this.bugs.values()].filter((b) => b.shore === shore).length; }
   bugTick() {
     let changed = false;
     for (const b of this.bugs.values()) if (b.until < Date.now()) { this.bugs.delete(b.id); changed = true; }
-    if (this.bugs.size < 10 && Math.random() < 0.6 && this.spawnBug()) changed = true;
+    if (this.count(false) < 10 && Math.random() < 0.6 && this.spawnBug(false)) changed = true;
+    if (this.count(true) < 5 && Math.random() < 0.5 && this.spawnBug(true)) changed = true;
     return changed;
   }
   flee(x, z) {
     const fled = [];
-    for (const b of this.bugs.values()) { const sp = BUG_SPOTS[b.spot]; if (Math.hypot(sp.x - x, sp.z - z) < 3.2) { this.bugs.delete(b.id); fled.push(b.id); } }
+    for (const b of this.bugs.values()) {
+      if (critterCat(b.key) === 'iso') continue; // 磯の生きものは にげない
+      const sp = BUG_SPOTS[b.spot];
+      if (Math.hypot(sp.x - x, sp.z - z) < 3.2) { this.bugs.delete(b.id); fled.push(b.id); }
+    }
     return fled;
   }
   // 虫・魚を つかまえる（はんていは、サーバーと同じ）
@@ -101,9 +113,10 @@ function serverUrl() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 }
 
-// ひとりモード・room で、虫と魚を手元で動かす
+// ひとりモード・room で、虫・磯の生きもの・魚を手元で動かす
 function localCreatures(local, onMessage) {
-  for (let k = 0; k < 20 && local.bugs.size < 8; k++) local.spawnBug();
+  for (let k = 0; k < 20 && local.count(false) < 8; k++) local.spawnBug(false);
+  for (let k = 0; k < 10 && local.count(true) < 4; k++) local.spawnBug(true);
   setInterval(() => { if (local.bugTick()) onMessage({ t: 'bugs', list: local.bugList() }); }, 4000);
   let lastFish = 0;
   return (msg) => {
@@ -111,9 +124,12 @@ function localCreatures(local, onMessage) {
       case 'join': onMessage({ t: 'bugs', list: local.bugList() }); return true;
       case 'move': if (msg.m === 2) { const fled = local.flee(msg.x, msg.z); if (fled.length) onMessage({ t: 'bugs', list: local.bugList(), fled }); } return false;
       case 'catch': {
-        const key = local.catchBug(String(msg.id), msg.x, msg.z);
+        const b = local.bugs.get(String(msg.id));
+        if (!b) return true;
+        const kind = critterCat(b.key);
+        const key = local.catchBug(b.id, msg.x, msg.z);
         onMessage({ t: 'bugs', list: local.bugList() });
-        onMessage({ t: 'caught', kind: 'bug', key });
+        onMessage({ t: 'caught', kind, key });
         return true;
       }
       case 'fish': {

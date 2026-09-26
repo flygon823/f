@@ -340,8 +340,33 @@ function buildBugSpots() {
     }
   }
   for (let a = 0; a < 6.28; a += 0.9) spots.push({ x: POND.x + Math.cos(a) * (POND.rx + 0.9), z: POND.z + Math.sin(a) * (POND.rz + 0.9), y: 1.0, hab: 'water' });
+  // 潮だまり：まん中（磯の生きもの）と、陸がわのふち（カニ・ヤドカリ）
+  for (const p of TIDEPOOLS) {
+    spots.push({ x: p.x, z: p.z, y: 0.02, hab: 'pool' });
+    spots.push({ x: p.x - p.nx * 1.4, z: p.z - p.nz * 1.4, y: 0.02, hab: 'shore' });
+  }
   return spots;
 }
+// 砂浜の波うちぎわの「潮だまり」。島の まわりを ぐるっと回って、ちょうどいい場所をさがす
+function buildTidepools() {
+  const pools = [];
+  const palms = PLACE.trees.filter((t) => t.kind === 'palm');
+  for (let k = 0; k < 24 && pools.length < 7; k++) {
+    const a = (k / 24) * Math.PI * 2 + 0.2;
+    const dx = Math.cos(a), dz = Math.sin(a);
+    // 中心から外へ、islandSDF が -3.7 になるところ（水ぎわのすこし陸がわ）
+    let lo = 0, hi = 80;
+    for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (islandSDF(dx * m, dz * m) < -3.7) lo = m; else hi = m; }
+    const x = dx * lo, z = dz * lo;
+    if (riverDist(x, z) < RIVER_W + 5 || inPlot(x, z, 3)) continue;
+    if (Math.hypot(x - 24, z - 37) < 6) continue; // 海辺のほらあな
+    if (palms.some((t) => Math.hypot(t.x - x, t.z - z) < 2.6)) continue;
+    if (pools.some((p) => Math.hypot(p.x - x, p.z - z) < 14)) continue;
+    pools.push({ x, z, nx: dx, nz: dz });
+  }
+  return pools;
+}
+export const TIDEPOOLS = buildTidepools();
 export const BUG_SPOTS = buildBugSpots();
 
 // 広場の飾り
@@ -392,6 +417,7 @@ export const FISH = [
   { key: 'yamame', name: 'ヤマメ', where: 'river', h: [[4, 9], [16, 19]], w: 12, price: 800 },
   { key: 'ayu', name: 'アユ', where: 'river', h: [[6, 18]], w: 12, price: 700 },
   { key: 'nijimasu', name: 'ニジマス', where: 'river', h: ALL_DAY, w: 10, price: 600 },
+  { key: 'sake', name: 'サケ', where: 'river', h: [[4, 9], [16, 20]], w: 7, price: 900 },
   { key: 'namazu', name: 'ナマズ', where: 'river', h: [[19, 4]], w: 6, price: 1200 },
   { key: 'medaka', name: 'メダカ', where: 'pond', h: ALL_DAY, w: 30, price: 100 },
   { key: 'koi', name: 'コイ', where: 'pond', h: ALL_DAY, w: 22, price: 400 },
@@ -423,8 +449,21 @@ export const BUGS = [
   { key: 'oniyanma', name: 'オニヤンマ', hab: 'water', h: [[8, 16]], w: 6, price: 900 },
   { key: 'hotaru', name: 'ホタル', hab: 'water', h: [[19, 4]], w: 20, price: 300 },
   { key: 'dangomushi', name: 'ダンゴムシ', hab: 'rock', h: ALL_DAY, w: 25, price: 80 },
+  { key: 'isogani', name: 'イソガニ', hab: 'shore', h: ALL_DAY, w: 24, price: 200 },
+  { key: 'yadokari', name: 'ヤドカリ', hab: 'shore', h: ALL_DAY, w: 18, price: 300 },
 ];
-export const WHERE_NAMES = { river: '川', pond: '池', sea: '海', flower: '花', tree: '木', grass: '草むら', water: '水辺', rock: '岩' };
+// 磯の生きもの：潮だまりにいて、手で ひろえる（道具はいらない。にげない）
+export const ISO = [
+  { key: 'hitode', name: 'アオヒトデ', hab: 'pool', h: ALL_DAY, w: 22, price: 250 },
+  { key: 'uni', name: 'ムラサキウニ', hab: 'pool', h: ALL_DAY, w: 16, price: 600 },
+  { key: 'umeboshi', name: 'ウメボシイソギンチャク', hab: 'pool', h: ALL_DAY, w: 16, price: 450 },
+  { key: 'clione', name: 'クリオネ', hab: 'pool', h: [[18, 6]], w: 3, price: 4000 },
+];
+const ISO_KEYS = new Set(ISO.map((x) => x.key));
+// 虫／磯の生きもの どちらの図鑑に のるか
+export const critterCat = (key) => (ISO_KEYS.has(key) ? 'iso' : 'bug');
+export const critterInfo = (key) => (ISO_KEYS.has(key) ? ISO : BUGS).find((x) => x.key === key);
+export const WHERE_NAMES = { river: '川', pond: '池', sea: '海', flower: '花', tree: '木', grass: '草むら', water: '水辺', rock: '岩', shore: '砂浜の潮だまりのまわり', pool: '潮だまり' };
 export const inHours = (hour, ranges) => ranges.some(([a, b]) => (a <= b ? hour >= a && hour < b : hour >= a || hour < b));
 function pickWeighted(list, r) {
   const total = list.reduce((t, x) => t + x.w, 0);
@@ -434,7 +473,7 @@ function pickWeighted(list, r) {
 }
 // いまの時間に、その場所で釣れる魚／出てくる虫（r は 0〜1 の乱数）
 export const fishFor = (where, hour, r) => pickWeighted(FISH.filter((f) => f.where === where && inHours(hour, f.h)), r);
-export const bugFor = (hab, hour, r) => pickWeighted(BUGS.filter((b) => b.hab === hab && inHours(hour, b.h)), r);
+export const bugFor = (hab, hour, r) => pickWeighted([...BUGS, ...ISO].filter((b) => b.hab === hab && inHours(hour, b.h)), r);
 // その場所の水の種類（深さが足りないところは null）
 export function waterAt(x, z) {
   if (x > INDOOR_X) return null;
@@ -452,7 +491,7 @@ export function waterNear(x, z, r = 4.5) {
 }
 
 // ---------- 図鑑とランク ----------
-export const DEX_TOTAL = () => FISH.length + BUGS.length + GEM_KINDS.length;
+export const DEX_TOTAL = () => FISH.length + BUGS.length + ISO.length + GEM_KINDS.length;
 export const RANKS = [
   { min: 0, mark: '🌱', name: 'わかば' },
   { min: 10, mark: '🍀', name: 'みならい' },
@@ -464,7 +503,7 @@ export const RANKS = [
 export function dexCount(dex) {
   if (!dex) return 0;
   const has = (cat, list) => list.filter((x) => dex[cat] && dex[cat][x.key]).length;
-  return has('fish', FISH) + has('bug', BUGS) + has('gem', GEM_KINDS);
+  return has('fish', FISH) + has('bug', BUGS) + has('iso', ISO) + has('gem', GEM_KINDS);
 }
 export function rankOf(dex) {
   const pct = (dexCount(dex) / DEX_TOTAL()) * 100;
@@ -479,6 +518,7 @@ export const SELL_PRICES = {
   gem: { amethyst: 300, topaz: 400, emerald: 600, sapphire: 800, ruby: 1500, diamond: 5000 },
   fish: Object.fromEntries(FISH.map((f) => [f.key, f.price])),
   bug: Object.fromEntries(BUGS.map((b) => [b.key, b.price])),
+  iso: Object.fromEntries(ISO.map((b) => [b.key, b.price])),
 };
 export const gemDay = (ms = Date.now()) => Math.floor(ms / 86400000);
 export function gemPlan(i, day) {

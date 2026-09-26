@@ -158,31 +158,39 @@ const publicDrop = (d) => ({ id: d.id, tree: d.tree, slot: d.slot, kind: d.kind 
 const publicPlayer = (p) => ({ id: p.id, name: p.name, look: p.look, x: p.x, z: p.z, r: p.r, m: p.m, rank: p.rank || 0 });
 
 // ---------- 虫（島のみんなで同じ虫を見る） ----------
+// 陸の虫と、砂浜の潮だまり（カニ・ヤドカリ・磯の生きもの）は、べつべつの数だけ出す
 const MAX_BUGS = 10;
-const bugs = new Map(); // id -> { id, key, spot, until }
+const MAX_SHORE = 5;
+const bugs = new Map(); // id -> { id, key, spot, shore, until }
 let nextBug = 1;
 const jstHour = () => new Date(Date.now() + 9 * 3600e3).getUTCHours();
 const bugList = () => [...bugs.values()].map((b) => [b.id, b.key, b.spot]);
-function spawnBug() {
-  const spot = Math.floor(Math.random() * W.BUG_SPOTS.length);
+const isShore = (spot) => ['shore', 'pool'].includes(W.BUG_SPOTS[spot].hab);
+let SPOTS = null; // { land: [...], shore: [...] } 虫が出る場所の番号
+const countBugs = (shore) => [...bugs.values()].filter((b) => b.shore === shore).length;
+function spawnBug(shore = false) {
+  SPOTS ||= { land: W.BUG_SPOTS.map((_, i) => i).filter((i) => !isShore(i)), shore: W.BUG_SPOTS.map((_, i) => i).filter(isShore) };
+  const list = shore ? SPOTS.shore : SPOTS.land;
+  const spot = list[Math.floor(Math.random() * list.length)];
   if ([...bugs.values()].some((b) => b.spot === spot)) return false;
   const key = W.bugFor(W.BUG_SPOTS[spot].hab, jstHour(), Math.random());
   if (!key) return false;
   const id = String(nextBug++);
-  bugs.set(id, { id, key, spot, until: Date.now() + (180 + Math.random() * 180) * 1000 });
+  bugs.set(id, { id, key, spot, shore, until: Date.now() + (180 + Math.random() * 180) * 1000 });
   return true;
 }
 function bugTick() {
   const now = Date.now();
   let changed = false;
   for (const b of bugs.values()) if (b.until < now) { bugs.delete(b.id); changed = true; }
-  if (bugs.size < MAX_BUGS && Math.random() < 0.6 && spawnBug()) changed = true;
+  if (countBugs(false) < MAX_BUGS && Math.random() < 0.6 && spawnBug(false)) changed = true;
+  if (countBugs(true) < MAX_SHORE && Math.random() < 0.5 && spawnBug(true)) changed = true;
   if (changed) broadcast({ t: 'bugs', list: bugList() });
 }
-// 虫をつかまえた・魚をつった：ポケットと図鑑に入れて、ランクが上がったらみんなに知らせる
+// 虫をつかまえた・魚をつった・磯の生きものをひろった：ポケットと図鑑に入れて、ランクが上がったらみんなに知らせる
 function caught(me, kind, key) {
   const before = me.rank;
-  const first = kind === 'fish' ? economy.gotFish(me.account, key) : economy.gotBug(me.account, key);
+  const first = kind === 'fish' ? economy.gotFish(me.account, key) : kind === 'iso' ? economy.gotIso(me.account, key) : economy.gotBug(me.account, key);
   send(me.ws, { t: 'caught', kind, key, first });
   send(me.ws, { t: 'me', me: economy.view(me.account) });
   me.rank = economy.rank(me.account);
@@ -292,9 +300,10 @@ wss.on('connection', (ws, req) => {
         me.m = idx(msg.m, 5); // 0 たつ 1 あるく 2 はしる 3 すわる 4 ねころぶ
         me.dirty = true;
         if (me.m === 2 && bugs.size) {
-          // 走って近づくと、虫はにげる
+          // 走って近づくと、虫はにげる（磯の生きものは にげない）
           const fled = [];
           for (const b of bugs.values()) {
+            if (W.critterCat(b.key) === 'iso') continue;
             const sp = W.BUG_SPOTS[b.spot];
             if (Math.hypot(sp.x - me.x, sp.z - me.z) < 3.2) { bugs.delete(b.id); fled.push(b.id); }
           }
@@ -366,15 +375,16 @@ wss.on('connection', (ws, req) => {
         break;
       }
       case 'catch': {
-        // 虫とりあみで つかまえる（近くにいるときだけ）
+        // 虫とりあみで つかまえる／磯の生きものを ひろう（近くにいるときだけ）
         const b = bugs.get(String(msg.id));
         if (!b || now - (me.lastCatch || 0) < 400) return;
         me.lastCatch = now;
         const sp = W.BUG_SPOTS[b.spot];
-        if (Math.hypot(sp.x - me.x, sp.z - me.z) > 3.4) { send(ws, { t: 'caught', kind: 'bug', key: null }); return; }
+        const cat = W.critterCat(b.key);
+        if (Math.hypot(sp.x - me.x, sp.z - me.z) > 3.4) { send(ws, { t: 'caught', kind: cat, key: null }); return; }
         bugs.delete(b.id);
         broadcast({ t: 'bugs', list: bugList() });
-        caught(me, 'bug', b.key);
+        caught(me, cat, b.key);
         break;
       }
       case 'fish': {
@@ -451,7 +461,8 @@ setInterval(() => {
   W = await import('./public/world.js');
   economy = new Economy(createStore(), W);
   await economy.init();
-  for (let k = 0; k < MAX_BUGS * 2 && bugs.size < MAX_BUGS - 2; k++) spawnBug();
+  for (let k = 0; k < MAX_BUGS * 2 && countBugs(false) < MAX_BUGS - 2; k++) spawnBug(false);
+  for (let k = 0; k < MAX_SHORE * 2 && countBugs(true) < MAX_SHORE - 1; k++) spawnBug(true);
   setInterval(bugTick, 4000);
   server.listen(PORT, () => {
     console.log(`ぽかぽか島がひらきました → http://localhost:${PORT}/`);

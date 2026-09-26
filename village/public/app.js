@@ -9,6 +9,7 @@ import {
   GEM_KINDS, GEM_SPOTS, gemPlan, gemDay, PICKAXE_SPOT,
   PLOTS, PLOT_SIZE, PLOT_PRICE, PLOT_REFUND, setPlotOwned, plotOwned, inPlot, SHOP, SELL_PRICES,
   FISH, BUGS, BUG_SPOTS, WHERE_NAMES, RANKS, rankOf, dexCount, DEX_TOTAL, waterAt, inHours,
+  ISO, TIDEPOOLS, critterCat, critterInfo,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { makeCreature } from './creatures.js';
@@ -524,6 +525,24 @@ function buildRocks() {
     const b = blob(2.2 * r.s);
     b.position.set(r.x, groundHeight(r.x, r.z) + 0.02, r.z);
     scene.add(b);
+  }
+  // 砂浜の潮だまり：岩で かこまれた小さな水たまり（磯の生きものが いる）
+  const poolGeo = new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2);
+  const poolMat = toon('#7fd0d3', { transparent: true, opacity: 0.85 });
+  const edgeMat = toon('#e6d7b0');
+  const rnd = mulberry32(777);
+  for (const p of TIDEPOOLS) {
+    const y = groundHeight(p.x, p.z);
+    const edge = mesh(poolGeo, edgeMat, p.x, y + 0.02, p.z, 1.12, 1, 0.95);
+    scene.add(edge);
+    scene.add(mesh(poolGeo, poolMat, p.x, y + 0.035, p.z, 0.95, 1, 0.8));
+    for (let k = 0; k < 7; k++) {
+      const a = (k / 7) * Math.PI * 2 + rnd() * 0.5, rr = 1.15 + rnd() * 0.2, sc = 0.18 + rnd() * 0.2;
+      const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr * 0.85;
+      const m = mesh(geo, toon(k % 2 ? '#8f8a80' : '#7b776e'), x, groundHeight(x, z) + sc * 0.4, z, sc, sc * 0.7, sc * 0.9);
+      m.rotation.y = rnd() * 6;
+      scene.add(m);
+    }
   }
 }
 
@@ -1144,7 +1163,7 @@ function applyPlots(list) {
 }
 function applyMe(v) {
   if (!v) return;
-  pocket = { coins: v.coins || 0, fruit: v.fruit || {}, gems: v.gems || {}, fish: v.fish || {}, bugs: v.bugs || {}, dex: v.dex || { fish: {}, bug: {}, gem: {} } };
+  pocket = { coins: v.coins || 0, fruit: v.fruit || {}, gems: v.gems || {}, fish: v.fish || {}, bugs: v.bugs || {}, iso: v.iso || {}, dex: { fish: {}, bug: {}, iso: {}, gem: {}, ...v.dex } };
   if (Number.isInteger(v.rank) && me) setRank(me, v.rank);
   myPlot = Number.isInteger(v.plot) ? v.plot : null;
   renderPocket();
@@ -1237,6 +1256,7 @@ function renderShop() {
   for (const k of GEM_KINDS) { const n = pocket.gems?.[k.key]; if (n) rows.push({ what: 'gem', key: k.key, n, name: k.name, color: k.color, price: SELL_PRICES.gem[k.key] }); }
   for (const f of FISH) { const n = pocket.fish?.[f.key]; if (n) rows.push({ what: 'fish', key: f.key, n, name: f.name, color: '#6cb7d9', price: f.price }); }
   for (const b of BUGS) { const n = pocket.bugs?.[b.key]; if (n) rows.push({ what: 'bug', key: b.key, n, name: b.name, color: '#8fc45a', price: b.price }); }
+  for (const b of ISO) { const n = pocket.iso?.[b.key]; if (n) rows.push({ what: 'iso', key: b.key, n, name: b.name, color: '#e2857a', price: b.price }); }
   $('#shopEmpty').hidden = rows.length > 0;
   for (const r of rows) {
     const row = document.createElement('div');
@@ -1273,7 +1293,7 @@ function renderShop() {
 }
 function sellItem(what, key) {
   if (serverMode()) { net.send({ t: 'sell', what, key }); return; }
-  const bag = { fruit: pocket.fruit, gem: pocket.gems, fish: pocket.fish, bug: pocket.bugs }[what];
+  const bag = { fruit: pocket.fruit, gem: pocket.gems, fish: pocket.fish, bug: pocket.bugs, iso: pocket.iso }[what];
   const gained = (bag[key] || 0) * SELL_PRICES[what][key];
   delete bag[key];
   pocket.coins += gained;
@@ -1300,11 +1320,12 @@ function applyBugs(list, fled = []) {
     alive.add(id);
     if (bugObjs.has(id)) continue;
     const sp = BUG_SPOTS[spot];
-    const c = sp && makeCreature('bug', key, sceneM);
+    const c = sp && makeCreature(critterCat(key), key, sceneM);
     if (!c) continue;
     const g = new THREE.Group();
     g.add(c.group);
-    c.group.scale.setScalar(2.4);
+    const beach = sp.hab === 'shore' || sp.hab === 'pool';
+    c.group.scale.setScalar(beach ? 1.5 : 2.4);
     if (sp.hab === 'tree' && !c.flyer) c.group.quaternion.copy(TREE_Q); // 幹にとまる
     else c.group.rotation.y = Math.random() * 6.28;
     if (c.glow) { const gl = glow(c.glow, 1.4, 0.8); c.group.add(gl); }
@@ -1324,7 +1345,11 @@ function updateBugs(dt, now) {
     const base = o.sp, t = now + o.t0;
     if (o.fleeT) {
       o.fleeT -= dt;
-      o.g.position.y += dt * 5; o.g.position.x += dt * 2;
+      if (o.c.walker) {
+        // カニ・ヤドカリは 空へは にげない。プレイヤーと はんたいへ走って、砂にもぐる
+        const p = o.g.position, dx = p.x - me.x, dz = p.z - me.z, d = Math.hypot(dx, dz) || 1;
+        p.x += (dx / d) * dt * 4; p.z += (dz / d) * dt * 4; p.y -= dt * 0.35;
+      } else { o.g.position.y += dt * 5; o.g.position.x += dt * 2; }
       if (o.fleeT <= 0) { scene.remove(o.g); bugObjs.delete(id); }
       continue;
     }
@@ -1332,7 +1357,20 @@ function updateBugs(dt, now) {
       o.g.position.set(base.x + Math.sin(t * 0.7) * 0.8, groundHeight(base.x, base.z) + base.y + 0.3 + Math.sin(t * 2.1) * 0.25, base.z + Math.cos(t * 0.5) * 0.6);
       o.c.group.rotation.y = Math.atan2(Math.cos(t * 0.7), -Math.sin(t * 0.5));
       for (const w of o.c.wings || []) w.rotation.z = w.userData.side * Math.sin(t * 24) * 0.7;
-    } else if (base.hab !== 'tree') {
+    } else if (o.c.walker) {
+      // カニ・ヤドカリ：よこに ちょこちょこ歩く
+      const s = Math.sin(t * 0.6), x = base.x + s * 0.9, z = base.z + Math.sin(t * 0.37) * 0.35;
+      o.g.position.set(x, groundHeight(x, z) + base.y, z);
+      const step = Math.abs(Math.cos(t * 0.6)) > 0.25;
+      for (const L of o.c.legs) L.root.rotation.y = L.base + (step ? Math.sin(t * 14 + L.phase) * 0.25 : 0);
+    } else if (o.c.swimmer) {
+      // クリオネ：潮だまりの上で、はねを ぱたぱた
+      o.g.position.y = groundHeight(base.x, base.z) + 0.35 + Math.sin(t * 1.6) * 0.08;
+      for (const w of o.c.wings) w.rotation.z = w.userData.side * Math.sin(t * 7) * 0.6;
+      o.c.group.rotation.y += dt * 0.4;
+    } else if (o.c.sway) {
+      o.c.sway(t);
+    } else if (base.hab !== 'tree' && base.hab !== 'pool') {
       o.c.group.rotation.y += Math.sin(t * 0.8) * dt * 0.6;
     }
   }
@@ -1346,14 +1384,19 @@ function nearestBug(range) {
   }
   return best;
 }
+function bugPrompt(key) {
+  const info = key && critterInfo(key);
+  if (info && critterCat(key) === 'iso') return `${info.name}を ひろう`;
+  return hasTool('net') ? `${info?.name || '虫'}を つかまえる` : `${info && info.hab === 'shore' ? info.name : '虫'}がいる…（あみが ほしい）`;
+}
 function tryCatchBug(id) {
-  if (!hasTool('net')) { toast('あみが あれば つかまえられそう…（よろず屋で もらえるよ）'); sound.click(); return; }
+  const o = bugObjs.get(id);
+  const byHand = o && critterCat(o.key) === 'iso'; // 磯の生きものは 手で ひろう
+  if (!byHand && !hasTool('net')) { toast('あみが あれば つかまえられそう…（よろず屋で もらえるよ）'); sound.click(); return; }
   if (performance.now() < swingCooldown) return;
   swingCooldown = performance.now() + 550;
-  const o = bugObjs.get(id);
   if (o) me.r = Math.atan2(bugPos(o).x - me.x, bugPos(o).z - me.z);
-  me.v.swing('net');
-  sound.rustle();
+  if (byHand) sound.pop(); else { me.v.swing('net'); sound.rustle(); }
   net.send({ t: 'catch', id, x: me.x, z: me.z });
 }
 
@@ -1474,6 +1517,7 @@ function thumb(cat, key, shown) {
   } else {
     obj = makeCreature(cat, key, flatM).group;
     if (cat === 'fish') obj.rotation.y = key === 'madako' ? 0.5 : Math.PI / 2 - 0.35;
+    else if (cat === 'iso' || key === 'isogani' || key === 'yadokari') obj.rotation.set(0.55, 0.6, 0);
     else obj.rotation.set(0.9, 0.5, 0);
   }
   sc.add(obj);
@@ -1490,12 +1534,13 @@ function thumb(cat, key, shown) {
   return url;
 }
 let dexTab = 'fish';
+const DEX_CATS = ['fish', 'bug', 'iso', 'gem'];
 function hoursText(h) {
   if (h.length === 1 && h[0][0] === 0 && h[0][1] === 24) return '一日中';
   return h.map(([a, b]) => `${a}時〜${b}時`).join('・');
 }
 function renderDex() {
-  const dex = pocket.dex || { fish: {}, bug: {}, gem: {} };
+  const dex = pocket.dex || {};
   const n = dexCount(dex), total = DEX_TOTAL();
   const rk = rankOf(dex);
   $('#dexRank').textContent = `${rk.mark} ${rk.name}`;
@@ -1503,8 +1548,8 @@ function renderDex() {
   $('#dexBar').style.width = `${(n / total) * 100}%`;
   const next = RANKS[rk.i + 1];
   $('#dexNext').textContent = next ? `あと ${Math.max(1, Math.ceil((next.min / 100) * total) - n)}種類で ${next.mark} ${next.name}` : 'すべて そろえました！';
-  const lists = { fish: FISH, bug: BUGS, gem: GEM_KINDS };
-  for (const cat of ['fish', 'bug', 'gem']) {
+  const lists = { fish: FISH, bug: BUGS, iso: ISO, gem: GEM_KINDS };
+  for (const cat of DEX_CATS) {
     const got = lists[cat].filter((x) => dex[cat]?.[x.key]).length;
     $(`#dexTab-${cat} b`).textContent = `${got}/${lists[cat].length}`;
     $(`#dexTab-${cat}`).classList.toggle('on', cat === dexTab);
@@ -1533,7 +1578,7 @@ function renderDex() {
 }
 function openDex() { renderDex(); $('#dexInfo').textContent = 'マスをおすと、くわしく見られます。'; openModal('#dexModal'); }
 $('#dexBtn').addEventListener('click', openDex);
-for (const cat of ['fish', 'bug', 'gem']) $(`#dexTab-${cat}`).addEventListener('click', () => { dexTab = cat; renderDex(); sound.click(); });
+for (const cat of DEX_CATS) $(`#dexTab-${cat}`).addEventListener('click', () => { dexTab = cat; renderDex(); sound.click(); });
 
 // ---- つかまえた！ ----
 let localFirst = false;
@@ -1545,14 +1590,16 @@ function addLocalDex(cat, key) {
 let trophy = null; // 頭の上にかかげる生き物
 function onCaught(msg) {
   const cat = msg.kind;
-  if (!msg.key) { toast(cat === 'bug' ? 'にげられた…' : 'なにも つれなかった…'); return; }
-  const info = (cat === 'fish' ? FISH : BUGS).find((x) => x.key === msg.key);
+  if (!msg.key) { toast(cat === 'fish' ? 'なにも つれなかった…' : cat === 'iso' ? 'とどかなかった…' : 'にげられた…'); return; }
+  const info = cat === 'fish' ? FISH.find((x) => x.key === msg.key) : critterInfo(msg.key);
+  if (!info) return;
   let first = !!msg.first;
   const before = me.rank || 0;
   if (!serverMode()) {
-    const bag = cat === 'fish' ? pocket.fish : pocket.bugs;
+    const bag = { fish: pocket.fish, bug: pocket.bugs, iso: pocket.iso }[cat];
+    if (!bag) return;
     bag[msg.key] = (bag[msg.key] || 0) + 1;
-    first = addLocalDex(cat === 'fish' ? 'fish' : 'bug', msg.key);
+    first = addLocalDex(cat, msg.key);
     savePocket();
     renderPocket();
     const r = rankOf(pocket.dex).i;
@@ -1565,14 +1612,14 @@ function onCaught(msg) {
   if (c) {
     const g = new THREE.Group();
     g.add(c.group);
-    c.group.scale.setScalar(cat === 'fish' ? 1.3 : 3.2);
+    c.group.scale.setScalar(cat === 'fish' ? 1.3 : cat === 'iso' || c.walker ? 1.8 : 3.2);
     if (cat === 'fish') c.group.rotation.y = Math.PI / 2;
     scene.add(g);
     trophy = { g, until: performance.now() / 1000 + 2.8 };
   }
   me.v.hop();
   sound.sparkle();
-  toast(`${info.name}を ${cat === 'fish' ? 'つりあげた' : 'つかまえた'}！`);
+  toast(`${info.name}を ${cat === 'fish' ? 'つりあげた' : cat === 'iso' ? 'ひろった' : 'つかまえた'}！`);
   if (first) setTimeout(() => toast(`📖 ${info.name}が 図鑑に のったよ！`), 1700);
   setTimeout(() => {
     const now = me.rank || 0;
@@ -1773,13 +1820,15 @@ if (!Number.isFinite(pocket.coins)) pocket.coins = Number(pocket.bells) || 0;
 if (!pocket.gems || typeof pocket.gems !== 'object') pocket.gems = {};
 delete pocket.bells;
 const serverMode = () => !!net && net.mode === 'server';
-function savePocket() { if (!serverMode()) savePocket(); }
+function savePocket() { if (!serverMode()) store.set('pocket', pocket); }
 let myPlot = null;           // 自分の土地の番号
 let accountToken = store.get('token', null);
 const formatCode = (t) => (t || '').match(/.{1,5}/g)?.join('-') || '';
 if (!pocket.fish || typeof pocket.fish !== 'object') pocket.fish = {};
 if (!pocket.bugs || typeof pocket.bugs !== 'object') pocket.bugs = {};
-if (!pocket.dex || typeof pocket.dex !== 'object') pocket.dex = { fish: {}, bug: {}, gem: {} };
+if (!pocket.iso || typeof pocket.iso !== 'object') pocket.iso = {};
+if (!pocket.dex || typeof pocket.dex !== 'object') pocket.dex = {};
+for (const c of ['fish', 'bug', 'iso', 'gem']) if (!pocket.dex[c] || typeof pocket.dex[c] !== 'object') pocket.dex[c] = {};
 for (const k of Object.keys(pocket.gems)) pocket.dex.gem[k] ||= Date.now();
 // 持ちものは、種類ごとの数だけ出す（くわしくは よろず屋で見られる）
 function renderPocket() {
@@ -1787,7 +1836,7 @@ function renderPocket() {
   const box = $('#fruits');
   box.textContent = '';
   const sum = (bag) => Object.values(bag || {}).reduce((t, n) => t + (n || 0), 0);
-  for (const [icon, label, n] of [['🍑', 'くだもの', sum(pocket.fruit)], ['🐟', '魚', sum(pocket.fish)], ['🐛', '虫', sum(pocket.bugs)], ['💎', '宝石', sum(pocket.gems)]]) {
+  for (const [icon, label, n] of [['🍑', 'くだもの', sum(pocket.fruit)], ['🐟', '魚', sum(pocket.fish)], ['🐛', '虫', sum(pocket.bugs)], ['🐚', '磯の生きもの', sum(pocket.iso)], ['💎', '宝石', sum(pocket.gems)]]) {
     if (!n) continue;
     const chip = document.createElement('span');
     chip.className = 'pill fchip';
@@ -2301,7 +2350,7 @@ function updatePrompt() {
   const label = !t ? '' : {
     pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
     stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう', shop: 'よろず屋で売る',
-    bug: t.id && (hasTool('net') ? `${BUGS.find((b) => b.key === bugObjs.get(t.id)?.key)?.name || '虫'}を つかまえる` : '虫がいる…（あみが ほしい）'),
+    bug: t.id && bugPrompt(bugObjs.get(t.id)?.key),
     fish: hasTool('rod') ? 'つりをする' : 'ここで つりが できそう',
     plot: t.i !== undefined && (plotInfo[t.i]?.owner ? '看板を読む' : '売り地を見る'),
     mine: hasPickaxe ? 'ピッケルで ほる' : 'ピッケルがあれば ほれそう…',

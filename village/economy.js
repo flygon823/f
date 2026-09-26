@@ -50,8 +50,9 @@ class Economy {
   save(a) { this.dirty.add(a.id); }
   // 古いデータに、あとから増えた項目を足す
   upgrade(a) {
-    a.fish ||= {}; a.bugs ||= {}; a.fruit ||= {}; a.gems ||= {};
-    a.dex ||= { fish: {}, bug: {}, gem: {} };
+    a.fish ||= {}; a.bugs ||= {}; a.iso ||= {}; a.fruit ||= {}; a.gems ||= {};
+    a.dex ||= {};
+    for (const c of ['fish', 'bug', 'iso', 'gem']) a.dex[c] ||= {};
     for (const k of Object.keys(a.gems)) a.dex.gem[k] ||= a.created || Date.now();
     return a;
   }
@@ -76,7 +77,7 @@ class Economy {
     this.save(a);
   }
   view(a) {
-    return { coins: a.coins, fruit: a.fruit, gems: a.gems, fish: a.fish, bugs: a.bugs, dex: a.dex, rank: this.W.rankOf(a.dex).i, plot: a.plot, price: this.W.PLOT_PRICE };
+    return { coins: a.coins, fruit: a.fruit, gems: a.gems, fish: a.fish, bugs: a.bugs, iso: a.iso, dex: a.dex, rank: this.W.rankOf(a.dex).i, plot: a.plot, price: this.W.PLOT_PRICE };
   }
   rank(a) { return this.W.rankOf(a.dex).i; }
   // 図鑑に のせる。はじめてなら true
@@ -92,11 +93,13 @@ class Economy {
   gotGem(a, kind) { a.gems[kind] = (a.gems[kind] || 0) + 1; const first = this.register(a, 'gem', kind); this.save(a); return first; }
   gotFish(a, key) { a.fish[key] = (a.fish[key] || 0) + 1; const first = this.register(a, 'fish', key); this.save(a); return first; }
   gotBug(a, key) { a.bugs[key] = (a.bugs[key] || 0) + 1; const first = this.register(a, 'bug', key); this.save(a); return first; }
-  // 持っているぶんを ぜんぶ売る。もらえたポカを返す
+  gotIso(a, key) { a.iso[key] = (a.iso[key] || 0) + 1; const first = this.register(a, 'iso', key); this.save(a); return first; }
+  // 持っているぶんを ぜんぶ売る（what: fruit|gem|fish|bug|iso）。もらえたポカを返す
   sell(a, what, key) {
-    const price = this.W.SELL_PRICES[what]?.[key];
-    const bag = { fruit: a.fruit, gem: a.gems, fish: a.fish, bug: a.bugs }[what] || null;
-    if (!price || !bag || !bag[key]) return 0;
+    const own = (o, k) => (o && Object.hasOwn(o, k) ? o[k] : undefined); // "constructor" などを はじく
+    const price = own(own(this.W.SELL_PRICES, what), key);
+    const bag = own({ fruit: a.fruit, gem: a.gems, fish: a.fish, bug: a.bugs, iso: a.iso }, what);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isInteger(own(bag, key)) || bag[key] <= 0) return 0;
     const gained = bag[key] * price;
     delete bag[key];
     a.coins += gained;

@@ -1,8 +1,9 @@
-// 魚と虫の見た目。魚は「月と潮の磯」（リポジトリの一番上の index.html）の makeFish / makeOctopus を
-// そのまま持ってきて、種類ごとの形と色の数字だけ変えている。
+// 魚・虫・磯の生きものの見た目。魚は「月と潮の磯」（リポジトリの一番上の index.html）の makeFish / makeOctopus を
+// そのまま持ってきて、種類ごとの形と色の数字だけ変えている。カニ・ヤドカリ・ヒトデ・ウニ・イソギンチャク・クリオネも同じページから。
 // M(color, opts) はマテリアルを作る関数（島の中ではセル調・図鑑の絵では曲げないもの、と使い分ける）。
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const TAU = Math.PI * 2;
 const sphereGeo = new THREE.SphereGeometry(1, 18, 14);
@@ -42,6 +43,7 @@ export const FISH_LOOK = {
   karei: { len: 0.5, w: 0.2, d: 0.035, eyesTop: true, body: '#9b8a6a', fin: '#b09d7a', spots: '#6f604a' },
   fugu: { len: 0.42, w: 0.17, d: 0.17, body: '#b3a37a', fin: '#d6c890', belly: '#f4f0e4', iris: '#2f6e5a', spots: '#3d3a2c' },
   tai: { len: 0.56, w: 0.08, d: 0.22, body: '#e8736c', fin: '#e98a80', belly: '#f6c7bd', iris: '#f4e0a8', spots: '#8fd3f0' },
+  sake: { len: 0.7, w: 0.07, d: 0.12, body: '#8f9ea4', fin: '#5d6a70', belly: '#d9d2c8', spots: '#7a3f5c', iris: '#e0e0d8' },
   coelacanth: { len: 0.95, w: 0.14, d: 0.22, body: '#2d4466', fin: '#233752', belly: '#3a5578', spots: '#e8eef6', iris: '#d8e4c0' },
 };
 export function makeFish(o, M, seed = 1) {
@@ -291,6 +293,182 @@ function pillbug(M) {
   antennae(g, M, '#44464a', 0.06, 0.02, 0.09);
   return { group: g };
 }
+// ---------- 磯の生きもの（月と潮の磯の makeCrab / makeHermit / makeAnemone / makeUrchin / makeStar / makeClione） ----------
+const segCache = new Map();
+function segGeo(r, l) {
+  const k = r.toFixed(3) + '_' + l.toFixed(3);
+  if (!segCache.has(k)) { const g = new THREE.CylinderGeometry(r * 0.8, r, l, 6); g.rotateZ(-Math.PI / 2); g.translate(l / 2, 0, 0); segCache.set(k, g); }
+  return segCache.get(k);
+}
+function makeLeg(m1, m2, l1, l2, r) {
+  const root = new THREE.Group(), knee = new THREE.Group();
+  root.add(new THREE.Mesh(segGeo(r, l1), m1));
+  knee.position.x = l1;
+  root.add(knee);
+  knee.add(new THREE.Mesh(segGeo(r * 0.8, l2), m2));
+  return { root, knee };
+}
+function makeCrab(M) {
+  const rr = seeded(11);
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const shell = M('#7c8452'), legM = M('#86875b'), legM2 = M('#9c9a6d'), claw = M('#e3d6c4'), dot = M('#8a3e55'), eye = M('#17191a');
+  const cara = new THREE.Mesh(new RoundedBoxGeometry(0.36, 0.11, 0.3, 3, 0.045), shell);
+  cara.position.y = 0.13; body.add(cara);
+  for (let i = 0; i < 7; i++) blob(body, M('#5e4a62'), rr(-0.13, 0.13), 0.186, rr(-0.1, 0.1), 0.022, 0.006, 0.022);
+  for (const s of [-1, 1]) {
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.06, 5), shell);
+    st.position.set(s * 0.1, 0.2, 0.14); body.add(st);
+    blob(body, eye, s * 0.1, 0.235, 0.145, 0.026);
+  }
+  const legs = [];
+  for (const s of [-1, 1]) for (let i = 0; i < 4; i++) {
+    const L = makeLeg(legM, legM2, 0.2, 0.22, 0.02);
+    const fan = (i - 1.5) * 0.38;
+    L.root.position.set(s * 0.17, 0.12, 0.09 - i * 0.065);
+    L.base = s > 0 ? fan : Math.PI - fan;
+    L.root.rotation.set(0, L.base, 0.55);
+    L.knee.rotation.z = -1.7;
+    L.phase = i * 1.6 + (s > 0 ? 0 : Math.PI);
+    body.add(L.root);
+    legs.push(L);
+  }
+  for (const s of [-1, 1]) {
+    const cr = new THREE.Group();
+    cr.position.set(s * 0.12, 0.12, 0.15);
+    cr.rotation.set(-0.2, s * 0.35, 0);
+    cr.add(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.12, 6).rotateX(Math.PI / 2).translate(0, 0, 0.06), legM));
+    const ch = new THREE.Mesh(new RoundedBoxGeometry(0.075, 0.06, 0.12, 2, 0.02), claw);
+    ch.position.set(0, 0.01, 0.16); cr.add(ch);
+    for (let k = 0; k < 3; k++) blob(ch, dot, rr(-0.025, 0.025), 0.031, rr(-0.04, 0.04), 0.012, 0.004, 0.012);
+    body.add(cr);
+  }
+  return { group: g, legs, walker: true };
+}
+function makeHermit(M) {
+  const g = new THREE.Group(), soft = new THREE.Group(), shell = new THREE.Group();
+  g.add(shell, soft);
+  const s1 = M('#c8b08c', { flatShading: true }), s2 = M('#a4876a', { flatShading: true });
+  const whorl = new THREE.IcosahedronGeometry(1, 1);
+  let y = 0;
+  for (let k = 0; k < 7; k++) {
+    const R = 0.15 * Math.pow(0.76, k);
+    const m = new THREE.Mesh(whorl, k % 2 ? s2 : s1);
+    m.scale.setScalar(R);
+    m.position.set(Math.cos(k * 1.4) * R * 0.5, y, Math.sin(k * 1.4) * R * 0.5);
+    shell.add(m);
+    y += R * 0.95;
+  }
+  shell.position.set(0, 0.15, -0.06);
+  shell.rotation.x = -1.05;
+  const legM = M('#8d4d34'), tip = M('#e2d3bf'), clawM = M('#a3593a'), eye = M('#17191a');
+  blob(soft, legM, 0, 0.12, 0.1, 0.07, 0.055, 0.07);
+  const big = new THREE.Mesh(new RoundedBoxGeometry(0.075, 0.055, 0.11, 2, 0.02), clawM);
+  big.position.set(0.06, 0.09, 0.2); big.rotation.y = -0.2; soft.add(big);
+  const small = new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.04, 0.08, 2, 0.015), clawM);
+  small.position.set(-0.05, 0.09, 0.18); small.rotation.y = 0.2; soft.add(small);
+  for (const s of [-1, 1]) {
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.08, 5), legM);
+    st.position.set(s * 0.03, 0.18, 0.16); st.rotation.x = 0.3; soft.add(st);
+    blob(soft, eye, s * 0.03, 0.22, 0.175, 0.018);
+    const an = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.24, 4), M('#b8412c'));
+    an.position.set(s * 0.04, 0.2, 0.27); an.rotation.set(1.1, 0, s * -0.4); soft.add(an);
+  }
+  const legs = [];
+  for (const s of [-1, 1]) for (let i = 0; i < 2; i++) {
+    const L = makeLeg(legM, tip, 0.13, 0.16, 0.017);
+    const fan = -0.5 + i * 0.5;
+    L.root.position.set(s * 0.05, 0.1, 0.12 - i * 0.05);
+    L.base = s > 0 ? fan : Math.PI - fan;
+    L.root.rotation.set(0, L.base, 0.5);
+    L.knee.rotation.z = -1.6;
+    L.phase = i * 2 + (s > 0 ? 0 : Math.PI);
+    soft.add(L.root);
+    legs.push(L);
+  }
+  return { group: g, legs, walker: true };
+}
+const tentGeo = new THREE.ConeGeometry(0.02, 0.2, 6).translate(0, 0.1, 0);
+function makeAnemone(M) {
+  const g = new THREE.Group();
+  const deep = M('#8e1c26'), red = M('#b8252f'), tent = M('#c93240'), blue = M('#3b6fd6');
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.1, 20), deep);
+  col.position.y = 0.05; g.add(col);
+  const ball = blob(g, red, 0, 0.1, 0, 0.16 * 0.85, 0.16 * 0.35, 0.16 * 0.85); // ひらいた形
+  for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; blob(g, blue, Math.cos(a) * 0.125, 0.1, Math.sin(a) * 0.125, 0.017); }
+  const tg = new THREE.Group(); tg.position.y = 0.13; g.add(tg);
+  const tents = [];
+  for (let i = 0; i < 30; i++) {
+    const ring = i < 14 ? 0 : 1, n = ring ? 16 : 14, ang = (ring ? i - 14 : i) / n * TAU + ring * 0.2;
+    const pv = new THREE.Group();
+    pv.position.set(Math.cos(ang) * (ring ? 0.1 : 0.055), 0, Math.sin(ang) * (ring ? 0.1 : 0.055));
+    pv.add(new THREE.Mesh(tentGeo, tent));
+    pv.rotation.set(0, -ang, -(ring ? 1.15 : 0.6));
+    tg.add(pv);
+    tents.push({ pv, ang, ring });
+  }
+  // 触手を ゆらす
+  const sway = (t) => tents.forEach((tt, i) => tt.pv.rotation.set(Math.sin(t * 1.2 + i) * 0.12, -tt.ang, -(tt.ring ? 1.15 : 0.6)));
+  return { group: g, ball, sway };
+}
+function makeUrchin(M) {
+  const g = new THREE.Group();
+  blob(g, M('#3a2340'), 0, 0.12, 0, 0.14, 0.11, 0.14);
+  const spines = [], q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3();
+  const N = 90;
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (i + 0.5) / N * 1.7;
+    if (y < -0.6) continue;
+    const r = Math.sqrt(1 - y * y), th = i * 2.39996;
+    dir.set(Math.cos(th) * r, y, Math.sin(th) * r).normalize();
+    const c = new THREE.ConeGeometry(0.011, 0.26, 4);
+    c.translate(0, 0.13 + 0.11, 0);
+    q.setFromUnitVectors(up, dir);
+    c.applyQuaternion(q);
+    spines.push(c);
+  }
+  const sp = new THREE.Mesh(mergeGeometries(spines), M('#4d2c57'));
+  sp.position.y = 0.12;
+  g.add(sp);
+  return { group: g };
+}
+function makeStar(M) {
+  const rr = seeded(5);
+  const g = new THREE.Group();
+  const s = new THREE.Shape();
+  const pt = (i, r) => { const a = i / 5 * TAU + Math.PI / 2; return [Math.cos(a) * r, Math.sin(a) * r]; };
+  s.moveTo(...pt(0, 0.33));
+  for (let i = 0; i < 5; i++) { const [cx, cy] = pt(i + 0.5, 0.1), [ex, ey] = pt(i + 1, 0.33); s.quadraticCurveTo(cx, cy, ex, ey); }
+  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.03, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.035, bevelSegments: 2, curveSegments: 6 });
+  geo.rotateX(-Math.PI / 2);
+  const m = new THREE.Mesh(geo, M('#41619d'));
+  m.position.y = 0.03;
+  g.add(m);
+  for (let i = 0; i < 9; i++) {
+    const a = rr(0, TAU), r = rr(0, 0.2);
+    blob(g, M('#e27b3c'), Math.cos(a) * r, 0.09, Math.sin(a) * r, rr(0.03, 0.06), 0.012, rr(0.03, 0.06));
+  }
+  return { group: g };
+}
+function makeClione(M) {
+  const g = new THREE.Group();
+  const skin = M('#e3f1f7', { transparent: true, opacity: 0.6, emissive: '#9ed4f5', emissiveIntensity: 0.25, depthWrite: false });
+  const core = M('#e5553a', { emissive: '#e5553a', emissiveIntensity: 0.35 });
+  blob(g, skin, 0, 0, 0, 0.055, 0.13, 0.055);
+  blob(g, skin, 0, 0.14, 0, 0.05, 0.048, 0.05);
+  blob(g, core, 0, -0.01, 0, 0.026, 0.055, 0.026);
+  blob(g, core, 0, 0.17, 0, 0.018, 0.014, 0.018);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(s * 0.04, 0.07, 0); g.add(w);
+    const m = blob(w, skin, s * 0.07, 0, 0, 0.075, 0.012, 0.045); m.rotation.z = s * 0.2;
+    w.userData.side = s;
+    wings.push(w);
+  }
+  return { group: g, wings, swimmer: true };
+}
+const ISO_LOOK = { hitode: makeStar, uni: makeUrchin, umeboshi: makeAnemone, clione: makeClione };
+
 const BUG_LOOK = {
   monshiro: (M) => butterfly(M, '#fbfbf2', '#2e2e2e'),
   ageha: (M) => butterfly(M, '#f5d64a', '#1e1e1e'),
@@ -307,9 +485,11 @@ const BUG_LOOK = {
   oniyanma: (M) => dragonfly(M, '#262626', '#3fbf7a', true),
   hotaru: firefly,
   dangomushi: pillbug,
+  isogani: makeCrab,
+  yadokari: makeHermit,
 };
 
-// どの生き物でも：cat は 'fish' | 'bug'
+// どの生き物でも：cat は 'fish' | 'bug' | 'iso'
 export function makeCreature(cat, key, M) {
   if (cat === 'fish') {
     if (key === 'madako') return makeOctopus(M);
@@ -317,6 +497,6 @@ export function makeCreature(cat, key, M) {
     const look = FISH_LOOK[key];
     return look ? makeFish(look, M, key.length * 17) : null;
   }
-  const make = BUG_LOOK[key];
+  const make = cat === 'iso' ? ISO_LOOK[key] : BUG_LOOK[key];
   return make ? make(M) : null;
 }

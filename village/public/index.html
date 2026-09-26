@@ -236,10 +236,10 @@
   .dexmeter { height: 12px; border-radius: 999px; background: var(--cream-2); overflow: hidden; }
   .dexmeter i { display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--leaf), var(--sun)); transition: width .4s; }
   .dexcount { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-  .dextabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
-  .dextabs button { height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--cream-2); font-size: 14px; }
+  .dextabs { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
+  .dextabs button { height: 36px; padding: 0 11px; border: 0; border-radius: 999px; background: var(--cream-2); font-size: 13px; }
   .dextabs button.on { background: var(--sun); color: #6b4f14; box-shadow: 0 3px 0 var(--sun-dark); }
-  .dextabs b { font-size: 12px; margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .dextabs b { font-size: 11px; margin-left: 3px; font-variant-numeric: tabular-nums; }
   .dexgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
   .dexcell {
     display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px 8px; border: 0; border-radius: 16px;
@@ -479,6 +479,7 @@
     <div class="dextabs" role="tablist">
       <button type="button" id="dexTab-fish">🐟 魚 <b></b></button>
       <button type="button" id="dexTab-bug">🐛 虫 <b></b></button>
+      <button type="button" id="dexTab-iso">🐚 磯 <b></b></button>
       <button type="button" id="dexTab-gem">💎 宝石 <b></b></button>
     </div>
     <div class="dexgrid" id="dexGrid"></div>
@@ -507,9 +508,10 @@
       <li>川は橋をつかってわたってね。</li>
       <li>家のドアに向かって歩くと、中に入れます。</li>
       <li>ハムスターの こむぎ が島を おさんぽしています。話しかけてみてね。</li>
-      <li>ひろばの西の よろず屋で、果物・魚・虫・宝石を ポカに かえられます。つりざおと虫とりあみも もらえます。</li>
+      <li>ひろばの西の よろず屋で、果物・魚・虫・磯の生きもの・宝石を ポカに かえられます。つりざおと虫とりあみも もらえます。</li>
       <li>川・池・海で つりができます。ウキが しずんだ しゅんかんに E！ 虫は 走ると にげるので、そっと近づいてね。</li>
-      <li>つった魚・つかまえた虫・ほった宝石は 図鑑（📖）に のります。うめるほど ランクが上がって、名前のよこの マークが かわります。</li>
+      <li>砂浜の 潮だまりには ヒトデや ウニが いて、手で ひろえます。まわりには カニや ヤドカリも。</li>
+      <li>つった魚・つかまえた虫・ひろった磯の生きもの・ほった宝石は 図鑑（📖）に のります。うめるほど ランクが上がって、名前のよこの マークが かわります。</li>
       <li>「売り地」の看板がある土地は、ポカで買えます。買うと あなたの家が建ちます（ひとり ひとつ・30日来ないと空き地にもどります）。</li>
     </ul>
     <p id="boardNow"></p>
