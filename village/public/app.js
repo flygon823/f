@@ -2434,12 +2434,27 @@ function moveMe(dt) {
   let moved = 0;
   if (speed > 0) {
     me.r = angleLerp(me.r, Math.atan2(ix, iz), Math.min(1, dt * 14));
-    const nx = me.x + ix * speed * dt, nz = me.z + iz * speed * dt;
+    const step = speed * dt;
     const ox = me.x, oz = me.z;
-    if (walkable(nx, nz)) { me.x = nx; me.z = nz; }
-    else if (Math.abs(ix) > 0.05 && walkable(nx, me.z)) me.x = nx;
-    else if (Math.abs(iz) > 0.05 && walkable(me.x, nz)) me.z = nz;
-    else clickTarget = null;
+    const tryMove = (dx, dz) => {
+      if (!walkable(me.x + dx, me.z + dz)) return false;
+      me.x += dx; me.z += dz;
+      return true;
+    };
+    if (!tryMove(ix * step, iz * step)) {
+      // ぶつかったら、少し向きを変えて すべるように回りこむ（前にうまくいった側を先にためす）
+      const side = me.slideSide || 1;
+      let ok = false;
+      for (const a of [0.45, 0.9, 1.3]) {
+        for (const sgn of [side, -side]) {
+          const c = Math.cos(a * sgn), sn = Math.sin(a * sgn);
+          const rx = ix * c - iz * sn, rz = ix * sn + iz * c;
+          if (tryMove(rx * step * 0.9, rz * step * 0.9)) { me.slideSide = sgn; ok = true; break; }
+        }
+        if (ok) break;
+      }
+      if (!ok) clickTarget = null;
+    }
     moved = Math.hypot(me.x - ox, me.z - oz);
   }
   me.speed = moved / Math.max(dt, 1e-4);

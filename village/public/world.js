@@ -412,11 +412,12 @@ export function tunnelDist(lx, lz) {
 }
 function tunnelWalkable(x, z, rad) {
   const lx = x - UNDER_X;
-  if (tunnelDist(lx, z) > -rad) return false;
+  // 壁ぎわまで歩けるよう、通路の判定は少しゆるめ
+  if (tunnelDist(lx, z) > -rad * 0.5) return false;
   // はしご（部屋のまん中）と宝箱
-  for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, z - sp.z) < 0.45 + rad) return false;
+  for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, z - sp.z) < 0.25 + rad) return false;
   if (Math.abs(lx - CHEST.x) < 0.75 + rad && Math.abs(z - CHEST.z) < 0.5 + rad) return false;
-  for (const g of GEM_SPOTS) if (Math.hypot(lx - g.x, z - g.z) < 0.5 + rad) return false;
+  for (const g of GEM_SPOTS) if (Math.hypot(lx - g.x, z - g.z) < 0.3 + rad) return false;
   if (Math.hypot(lx - PICKAXE_SPOT.x, z - PICKAXE_SPOT.z) < 0.3 + rad) return false;
   return true;
 }
@@ -431,16 +432,17 @@ export function surfaceExit(sp) {
 export const underEntry = (sp) => ({ x: UNDER_X + sp.x, z: sp.z + 1.4 });
 
 // ---------- ぶつかり判定 ----------
+// 当たり判定は見た目より小さめ（木は幹、岩は下のほう）。葉っぱの下はくぐれる
 const CIRCLES = [
-  ...PLACE.trees.map((t) => ({ x: t.x, z: t.z, r: t.kind === 'palm' ? 0.45 : 0.75 })),
-  ...PLACE.rocks.map((r) => ({ x: r.x, z: r.z, r: 0.85 * r.s + 0.1 })),
-  { x: TOWN_TREE.x, z: TOWN_TREE.z, r: 1.6 },
+  ...PLACE.trees.map((t) => ({ x: t.x, z: t.z, r: (t.kind === 'palm' ? 0.25 : 0.34) * t.s })),
+  ...PLACE.rocks.map((r) => ({ x: r.x, z: r.z, r: 0.6 * r.s })),
+  { x: TOWN_TREE.x, z: TOWN_TREE.z, r: 1.45 },
   { x: BOARD.x, z: BOARD.z, r: 0.8 },
   { x: SHOP.x, z: SHOP.z - 0.2, r: 1.35 },
   ...UNDER_SPOTS.filter((s) => s.kind !== 'hatch').map((s) => ({ x: s.x, z: s.z - (s.kind === 'cave' ? 0.4 : 0), r: s.kind === 'cave' ? 1.5 : 1.1 })),
-  ...LAMPS.map((l) => ({ x: l.x, z: l.z, r: 0.25 })),
+  ...LAMPS.map((l) => ({ x: l.x, z: l.z, r: 0.15 })),
 ];
-export function walkable(x, z, rad = 0.32) {
+export function walkable(x, z, rad = 0.25) {
   if (x > UNDER_X - 500) return tunnelWalkable(x, z, rad);
   if (x > INDOOR_X) return roomWalkable(x, z, rad);
   if (onBridge(x, z)) return true;
