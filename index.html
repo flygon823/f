@@ -1792,6 +1792,109 @@ Object.assign(SPECIES, {
   },
 });
 
+/* ------------------------------------------------------------------ ぷくぷく */
+// A few round, see-through little folk drifting in the open water off the shore, each
+// its own colour and face. They bob and squash as they swim, turn to face whoever is
+// watching, and glow faintly at night.
+function faceTex(kind) {
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const ink = '#2a2440';
+  g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 10;
+  const eyeY = 112, ex = 58;
+  const blush = (x) => { g.save(); g.fillStyle = 'rgba(255,120,160,0.55)'; g.beginPath(); g.ellipse(x, eyeY + 38, 24, 14, 0, 0, TAU); g.fill(); g.restore(); };
+  const dotEye = (x) => { g.beginPath(); g.ellipse(x, eyeY, 12, 16, 0, 0, TAU); g.fill(); g.save(); g.fillStyle = '#ffffff'; g.beginPath(); g.arc(x - 4, eyeY - 6, 5, 0, TAU); g.fill(); g.restore(); };
+  const happyEye = (x) => { g.beginPath(); g.arc(x, eyeY + 8, 16, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); };
+  const winkEye = (x) => { g.beginPath(); g.moveTo(x - 14, eyeY - 10); g.lineTo(x + 8, eyeY); g.lineTo(x - 14, eyeY + 10); g.stroke(); };
+  const sleepyEye = (x) => { g.beginPath(); g.arc(x, eyeY - 4, 15, Math.PI * 0.15, Math.PI * 0.85); g.stroke(); };
+  const ringEye = (x) => { g.lineWidth = 9; g.beginPath(); g.arc(x, eyeY, 22, 0, TAU); g.stroke(); g.beginPath(); g.arc(x, eyeY, 9, 0, TAU); g.fill(); g.lineWidth = 10; };
+  const mouthSmile = () => { g.beginPath(); g.arc(S / 2, eyeY + 26, 13, Math.PI * 0.15, Math.PI * 0.85); g.stroke(); };
+  const mouthW = () => { g.beginPath(); g.moveTo(S / 2 - 16, eyeY + 30); g.quadraticCurveTo(S / 2 - 8, eyeY + 42, S / 2, eyeY + 32); g.quadraticCurveTo(S / 2 + 8, eyeY + 42, S / 2 + 16, eyeY + 30); g.stroke(); };
+  const mouthO = () => { g.beginPath(); g.ellipse(S / 2, eyeY + 42, 9, 12, 0, 0, TAU); g.fill(); };
+  const mouthOpen = () => { g.beginPath(); g.moveTo(S / 2 - 14, eyeY + 28); g.quadraticCurveTo(S / 2, eyeY + 52, S / 2 + 14, eyeY + 28); g.closePath(); g.fill(); };
+  if (kind === 'ring') { ringEye(S / 2 - ex); ringEye(S / 2 + ex); mouthO(); return tex(c); }
+  if (kind !== 'sleepy') { blush(S / 2 - ex - 18); blush(S / 2 + ex + 18); }
+  if (kind === 'happy') { happyEye(S / 2 - ex); happyEye(S / 2 + ex); mouthOpen(); }
+  else if (kind === 'wink') { dotEye(S / 2 - ex); winkEye(S / 2 + ex); mouthW(); }
+  else if (kind === 'sleepy') { sleepyEye(S / 2 - ex); sleepyEye(S / 2 + ex); g.lineWidth = 7; g.beginPath(); g.moveTo(S / 2 - 10, eyeY + 32); g.lineTo(S / 2 + 10, eyeY + 32); g.stroke(); }
+  else { dotEye(S / 2 - ex); dotEye(S / 2 + ex); mouthSmile(); }
+  return tex(c);
+  function tex(cv) { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; }
+}
+const PUKU_FACES = {}, pukuCam = new THREE.Vector3();
+const pukuFaceGeo = new THREE.SphereGeometry(1.012, 24, 16, Math.PI / 2 - 0.62, 1.24, Math.PI / 2 - 0.62, 1.24);
+const pukuHiGeo = new THREE.SphereGeometry(1, 12, 8);
+function makePuku(color, face, r) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const shell = new THREE.MeshStandardMaterial({ color, roughness: 0.12, metalness: 0, transparent: true, opacity: 0.62, emissive: color, emissiveIntensity: 0.12, depthWrite: false });
+  const ball = new THREE.Mesh(sphereGeo, shell); ball.scale.setScalar(r); ball.renderOrder = 3; body.add(ball);
+  const core = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.45), roughness: 0.3, transparent: true, opacity: 0.35, depthWrite: false }));
+  core.scale.setScalar(r * 0.72); core.position.y = -r * 0.08; core.renderOrder = 3; body.add(core);
+  const faceM = PUKU_FACES[face] || (PUKU_FACES[face] = new THREE.MeshBasicMaterial({ map: faceTex(face), transparent: true, depthWrite: false }));
+  const fc = new THREE.Mesh(pukuFaceGeo, faceM); fc.scale.setScalar(r); fc.renderOrder = 4; body.add(fc);
+  // the glint of light on the top of the ball
+  const hiM = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false });
+  const hi = new THREE.Mesh(pukuHiGeo, hiM); hi.scale.set(r * 0.2, r * 0.12, r * 0.08); hi.position.set(-r * 0.42, r * 0.58, r * 0.62); hi.rotation.z = 0.6; hi.renderOrder = 5; body.add(hi);
+  const hi2 = new THREE.Mesh(pukuHiGeo, hiM); hi2.scale.setScalar(r * 0.06); hi2.position.set(-r * 0.2, r * 0.74, r * 0.62); hi2.renderOrder = 5; body.add(hi2);
+  return { group: g, body, shell };
+}
+{
+  const PUKU = [
+    ['#b69ae6', 'dot', 0.2], ['#86bff0', 'happy', 0.18], ['#f1d870', 'wink', 0.15], ['#9fdcc9', 'dot', 0.12],
+    ['#f39cc4', 'happy', 0.19], ['#7fcf96', 'ring', 0.3], ['#86bff0', 'sleepy', 0.13], ['#b69ae6', 'wink', 0.14],
+  ];
+  const home = { x: -4.8, z: 5, r: 1.9 };
+  const deep = (x, z) => seF(x, z) < 0.8 && heightAt(x, z) < -1.35;
+  const spots = spotsIn(PUKU.length, home.x, home.z, home.r, deep);
+  PUKU.forEach(([color, face, r], k) => {
+    const p = makePuku(color, face, r);
+    const [x, z] = spots[k] || [home.x, home.z];
+    register({
+      species: 'pukupuku', ...p, fixed: true, pick: r * 1.2, pickY: 0, focus: 2.2, bodyR: r * 1.05, r, ph: sr(0, TAU),
+      x, z, y: -0.5, tx: x, tz: z, pause: sr(0, 4), ringY: (q) => heightAt(q.x, q.z) + 0.03,
+      update(ind, dt, t) {
+        // wander slowly between deep spots near home
+        ind.pause -= dt;
+        if (ind.pause <= 0) {
+          for (let i = 0; i < 12; i++) {
+            const a = rr(0, TAU), d = rr(0.4, 1.4), nx = ind.x + Math.cos(a) * d, nz = ind.z + Math.sin(a) * d;
+            if (deep(nx, nz) && Math.hypot(nx - home.x, nz - home.z) < home.r) { ind.tx = nx; ind.tz = nz; break; }
+          }
+          ind.pause = rr(3, 8);
+        }
+        const k2 = Math.min(1, dt * 0.35 * (ind.react > 0 ? 3 : 1));
+        ind.x += (ind.tx - ind.x) * k2; ind.z += (ind.tz - ind.z) * k2;
+        const floor = heightAt(ind.x, ind.z), water = waterLevelAt(ind.x, ind.z);
+        const ty = clamp(lerp(floor, water, 0.5) + Math.sin(t * 0.5 + ind.ph) * 0.2, floor + ind.r + 0.05, water - ind.r - 0.08);
+        ind.y += (ty - ind.y) * Math.min(1, dt * 0.9);
+        ind.group.position.set(ind.x, ind.y + Math.sin(t * 1.6 + ind.ph) * 0.03, ind.z);
+        // squash and stretch as it paddles along; a little hop of surprise when touched
+        const s = Math.sin(t * 2.4 + ind.ph) * 0.05, jump = ind.react > 0 ? Math.abs(Math.sin(t * 9)) * 0.1 : 0;
+        ind.body.scale.set(1 + s, 1 - s + jump, 1 + s);
+        // turn to face whoever is watching
+        // (measured in its own upright frame on the sphere, where the wrapper sits)
+        const c = ind.group.parent.worldToLocal(pukuCam.copy(camera.position));
+        ind.yaw = turnTo(ind.yaw ?? 0, Math.atan2(c.x, c.z), dt * 2.5);
+        const want = clamp(Math.atan2(c.y, Math.hypot(c.x, c.z)), -0.6, 1.45);
+        ind.pitch = lerp(ind.pitch ?? 0, want, Math.min(1, dt * 2.5));
+        ind.group.rotation.set(-ind.pitch, ind.yaw, 0, 'YXZ');
+        ind.shell.emissiveIntensity = 0.12 + nightF * 0.5;
+      },
+    });
+  });
+}
+Object.assign(SPECIES, {
+  pukupuku: {
+    name: 'ぷくぷく', sci: 'Bullula ludens', kind: '海のふしぎな住人', noBooth: true,
+    desc: 'どこから来たのか、だれも知らない丸い体の住人たち。沖の水の中をふわふわとただよい、目が合うとにっこりします。色によって、性格が少しずつちがうようです。',
+    size: '直径 約25〜60cm', habitat: '磯の沖の、日の光がとどく水の中',
+    status: (ind) => ind.react > 0 ? 'ぴょこんと跳ねて、うれしそうにしています。'
+      : nightF > 0.5 ? '夜の海で、体をほんのり光らせています。'
+      : tn < 0.25 ? '潮が引いて、みんなで寄りそっています。' : 'ふわふわと、仲間といっしょにただよっています。',
+  },
+});
+
 /* ------------------------------------------------------------------ the other side: drift-ice sea */
 // Local frame of iceSide: same slab outline and tide as the shore, but a snowy
 // coast at the back and deep, cold water with drifting floes in front.
@@ -3868,7 +3971,7 @@ flipGroup.add(atmosphere);
 /* ------------------------------------------------------------------ individuals differ */
 // Within each species three looks are mixed: the usual one, a darker variant (for the fox,
 // the dark "cross fox"), and a young, smaller one. A lone animal gets one of them at random.
-const NO_VARIANTS = new Set(['momo', 'ryuhyo', 'sakura', 'nanakamado', 'hamanasu', 'ryokakuki', 'iss', 'himawari']);
+const NO_VARIANTS = new Set(['pukupuku', 'momo', 'ryuhyo', 'sakura', 'nanakamado', 'hamanasu', 'ryokakuki', 'iss', 'himawari']);
 const MAMMALS = new Set(['kitsune', 'higuma', 'usagi', 'shimarisu', 'tanuki', 'kuroten', 'ezoshika', 'nakiusagi', 'ezorisu', 'momonga', 'gomafu', 'kurakake', 'zenigata']);
 const BIRDS = new Set(['oowashi', 'ojirowashi', 'tobi', 'umineko', 'oosegurokamome', 'yurikamome']);
 const MORPH_LABEL = { kitsune: '黒っぽい毛の十字ギツネ', higuma: '毛の黒っぽい個体', madako: '色の濃い個体', usagi: '毛色の濃い個体' };
@@ -3946,7 +4049,7 @@ function compact(ind) {
 }
 inds.forEach(compact);
 // tiny creatures and ones that live under water cast no shadow worth drawing
-const UNDERWATER = new Set(['agohaze', 'kumohaze', 'mejina', 'rurisuzume', 'misuji', 'clione', 'mijinuki', 'mizukurage', 'sake', 'karafutomasu', 'sakuramasu', 'uni', 'nagauni', 'gangaze', 'hitode', 'aohitode', 'manjuhitode', 'umeboshi', 'yoroi', 'tamaitadaki']);
+const UNDERWATER = new Set(['pukupuku', 'agohaze', 'kumohaze', 'mejina', 'rurisuzume', 'misuji', 'clione', 'mijinuki', 'mizukurage', 'sake', 'karafutomasu', 'sakuramasu', 'uni', 'nagauni', 'gangaze', 'hitode', 'aohitode', 'manjuhitode', 'umeboshi', 'yoroi', 'tamaitadaki']);
 for (const ind of inds) if (ind.pick < 0.3 || UNDERWATER.has(ind.species)) ind.group.traverse(o => { if (o.isMesh) o.castShadow = false; });
 
 /* ------------------------------------------------------------------ planet placement */
@@ -4941,6 +5044,7 @@ const GROUPS = {
     { name: 'ヒトデ', members: ['hitode', 'aohitode', 'manjuhitode'] },
     { name: '群れの魚', members: ['mejina', 'rurisuzume', 'misuji'] },
     { name: 'チョウ', members: ['tsumabeni', 'ogomadara', 'asagimadara'] },
+    { name: 'ぷくぷく', members: ['pukupuku'] },
     { name: 'MOMO', members: ['momo'] },
   ],
   ice: [
