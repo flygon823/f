@@ -6,6 +6,7 @@ import {
   HOUSES, PATHS, BRIDGES, PLAZA, POND, PLACE, FRUITS, TOWN_TREE, BOARD, LAMPS, SPAWN, pathDist,
   INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit, seatsNear, standSpot,
   UNDER_X, TUNNEL_W, UNDER_SPOTS, UNDER_NODES, UNDER_EDGES, UNDER_ROOMS, CHEST, tunnelDist, surfaceExit, underEntry,
+  GEM_KINDS, GEM_SPOTS, gemPlan, gemDay, PICKAXE_SPOT,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
@@ -769,6 +770,59 @@ function glow(color, size, opacity = 0.8) {
   return sp;
 }
 const chestLid = { mesh: null, open: 0, target: 0 };
+const shafts = []; // はしごの上からさす光。MOMO より手前（カメラ側）にあるときはうすくする
+const gemObjs = [];
+const gemMinedUntil = new Map(); // spot -> この端末の時計での時刻（ms）
+let hasPickaxe = store.get('pickaxe', false);
+let pickaxeOnRack = null;
+// 今日の宝石を岩に出す（掘られたばかりの岩は出さない）
+function refreshGems() {
+  const day = gemDay(), now = Date.now();
+  gemObjs.forEach((o, i) => {
+    const plan = gemPlan(i, day);
+    if (o.kind !== plan.kind) {
+      const c = GEM_KINDS.find((k) => k.key === plan.kind).color;
+      o.mat.color.set(c); o.mat.emissive.set(c); o.glowMat.color.set(c);
+      o.kind = plan.kind;
+    }
+    o.visible = plan.active && !((gemMinedUntil.get(i) || 0) > now);
+    o.crystals.visible = o.visible;
+  });
+}
+// 火花・きらきら
+const sparks = [];
+const SPARK_GEO = new THREE.SphereGeometry(0.05, 6, 4);
+function spawnSparks(x, y, z, color, n = 8, speed = 3) {
+  for (let k = 0; k < n; k++) {
+    const m = new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({ color, transparent: true }));
+    m.position.set(x, y, z);
+    const a = Math.random() * Math.PI * 2, up = 0.5 + Math.random();
+    sparks.push({ m, vx: Math.cos(a) * speed * Math.random(), vy: up * speed, vz: Math.sin(a) * speed * Math.random(), life: 0.5 + Math.random() * 0.3, max: 0.8 });
+    scene.add(m);
+  }
+}
+function updateSparks(dt) {
+  for (let k = sparks.length - 1; k >= 0; k--) {
+    const sp = sparks[k];
+    sp.life -= dt;
+    if (sp.life <= 0) { scene.remove(sp.m); sp.m.material.dispose(); sparks.splice(k, 1); continue; }
+    sp.vy -= 9 * dt;
+    sp.m.position.x += sp.vx * dt; sp.m.position.y += sp.vy * dt; sp.m.position.z += sp.vz * dt;
+    sp.m.material.opacity = sp.life / sp.max;
+  }
+}
+function gemWorldPos(i) { const sp = GEM_SPOTS[i]; return { x: UNDER_X + sp.x, z: sp.z }; }
+let swingCooldown = 0;
+function mineGem(i) {
+  if (!hasPickaxe) { toast('ピッケルが必要みたい。古い井戸の下に あったような…'); sound.click(); return; }
+  if (performance.now() < swingCooldown) return;
+  swingCooldown = performance.now() + 480;
+  const g = gemWorldPos(i);
+  me.r = Math.atan2(g.x - me.x, g.z - me.z);
+  me.v.swing();
+  setTimeout(() => { sound.clink(); spawnSparks(g.x, 0.7, g.z + 0.3, '#ffe9a8', 7); }, 230);
+  net.send({ t: 'hit', i });
+}
 function buildUnderground() {
   const g = new THREE.Group();
   g.position.set(UNDER_X, 0, 0);
@@ -893,14 +947,61 @@ function buildUnderground() {
     for (const sx of [-1, 1]) lg.add(mesh(GEO.box, wood, sx * 0.32, 2.2, 0, 0.09, 4.4, 0.09));
     for (let y = 0.35; y < 4.3; y += 0.45) lg.add(mesh(GEO.box, woodDark, 0, y, 0, 0.64, 0.06, 0.07));
     const shaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.9, 1.3, 7, 20, 1, true),
+      new THREE.CylinderGeometry(0.85, 1.2, 4.6, 20, 1, true),
       new THREE.MeshBasicMaterial({ color: sp.kind === 'hatch' ? '#ffd9a0' : '#fff6d6', transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
     );
-    shaft.position.y = 3.5;
+    shaft.position.y = 2.3;
     lg.add(shaft);
+    shafts.push({ mat: shaft.material, z: sp.z });
     lg.add(mesh(GEO.cyl, basic('#f3e2b8'), 0, 0.01, 0, 1.1, 0.01, 1.1));
     g.add(lg);
   }
+  // 宝石の岩
+  GEM_SPOTS.forEach((sp, i) => {
+    const gg = new THREE.Group();
+    gg.position.set(sp.x, 0, sp.z);
+    gg.rotation.y = sp.face;
+    gg.add(mesh(GEO.blobby, toon('#4d4552'), 0, 0.45, -0.15, 0.62, 0.7, 0.5));
+    const crystals = new THREE.Group();
+    const mat = curvify(new THREE.MeshToonMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.45, gradientMap: GRADIENT }));
+    const oct = new THREE.OctahedronGeometry(0.15, 0);
+    [[-0.22, 0.55, 0.28, 0.5, 1], [0.05, 0.8, 0.3, -0.3, 1.25], [0.25, 0.45, 0.3, -0.7, 0.9], [-0.05, 0.3, 0.38, 0.9, 0.8]].forEach(([x, y, z, rz, k]) => {
+      const c = new THREE.Mesh(oct, mat);
+      c.position.set(x, y, z);
+      c.scale.set(k, k * 1.7, k);
+      c.rotation.set(0.5, 0, rz);
+      crystals.add(c);
+    });
+    const gl = glow('#ffffff', 1.8, 0.5);
+    gl.position.set(0, 0.6, 0.35);
+    crystals.add(gl);
+    gg.add(crystals);
+    g.add(gg);
+    gemObjs.push({ sp, crystals, mat, glowMat: gl.material, kind: null, visible: false });
+  });
+  // 古い井戸の下の部屋に立てかけてあるピッケル
+  const rack = new THREE.Group();
+  rack.position.set(PICKAXE_SPOT.x, 0, PICKAXE_SPOT.z);
+  rack.add(mesh(GEO.box, toon('#7a5230'), 0, 0.5, -0.1, 0.5, 1.0, 0.08));
+  rack.add(mesh(GEO.box, toon('#f3e2b8'), 0, 0.72, -0.05, 0.36, 0.2, 0.02));
+  const rackPick = new THREE.Group();
+  rackPick.position.set(0, 0.05, 0.08);
+  rackPick.rotation.set(-0.25, 0, 0.25);
+  rackPick.add(mesh(GEO.cyl, toon('#9c6b3e'), 0, 0.42, 0, 0.035, 0.84, 0.035));
+  rackPick.add(mesh(GEO.box, toon('#8d96a3'), 0, 0.84, 0, 0.42, 0.08, 0.1));
+  for (const sx of [-1, 1]) {
+    const tip = mesh(GEO.cone, toon('#b8c0cb'), sx * 0.3, 0.8, 0, 0.055, 0.22, 0.055);
+    tip.rotation.z = sx > 0 ? -1.9 : 1.9;
+    rackPick.add(tip);
+  }
+  rack.add(rackPick);
+  const rg = glow('#fff1b0', 1.6, 0.35);
+  rg.position.y = 0.6;
+  rackPick.add(rg);
+  g.add(rack);
+  pickaxeOnRack = rackPick;
+  rackPick.visible = !hasPickaxe;
+
   // 宝箱の部屋
   const chest = new THREE.Group();
   chest.position.set(CHEST.x, 0, CHEST.z);
@@ -1139,6 +1240,7 @@ function toast(text) {
 // =====================================================================
 const pocket = store.get('pocket', { fruit: {}, coins: 0 });
 if (!Number.isFinite(pocket.coins)) pocket.coins = Number(pocket.bells) || 0;
+if (!pocket.gems || typeof pocket.gems !== 'object') pocket.gems = {};
 delete pocket.bells;
 function renderPocket() {
   $('#coinCount').textContent = pocket.coins.toLocaleString('ja-JP');
@@ -1151,6 +1253,16 @@ function renderPocket() {
     const dot = document.createElement('i');
     dot.style.background = FRUITS[k].color;
     chip.append(dot, document.createTextNode(`${FRUITS[k].name} ×${n}`));
+    box.appendChild(chip);
+  }
+  for (const kind of GEM_KINDS) {
+    const n = pocket.gems[kind.key];
+    if (!n) continue;
+    const chip = document.createElement('span');
+    chip.className = 'pill fchip gem';
+    const dot = document.createElement('i');
+    dot.style.background = kind.color;
+    chip.append(dot, document.createTextNode(`${kind.name} ×${n}`));
     box.appendChild(chip);
   }
 }
@@ -1172,6 +1284,9 @@ function handle(msg) {
       for (const p of msg.players || []) if (!people.has(p.id)) createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false).m = p.m;
       for (const [i, n] of msg.world?.trees || []) setTreeFruit(i, n);
       for (const d of msg.world?.drops || []) addDrop(d, false);
+      gemMinedUntil.clear();
+      for (const [i, left] of msg.world?.gems || []) gemMinedUntil.set(i, Date.now() + left);
+      refreshGems();
       updateOnline();
       break;
     }
@@ -1225,6 +1340,36 @@ function handle(msg) {
     case 'picked':
       removeDrop(msg.id);
       break;
+    case 'hit': {
+      // ほかの人がピッケルをふった
+      const p = people.get(msg.id);
+      if (!p || p.isMe || !GEM_SPOTS[msg.i]) break;
+      p.v.swing();
+      const g = gemWorldPos(msg.i);
+      const near = me && Math.hypot(g.x - me.x, g.z - me.z) < 20;
+      setTimeout(() => { if (near) { sound.clink(0.6); spawnSparks(g.x, 0.7, g.z + 0.3, '#ffe9a8', 5); } }, 230);
+      break;
+    }
+    case 'gem': {
+      const i = msg.i;
+      if (!GEM_SPOTS[i]) break;
+      gemMinedUntil.set(i, Date.now() + (Number(msg.regrow) || 600000));
+      refreshGems();
+      const g = gemWorldPos(i);
+      const kind = GEM_KINDS.find((k) => k.key === msg.kind) || GEM_KINDS[0];
+      spawnSparks(g.x, 0.7, g.z + 0.3, kind.color, 16, 4);
+      if (msg.id === myId) {
+        pocket.gems[kind.key] = (pocket.gems[kind.key] || 0) + 1;
+        store.set('pocket', pocket);
+        renderPocket();
+        sound.sparkle();
+        toast(`${kind.name}を ほりあてた！`);
+      } else {
+        const p = people.get(msg.id);
+        if (p) p.v.swing();
+      }
+      break;
+    }
     case 'got': {
       if (msg.kind === 'coin') {
         const amt = [100, 200, 300, 500, 1000][Math.floor(Math.random() * 5)];
@@ -1449,7 +1594,14 @@ function findTarget() {
     const lx = me.x - UNDER_X;
     for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, me.z - sp.z) < 1.9) return { type: 'up', sp };
     if (Math.hypot(lx - CHEST.x, me.z - CHEST.z) < 2.0) return { type: 'chest' };
-    return null;
+    if (!hasPickaxe && Math.hypot(lx - PICKAXE_SPOT.x, me.z - PICKAXE_SPOT.z) < 1.7) return { type: 'pickaxe' };
+    let best = null, bd = 1.9;
+    gemObjs.forEach((o, i) => {
+      if (!o.visible) return;
+      const d = Math.hypot(lx - o.sp.x, me.z - o.sp.z);
+      if (d < bd) { bd = d; best = { type: 'mine', i }; }
+    });
+    return best;
   }
   const room = interiorAt(me.x);
   if (room) {
@@ -1498,6 +1650,16 @@ function action() {
   if (t.type === 'down') { enterUnder(t.sp); return; }
   if (t.type === 'up') { exitUnder(t.sp); return; }
   if (t.type === 'chest') { openChest(); return; }
+  if (t.type === 'mine') { mineGem(t.i); return; }
+  if (t.type === 'pickaxe') {
+    hasPickaxe = true;
+    store.set('pickaxe', true);
+    if (pickaxeOnRack) pickaxeOnRack.visible = false;
+    me.v.hop();
+    sound.coins();
+    toast('ピッケルを手に入れた！ 宝石の岩を ほってみよう');
+    return;
+  }
   if (t.type === 'exit') { exitHouse(); return; }
   if (t.type === 'talk') { startTalk(); return; }
   if (t.type === 'seat') { sitDown(t.seat); return; }
@@ -1524,7 +1686,8 @@ function updatePrompt() {
   const t = findTarget();
   const label = !t ? '' : {
     pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
-    stand: 'たちあがる', chest: '宝箱をあける',
+    stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう',
+    mine: hasPickaxe ? 'ピッケルで ほる' : 'ピッケルがあれば ほれそう…',
     down: t.sp && (t.sp.kind === 'well' ? '井戸をおりる' : t.sp.kind === 'hatch' ? '床の扉からおりる' : 'ほらあなに入る'),
     up: t.sp && `はしごをのぼる（${t.sp.name}へ）`, seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
   }[t.type] || (t.o.t.fruit && t.o.fruit > 0 ? '木をゆらす' : '木をゆらしてみる');
@@ -2084,6 +2247,13 @@ function frame() {
     momoLamp.position.set(me.x, 3.4, me.z - 0.8);
     if (now > dripAt) { dripAt = now + 2 + Math.random() * 5; sound.drip(); }
   }
+  updateSparks(dt);
+  if (me && layerOf(me.x) === 'under') {
+    for (const sh of shafts) {
+      const front = sh.z > me.z + 0.8;
+      sh.mat.opacity += ((front ? 0.03 : 0.12) - sh.mat.opacity) * Math.min(1, dt * 6);
+    }
+  }
   if (chestLid.mesh) {
     const lx = me ? me.x - UNDER_X : 0;
     if (!me || Math.hypot(lx - CHEST.x, me.z - CHEST.z) > 4) chestLid.target = 0;
@@ -2401,6 +2571,7 @@ buildFlowers();
 buildButterflies();
 buildInteriors();
 buildUnderground();
+refreshGems();
 buildEntrances();
 buildMapBase();
 {
@@ -2410,10 +2581,10 @@ buildMapBase();
 }
 applyDayNight();
 updateClock();
-setInterval(() => { applyDayNight(); updateClock(); }, 5000);
+setInterval(() => { applyDayNight(); updateClock(); refreshGems(); }, 5000);
 buildChoices();
 setupPreview();
 initPayments();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse };
+window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs };

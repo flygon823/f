@@ -16,6 +16,22 @@ const FRUIT_REGROW_MS = 3 * 60 * 1000;
 const DROP_TTL_MS = 5 * 60 * 1000;
 
 const MAX_X = 3200;                // 家の中の部屋は x=1000 から、地下通路は x=3000 あたりにある
+// 地下の宝石（public/world.js の GEM_KINDS・gemPlan と同じ計算。変えるときは両方そろえる）
+const GEM_KINDS = [['amethyst', 30], ['topaz', 25], ['emerald', 18], ['sapphire', 15], ['ruby', 9], ['diamond', 3]];
+const GEM_SPOT_COUNT = 19;
+const GEM_HITS = 3;
+const GEM_REGROW_MS = 10 * 60 * 1000;
+function hashStr(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function gemPlan(i, day) {
+  const h = hashStr(`gem:${day}:${i}`);
+  let r = (h >>> 8) % 100, kind = GEM_KINDS[0][0];
+  for (const [k, w] of GEM_KINDS) { if (r < w) { kind = k; break; } r -= w; }
+  return { active: h % 100 < 60, kind };
+}
 const EMOTES = ['wave', 'happy', 'sad', 'angry', 'wow', 'sleepy', 'love', 'music'];
 
 const MIME = {
@@ -119,6 +135,7 @@ const server = http.createServer((req, res) => {
 const players = new Map();   // id -> player
 const trees = new Map();     // treeIndex -> { fruit, regrowAt }
 const drops = new Map();     // dropId -> { id, tree, slot, kind, at }
+const gems = new Map();      // spot -> { minedUntil, hits, lastHit }
 let nextId = 1;
 let nextDrop = 1;
 
@@ -135,7 +152,10 @@ function worldSnapshot() {
     const t = treeState(i);
     if (t.fruit < FRUIT_PER_TREE) emptyTrees.push([i, t.fruit]);
   }
-  return { trees: emptyTrees, drops: [...drops.values()].map(publicDrop) };
+  const now = Date.now();
+  const mined = [];
+  for (const [i, g] of gems) if (g.minedUntil > now) mined.push([i, g.minedUntil - now]);
+  return { trees: emptyTrees, drops: [...drops.values()].map(publicDrop), gems: mined };
 }
 
 const publicDrop = (d) => ({ id: d.id, tree: d.tree, slot: d.slot, kind: d.kind });
@@ -247,6 +267,23 @@ wss.on('connection', (ws) => {
         if (Math.random() < 0.12) fresh.push({ id: String(nextDrop++), tree: i, slot: 3, kind: 'coin', at: now });
         for (const d of fresh) drops.set(d.id, d);
         broadcast({ t: 'shake', id: me.id, i, fruit: t.fruit, drops: fresh.map(publicDrop) });
+        break;
+      }
+      case 'hit': {
+        // ピッケルで宝石の岩をたたく。GEM_HITS 回目で掘れる
+        const i = msg.i;
+        if (!Number.isInteger(i) || i < 0 || i >= GEM_SPOT_COUNT || now - (me.lastHit || 0) < 350) return;
+        me.lastHit = now;
+        const plan = gemPlan(i, Math.floor(now / 86400000));
+        let g = gems.get(i);
+        if (!g) { g = { minedUntil: 0, hits: 0, lastHit: 0 }; gems.set(i, g); }
+        if (!plan.active || g.minedUntil > now) { broadcast({ t: 'hit', id: me.id, i, n: 0 }); return; }
+        if (now - g.lastHit > 20000) g.hits = 0;
+        g.hits++; g.lastHit = now;
+        if (g.hits < GEM_HITS) { broadcast({ t: 'hit', id: me.id, i, n: g.hits }); return; }
+        g.hits = 0;
+        g.minedUntil = now + GEM_REGROW_MS;
+        broadcast({ t: 'gem', id: me.id, i, kind: plan.kind, regrow: GEM_REGROW_MS });
         break;
       }
       case 'pick': {

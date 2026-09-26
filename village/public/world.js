@@ -325,6 +325,56 @@ export const UNDER_NODES = {
 export const UNDER_EDGES = [['well', 'J1'], ['J1', 'cave'], ['J1', 'J2'], ['J2', 'house'], ['well', 'J3'], ['J3', 'beach'], ['J3', 'T']];
 export const UNDER_ROOMS = { well: 3.2, cave: 3.2, beach: 3.2, house: 3.2, T: 3.8, J1: 2.4, J2: 2.4, J3: 2.4 };
 export const CHEST = { x: 33, z: 10.4 };
+
+// ---------- 宝石 ----------
+// 通路の奥がわの壁に、宝石の岩がある。どの岩に宝石が出るか・何の宝石かは、日（UTC）ごとに決まる。
+// サーバー（server.js の gemPlan）も同じ計算をするので、変えるときは両方そろえること。
+export const GEM_KINDS = [
+  { key: 'amethyst', name: 'アメジスト', color: '#b77cf0', w: 30 },
+  { key: 'topaz', name: 'トパーズ', color: '#ffc94a', w: 25 },
+  { key: 'emerald', name: 'エメラルド', color: '#3fd08a', w: 18 },
+  { key: 'sapphire', name: 'サファイア', color: '#4f8cff', w: 15 },
+  { key: 'ruby', name: 'ルビー', color: '#ff4d6d', w: 9 },
+  { key: 'diamond', name: 'ダイヤモンド', color: '#e8fbff', w: 3 },
+];
+export const GEM_HITS = 3; // 何回たたくと取れるか
+export const gemDay = (ms = Date.now()) => Math.floor(ms / 86400000);
+export function gemPlan(i, day) {
+  const h = hashStr(`gem:${day}:${i}`);
+  const active = h % 100 < 60;
+  let r = (h >>> 8) % 100;
+  let kind = GEM_KINDS[0].key;
+  for (const k of GEM_KINDS) { if (r < k.w) { kind = k.key; break; } r -= k.w; }
+  return { active, kind };
+}
+// 置き場所：通路にそって、柱をよけながら、北がわ（画面の奥）の壁に置く
+export const PICKAXE_SPOT = { x: -2.3, z: 7.4 }; // 古い井戸の下の部屋（はしごから少しはなす）
+function buildGemSpots() {
+  const spots = [];
+  const segDistLocal = (x, z, a, b) => {
+    const vx = b[0] - a[0], vz = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (z - a[1]) * vz) / (vx * vx + vz * vz)));
+    return Math.hypot(x - a[0] - vx * t, z - a[1] - vz * t);
+  };
+  for (const [a, b] of UNDER_EDGES) {
+    const A = UNDER_NODES[a], B = UNDER_NODES[b];
+    const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+    const ux = (B[0] - A[0]) / len, uz = (B[1] - A[1]) / len;
+    let nx = -uz, nz = ux;
+    if (nz > 0) { nx = -nx; nz = -nz; } // 北がわ
+    for (let t = 3.5; t < len - 3.5; t += 5.5) {
+      if (Math.abs(((t - 5) % 7 + 7) % 7) < 1.3 || Math.abs(((t - 5) % 7 + 7) % 7) > 5.7) continue; // 柱のそば
+      const x = A[0] + ux * t + nx * (TUNNEL_W - 0.25), z = A[1] + uz * t + nz * (TUNNEL_W - 0.25);
+      // ほかの通路のまん中や部屋にかからない所だけ
+      const inOther = UNDER_EDGES.some(([c, d]) => (c !== a || d !== b) && segDistLocal(x, z, UNDER_NODES[c], UNDER_NODES[d]) < TUNNEL_W + 0.3);
+      const inRoom = Object.entries(UNDER_ROOMS).some(([k, r]) => Math.hypot(x - UNDER_NODES[k][0], z - UNDER_NODES[k][1]) < r + 0.5);
+      if (inOther || inRoom) continue;
+      spots.push({ x, z, face: Math.atan2(-nx, -nz) });
+    }
+  }
+  return spots;
+}
+export const GEM_SPOTS = buildGemSpots();
 // 地下での、通路のまん中からの近さ（小さいほど通路の中）
 export function tunnelDist(lx, lz) {
   let best = 99;
@@ -338,6 +388,8 @@ function tunnelWalkable(x, z, rad) {
   // はしご（部屋のまん中）と宝箱
   for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, z - sp.z) < 0.45 + rad) return false;
   if (Math.abs(lx - CHEST.x) < 0.75 + rad && Math.abs(z - CHEST.z) < 0.5 + rad) return false;
+  for (const g of GEM_SPOTS) if (Math.hypot(lx - g.x, z - g.z) < 0.5 + rad) return false;
+  if (Math.hypot(lx - PICKAXE_SPOT.x, z - PICKAXE_SPOT.z) < 0.3 + rad) return false;
   return true;
 }
 // 地上に出たときに立つ場所（入り口の手前）と、地下におりたときに立つ場所（はしごの手前）

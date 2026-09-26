@@ -3,12 +3,33 @@
 //  2. room   : claude.ai の Artifact として開いたとき、同じページを開いている人どうし
 //  3. solo   : どちらもつながらないときは、ひとりで遊べる
 
+import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS } from './world.js';
+
 const FRUIT_PER_TREE = 3;
+const GEM_REGROW_MS = 10 * 60 * 1000;
 const FRUIT_REGROW_MS = 3 * 60 * 1000;
 
 // サーバーがいないときに、木の実と落とし物を手元で管理する
 class LocalWorld {
-  constructor() { this.trees = new Map(); this.drops = new Map(); }
+  constructor() { this.trees = new Map(); this.drops = new Map(); this.gems = new Map(); }
+  // 宝石の岩をたたく：{ n: たたいた回数, kind: 掘れたら宝石の種類 }
+  hitGem(i) {
+    const now = Date.now();
+    if (!Number.isInteger(i) || i < 0 || i >= GEM_SPOTS.length) return null;
+    const plan = gemPlan(i, gemDay(now));
+    let g = this.gems.get(i);
+    if (!g) { g = { minedUntil: 0, hits: 0, lastHit: 0 }; this.gems.set(i, g); }
+    if (!plan.active || g.minedUntil > now) return { n: 0 };
+    if (now - g.lastHit > 20000) g.hits = 0;
+    g.hits++; g.lastHit = now;
+    if (g.hits < GEM_HITS) return { n: g.hits };
+    g.hits = 0;
+    g.minedUntil = now + GEM_REGROW_MS;
+    return { n: GEM_HITS, kind: plan.kind };
+  }
+  markMined(i) {
+    this.gems.set(i, { minedUntil: Date.now() + GEM_REGROW_MS, hits: 0, lastHit: 0 });
+  }
   fruitOf(i) {
     const t = this.trees.get(i);
     if (!t) return FRUIT_PER_TREE;
@@ -18,7 +39,10 @@ class LocalWorld {
   snapshot() {
     const trees = [];
     for (const [i] of this.trees) { const f = this.fruitOf(i); if (f < FRUIT_PER_TREE) trees.push([i, f]); }
-    return { trees, drops: [...this.drops.values()] };
+    const now = Date.now();
+    const gems = [];
+    for (const [i, g] of this.gems) if (g.minedUntil > now) gems.push([i, g.minedUntil - now]);
+    return { trees, drops: [...this.drops.values()], gems };
   }
   planShake(i, fruitTree, tag) {
     const drops = [];
@@ -125,6 +149,17 @@ async function connectRoom(onMessage) {
     const fruit = local.applyShake(i, drops);
     onMessage({ t: 'shake', id: m.peer, i, fruit, drops });
   });
+  room.on('hit', (m) => {
+    if (m.sameTab || !m.data) return;
+    onMessage({ t: 'hit', id: m.peer, i: Number(m.data.i), n: Number(m.data.n) || 0 });
+  });
+  room.on('gem', (m) => {
+    if (m.sameTab || !m.data) return;
+    const i = Number(m.data.i);
+    if (!Number.isInteger(i) || i < 0 || i >= GEM_SPOTS.length) return;
+    local.markMined(i);
+    onMessage({ t: 'gem', id: m.peer, i, kind: gemPlan(i, gemDay()).kind, regrow: GEM_REGROW_MS });
+  });
   room.on('pick', (m) => {
     if (m.sameTab || !m.data) return;
     const id = String(m.data.id);
@@ -168,6 +203,18 @@ async function connectRoom(onMessage) {
           quiet(room.emit('pick', { id: d.id }));
           break;
         }
+        case 'hit': {
+          const r = local.hitGem(msg.i);
+          if (!r) return;
+          if (r.kind) {
+            onMessage({ t: 'gem', id: 'me', i: msg.i, kind: r.kind, regrow: GEM_REGROW_MS });
+            quiet(room.emit('gem', { i: msg.i }));
+          } else {
+            onMessage({ t: 'hit', id: 'me', i: msg.i, n: r.n });
+            quiet(room.emit('hit', { i: msg.i, n: r.n }));
+          }
+          break;
+        }
       }
     },
   };
@@ -195,6 +242,12 @@ function soloNet(onMessage) {
           local.drops.delete(msg.id);
           onMessage({ t: 'got', id: d.id, kind: d.kind, tree: d.tree });
           onMessage({ t: 'picked', id: d.id, by: 'me' });
+          break;
+        }
+        case 'hit': {
+          const r = local.hitGem(msg.i);
+          if (!r) return;
+          onMessage(r.kind ? { t: 'gem', id: 'me', i: msg.i, kind: r.kind, regrow: GEM_REGROW_MS } : { t: 'hit', id: 'me', i: msg.i, n: r.n });
           break;
         }
       }

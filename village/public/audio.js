@@ -139,6 +139,18 @@ export class Sound {
     const sand = surface === 'sand';
     this._noise({ t, dur: 0.07, vol: 0.05 * vol, freq: sand ? 1400 : 2600, q: sand ? 0.6 : 1.4 });
   }
+  clink(vol = 1) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._tone({ type: 'triangle', freq: 1850 + Math.random() * 200, t, dur: 0.12, vol: 0.12 * vol });
+    this._tone({ type: 'sine', freq: 3100, t, dur: 0.06, vol: 0.05 * vol });
+    this._noise({ t, dur: 0.05, vol: 0.08 * vol, freq: 3000, q: 1 });
+  }
+  sparkle() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    [84, 88, 91, 96, 100].forEach((n, i) => this._tone({ type: 'sine', freq: NOTE(n), t: t + i * 0.07, dur: 0.4, vol: 0.12 }));
+  }
   ladder() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

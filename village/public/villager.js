@@ -181,7 +181,7 @@ function buildAnimal(body, look) {
     mouth.position.set(0, -0.2, 0.43);
   }
 
-  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 0.012, mouthOpen: 0.05, scale: 1, hip: 0.3, lieShift: 0 };
+  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 0.012, mouthOpen: 0.05, scale: 1, hip: 0.3, lieShift: 0, handY: -0.22 };
 }
 
 // ---------- MOMO（テレビ頭のロボット） ----------
@@ -269,7 +269,7 @@ function buildMomo(body, look) {
   head.add(mesh(GEO.sphereLo, toon('#f0a58f'), 0, 0.53, 0, 0.05));
   const tailPivot = new THREE.Group();
   body.add(tailPivot);
-  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 1, mouthOpen: 0.8, scale: 1.1, hip: 0.37, lieShift: 0.4 };
+  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 1, mouthOpen: 0.8, scale: 1.1, hip: 0.37, lieShift: 0.4, handY: -0.31 };
 }
 
 export function makeVillager(look) {
@@ -288,8 +288,25 @@ export function makeVillager(look) {
   const { legs, arms, head, eyes, mouth, tailPivot } = parts;
   posePivot.scale.setScalar(parts.scale);
 
+  // ピッケル（ふるときだけ手に出す）
+  const pickaxe = new THREE.Group();
+  pickaxe.position.set(0, parts.handY, 0.02);
+  pickaxe.add(mesh(GEO.cyl, toon('#9c6b3e'), 0, 0, 0.3, 0.03, 0.72, 0.03).rotateX(Math.PI / 2));
+  const pickHead = new THREE.Group();
+  pickHead.position.set(0, 0, 0.64);
+  pickHead.add(mesh(GEO.box, toon('#8d96a3'), 0, 0, 0, 0.07, 0.34, 0.09));
+  for (const sy of [-1, 1]) {
+    const tip = mesh(GEO.cone, toon('#b8c0cb'), 0, sy * 0.28, -0.04, 0.05, 0.2, 0.05);
+    tip.rotation.x = sy > 0 ? -0.35 : Math.PI + 0.35;
+    pickHead.add(tip);
+  }
+  pickaxe.add(pickHead);
+  pickaxe.visible = false;
+  arms[1].add(pickaxe);
+
   const st = {
     pose: 'stand',
+    swingT: 0,
     phase: 0, walk: 0, blinkT: 2 + Math.random() * 3, talkT: 0, hopT: 0, waveT: 0, shakeT: 0, t: Math.random() * 10,
   };
 
@@ -349,6 +366,19 @@ export function makeVillager(look) {
       for (const a of arms) { a.rotation.x = -1.35 + Math.sin(st.t * 30) * 0.15; }
       arms[0].rotation.z = -0.25; arms[1].rotation.z = 0.25;
     }
+    // ピッケルをふる：ふりかぶって、ふりおろす
+    if (st.swingT > 0) {
+      st.swingT = Math.max(0, st.swingT - dt);
+      const p = 1 - st.swingT / 0.42;
+      const a = p < 0.45 ? -2.7 * (p / 0.45) : -2.7 + 3.3 * Math.min(1, (p - 0.45) / 0.25);
+      arms[1].rotation.x = a;
+      arms[1].rotation.z = 0.15;
+      arms[0].rotation.x = a * 0.6;
+      body.rotation.x = p > 0.45 ? 0.15 : -0.05;
+      pickaxe.visible = true;
+    } else {
+      pickaxe.visible = false;
+    }
     body.position.y = y;
 
     // すわる・ねころぶ
@@ -377,6 +407,7 @@ export function makeVillager(look) {
     hop() { st.hopT = 0.5; },
     wave() { st.waveT = 1.6; },
     shake() { st.shakeT = 0.6; },
+    swing() { st.swingT = 0.42; },
     setPose(p) { st.pose = p; },
     get pose() { return st.pose; },
     lieShift: parts.lieShift, // ねころぶとき、頭がベッドの板にぶつからないよう足もと側へずらす量
