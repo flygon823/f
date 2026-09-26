@@ -33,6 +33,7 @@ const MIME = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.glb': 'model/gltf-binary',
 };
 
 // ---------- 静的ファイル ----------
@@ -122,7 +123,7 @@ const server = http.createServer((req, res) => {
     if (err) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); return; }
     res.writeHead(200, {
       'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-      'cache-control': 'no-cache',
+      'cache-control': path.extname(file) === '.glb' ? 'public, max-age=3600' : 'no-cache', // 立体モデルは大きいので 1時間 とっておく
     });
     res.end(data);
   });

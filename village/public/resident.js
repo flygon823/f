@@ -5,6 +5,7 @@ export const RESIDENT = {
   id: '__resident',
   name: 'こむぎ',
   look: { s: 'hamster', furHex: '#f3cf92', shirtHex: '#8fd0ea', stripe: '#ffffff' },
+  model: 'komugi', // public/models/komugi.glb があれば その立体モデルになる
   voice: 1.6,
 };
 

@@ -12,6 +12,8 @@ import {
   ISO, TIDEPOOLS, critterCat, critterInfo, FISH_SPOTS, shadowWander,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
+import { NPCS } from './npcs.js';
+import { loadModel } from './models.js';
 import { makeCreature } from './creatures.js';
 import { PLACES, GUIDE_SYSTEM, guideUser, parseAnswer, offlineAnswer } from './guide.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
@@ -2040,7 +2042,7 @@ function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   wrap.className = 'tagwrap';
   const tag = document.createElement('div');
   tag.className = 'nametag' + (isMe ? ' me' : npc ? ' npc' : '');
-  tag.textContent = `${RANKS[0].mark} ${name}`;
+  tag.textContent = npc ? name : `${RANKS[0].mark} ${name}`;
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   const who = document.createElement('span');
@@ -2393,6 +2395,7 @@ addEventListener('keydown', (e) => {
   if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); openAsk(); return; }
   if (e.key === 'Enter') { e.preventDefault(); chatInput.focus(); return; }
   if (e.key === 'Escape') { closeModals(); return; }
+  if (document.querySelector('.modal.on')) return; // パネルを ひらいているあいだは 島の そうさを しない
   if (/^[1-8]$/.test(e.key)) { sendEmote(EMOTES[+e.key - 1].key); return; }
   if (['e', 'E', ' ', 'z', 'Z'].includes(e.key)) {
     e.preventDefault();
@@ -2606,6 +2609,10 @@ function findTarget() {
   }
   if (best) return best;
   if (resident && Math.hypot(resident.x - me.x, resident.z - me.z) < 2.0) return { type: 'talk' };
+  for (const n of npcs) {
+    if (n.def.role === 'shop') continue; // もみじ とは よろず屋の前で話す
+    if (Math.hypot(n.person.x - me.x, n.person.z - me.z) < 2.2) return { type: 'talk', npc: n };
+  }
   { const b = nearestBug(2.3); if (b) return { type: 'bug', id: b }; }
   for (const sp of UNDER_SPOTS) {
     if (sp.kind !== 'hatch' && Math.hypot(me.x - sp.x, me.z - sp.z) < 2.6) return { type: 'down', sp };
@@ -2647,7 +2654,13 @@ function action() {
   if (t.type === 'down') { enterUnder(t.sp); return; }
   if (t.type === 'up') { exitUnder(t.sp); return; }
   if (t.type === 'chest') { openChest(); return; }
-  if (t.type === 'shop') { renderShop(); openModal('#shopModal'); return; }
+  if (t.type === 'shop') {
+    // 店主の もみじ と話してから、よろず屋を ひらく
+    const keeper = npcs.find((n) => n.def.role === 'shop');
+    const open = () => { renderShop(); openModal('#shopModal'); };
+    if (keeper) startTalk(keeper, open); else open();
+    return;
+  }
   if (t.type === 'plot') { openPlotModal(t.i); return; }
   if (t.type === 'mine') { mineGem(t.i); return; }
   if (t.type === 'bug') { tryCatchBug(t.id); return; }
@@ -2662,7 +2675,7 @@ function action() {
     return;
   }
   if (t.type === 'exit') { exitHouse(); return; }
-  if (t.type === 'talk') { startTalk(); return; }
+  if (t.type === 'talk') { startTalk(t.npc || null); return; }
   if (t.type === 'seat') { sitDown(t.seat); return; }
   if (t.type === 'stand') { standUp(); return; }
   if (t.type === 'pick') {
@@ -2691,8 +2704,8 @@ function updatePrompt() {
   }
   const t = findTarget();
   const label = !t ? '' : {
-    pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
-    stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう', shop: 'よろず屋で売る',
+    pick: 'ひろう', board: 'けいじばんを読む', talk: `${t.npc ? t.npc.def.name : RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
+    stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう', shop: 'もみじの よろず屋',
     bug: t.id && bugPrompt(bugObjs.get(t.id)?.key),
     fish: hasTool('rod') ? 'つりをする' : 'ここで つりが できそう',
     plot: t.i !== undefined && (plotInfo[t.i]?.owner ? '看板を読む' : '売り地を見る'),
@@ -2711,15 +2724,23 @@ function updatePrompt() {
 // =====================================================================
 let resident = null;
 let talkCount = 0;
+const npcs = []; // { def, person, count }：決まった場所にいる住民
 const dialog = { open: false, lines: [], idx: 0, typing: null, full: '' };
-function startTalk() {
-  if (!resident || dialog.open) return;
+let talkingTo = null; // { person, name, voice, onEnd }
+// n：npcs の1人（なければ こむぎ）。onEnd：話しおわったら すること
+function startTalk(n = null, onEnd = null) {
+  if (dialog.open) return;
+  const person = n ? n.person : resident;
+  if (!person) return;
+  talkingTo = n
+    ? { person, name: n.def.name, voice: n.def.voice, onEnd }
+    : { person, name: RESIDENT.name, voice: RESIDENT.voice, onEnd };
   dialog.open = true;
-  dialog.lines = residentLines(me.name, currentHour(), talkCount++);
+  dialog.lines = n ? n.def.lines(me.name, currentHour(), n.count++) : residentLines(me.name, currentHour(), talkCount++);
   dialog.idx = 0;
   keys.clear(); clickTarget = null; stickVec = { x: 0, y: 0 };
-  me.r = Math.atan2(resident.x - me.x, resident.z - me.z);
-  $('#dialogWho').textContent = RESIDENT.name;
+  me.r = Math.atan2(person.x - me.x, person.z - me.z);
+  $('#dialogWho').textContent = talkingTo.name;
   $('#dialog').classList.add('on');
   document.body.classList.add('talking');
   showLine();
@@ -2737,8 +2758,8 @@ function showLine() {
     el.textContent += chars[i++] || '';
     if (i >= chars.length) { clearInterval(dialog.typing); dialog.typing = null; $('#dialog').classList.add('done'); }
   }, 50);
-  sound.speak(text, RESIDENT.voice, 1);
-  resident.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
+  sound.speak(text, talkingTo.voice, 1);
+  talkingTo.person.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
 }
 function advanceDialog() {
   if (dialog.typing) {
@@ -2752,7 +2773,10 @@ function advanceDialog() {
   dialog.open = false;
   $('#dialog').classList.remove('on');
   document.body.classList.remove('talking');
-  resident.v.hop();
+  const t = talkingTo;
+  talkingTo = null;
+  t.person.v.hop();
+  if (t.onEnd) t.onEnd();
 }
 $('#dialog').addEventListener('click', () => advanceDialog());
 
@@ -3002,6 +3026,7 @@ function drawMap() {
   const same = (x) => (layerOf(x) === 'under') === !!under;
   for (const p of people.values()) if (!p.isMe && same(p.x)) dot(p.x, p.z, tagColor(p.name), R);
   if (resident && !under) dot(resident.x, resident.z, '#e2a91e', R);
+  if (!under) for (const n of npcs) dot(n.person.x, n.person.z, '#e2a91e', R * 0.85);
   if (guideMark && !under) {
     // 島ナビの しるし（ぴょこぴょこ はねる ピン）
     const [u, v] = mapPos(guideMark.x, guideMark.z);
@@ -3290,8 +3315,15 @@ function frame() {
   camera.updateMatrixWorld();
 
   // 住民
+  for (const n of npcs) {
+    // ふだんは 決まった向き。近くに人が来たら そっちを向く
+    const p = n.person, sp = n.def.spot;
+    p.tx = sp.x; p.tz = sp.z;
+    const near = me && Math.hypot(me.x - sp.x, me.z - sp.z) < 4.5;
+    p.tr = near || (talkingTo && talkingTo.person === p) ? Math.atan2(me.x - sp.x, me.z - sp.z) : sp.r;
+  }
   if (resident) {
-    if (dialog.open) {
+    if (dialog.open && talkingTo && talkingTo.person === resident) {
       resident.tx = resident.x; resident.tz = resident.z;
       resident.tr = Math.atan2(me.x - resident.x, me.z - resident.z);
     } else {
@@ -3330,7 +3362,7 @@ function frame() {
   }
 
   // 人の動き
-  for (const p of (resident ? [...people.values(), resident] : people.values())) {
+  for (const p of [...people.values(), ...(resident ? [resident] : []), ...npcs.map((n) => n.person)]) {
     if (!p.isMe) {
       const ox = p.x, oz = p.z;
       if (Math.hypot(p.tx - p.x, p.tz - p.z) > 10) { p.x = p.tx; p.z = p.tz; }
@@ -3647,6 +3679,15 @@ buildMapBase();
   const pose = residentPose();
   resident = createPerson(RESIDENT.id, RESIDENT.name, RESIDENT.look, pose.x, pose.z, pose.r, false, true);
   resident.voice = RESIDENT.voice;
+  for (const def of NPCS) {
+    const person = createPerson(def.id, def.name, def.look, def.spot.x, def.spot.z, def.spot.r, false, true);
+    if (def.tool) person.v.hold(def.tool);
+    npcs.push({ def, person, count: 0 });
+  }
+  // public/models/ に 立体モデルが あれば さしかえる
+  const swap = (key, person) => loadModel(key).then((obj) => { if (obj) person.v.attachModel(obj); });
+  if (RESIDENT.model) swap(RESIDENT.model, resident);
+  for (const n of npcs) if (n.def.model) swap(n.def.model, n.person);
 }
 applyDayNight();
 updateClock();
@@ -3656,4 +3697,4 @@ setupPreview();
 initPayments();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, shadowObjs, get fishing() { return fishing; }, get guideMark() { return guideMark; } };
+window.__island = { npcs, people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, shadowObjs, get fishing() { return fishing; }, get guideMark() { return guideMark; } };

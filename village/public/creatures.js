@@ -348,7 +348,7 @@ function makeCrab(M) {
 function makeHermit(M) {
   const g = new THREE.Group(), soft = new THREE.Group(), shell = new THREE.Group();
   g.add(shell, soft);
-  const s1 = M('#c8b08c', { flatShading: true }), s2 = M('#a4876a', { flatShading: true });
+  const s1 = M('#c8b08c'), s2 = M('#a4876a');
   const whorl = new THREE.IcosahedronGeometry(1, 1);
   let y = 0;
   for (let k = 0; k < 7; k++) {

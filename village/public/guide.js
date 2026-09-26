@@ -4,6 +4,7 @@ import {
   SHOP, PLAZA, BOARD, POND, HOUSES, UNDER_SPOTS, CHEST, BRIDGES, TIDEPOOLS, PLOTS, PLOT_PRICE,
   FISH, BUGS, ISO, GEM_KINDS, RANKS, DEX_TOTAL, UNDER_X, INDOOR_X,
 } from './world.js';
+import { NPCS } from './npcs.js';
 
 // 方角と きょり（北は画面の奥 = z がマイナス）
 const DIRS = ['東', '南東', '南', '南西', '西', '北西', '北', '北東'];
@@ -19,7 +20,8 @@ const well = UNDER_SPOTS.find((s) => s.key === 'well');
 const cave = UNDER_SPOTS.find((s) => s.key === 'cave');
 const beachCave = UNDER_SPOTS.find((s) => s.key === 'beach');
 export const PLACES = {
-  shop: { name: 'よろず屋', x: SHOP.x, z: SHOP.z, note: '果物・魚・虫・磯の生きもの・宝石を ポカで買いとる。つりざおと虫とりあみを ただで くれる' },
+  shop: { name: 'よろず屋', x: SHOP.x, z: SHOP.z, note: '店主は レッサーパンダの もみじ。果物・魚・虫・磯の生きもの・宝石を ポカで買いとる。つりざおと虫とりあみを ただで くれる' },
+  chapu: { name: 'ちゃぷ', x: NPCS[1].spot.x, z: NPCS[1].spot.z, note: 'カワウソの つり名人。南の橋の 下流の岸にいる。つりのコツと、いま ねらい目の魚を 教えてくれる' },
   plaza: { name: 'ひろば', x: PLAZA.x, z: PLAZA.z, note: '島のまんなか。大きな木がある。はじめはここに来る' },
   board: { name: 'けいじばん', x: BOARD.x, z: BOARD.z, note: 'ひろばにある。島のお知らせ' },
   pond: { name: '池', x: POND.x, z: POND.z, note: 'メダカ・コイ・ザリガニ・キンギョが つれる' },
@@ -65,7 +67,7 @@ export const GUIDE_SYSTEM = `あなたは「ぽかぽか島」という、みん
 - 売り地：${PLOT_PRICE.toLocaleString('ja-JP')} ポカで買うと 自分の家が建つ。ひとり1区画。30日来ないと空き地にもどる。手放すと半額もどる。
 - アカウント：はじめて入ると自動でできる。「？」の画面の 引き継ぎコードを 別の端末で入れると 続きから遊べる。
 - MOMO の色：無料はミント色。カラーパス（買い切り）で10色から選べる。
-- 住民：ハムスターの こむぎ が 島を おさんぽしている。
+- 住民：ハムスターの こむぎ（島を おさんぽ）、レッサーパンダの もみじ（よろず屋の店主）、カワウソの ちゃぷ（川べりの つり名人）。
 - 空・BGM・魚や虫は 本当の時間と つながっている。
 
 # 場所（key：名前・ひろばからの方角・メモ）
@@ -108,6 +110,8 @@ export function parseAnswer(text) {
 
 // AI が使えないときの答え（キーワードで さがす）
 const RULES = [
+  [/ちゃぷ|カワウソ|つり名人/, 'chapu', 'ちゃぷは 南の橋の 下流の岸で つりをしているよ。つりのコツを 教えてくれるよ。'],
+  [/もみじ|レッサーパンダ|店主/, 'shop', 'もみじは よろず屋の 店主だよ。ひろばの西の お店にいるよ。'],
   [/店|みせ|ミセ|よろず|売|うる|買いと|かいと|つりざお|竿|あみ|網/, 'shop', 'よろず屋は ひろばの西がわだよ。売り買いと、つりざお・虫とりあみも そこで もらえるよ。'],
   [/宝箱|たからばこ/, 'chest', '宝箱は 地下通路の おくにあるよ。海辺のほらあな か 古い井戸 から 地下へ おりてね。1日1回 ポカが もらえるよ。'],
   [/宝石|ほうせき|ピッケル|掘|ほる/, 'well', '宝石は 地下通路の壁の岩に あるよ。古い井戸を おりた部屋の ピッケルを ひろって、岩を3回 たたいてね。'],

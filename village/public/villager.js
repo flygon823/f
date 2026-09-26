@@ -165,6 +165,45 @@ function buildAnimal(body, look) {
     head.add(mesh(GEO.sphereLo, furDark, 0, 0.3, 0.3, 0.12, 0.05, 0.08));
     tailPivot.add(mesh(GEO.sphereLo, furM, 0, -0.04, 0, 0.06));
     mouth.position.set(0, -0.14, 0.45);
+  } else if (sp === 'redpanda') {
+    // レッサーパンダ：白いまゆと口もと、こげ茶の耳、しましまの大きなしっぽ
+    const white2 = toon('#fbf3e6'), dark = toon('#5a2f22');
+    for (const s of [-1, 1]) {
+      const ear = mesh(GEO.sphereLo, dark, 0.32 * s, 0.33, -0.04, 0.14, 0.15, 0.07);
+      head.add(ear);
+      head.add(mesh(GEO.sphereLo, white2, 0.32 * s, 0.33, 0.0, 0.08, 0.09, 0.05));
+      head.add(mesh(GEO.sphereLo, white2, 0.17 * s, 0.17, 0.39, 0.07, 0.035, 0.03)); // まゆ
+      head.add(mesh(GEO.sphereLo, white2, 0.24 * s, -0.12, 0.33, 0.13, 0.1, 0.1));   // ほお
+      head.add(mesh(GEO.sphereLo, dark, 0.2 * s, -0.02, 0.4, 0.05, 0.1, 0.03));      // なみだ もよう
+    }
+    head.add(mesh(GEO.sphereLo, white2, 0, -0.12, 0.38, 0.14, 0.1, 0.1));
+    head.add(mesh(GEO.sphereLo, black, 0, -0.07, 0.48, 0.045, 0.03, 0.03));
+    for (let k = 0; k < 5; k++) {
+      const r = 0.12 - k * 0.008;
+      const seg = mesh(GEO.sphereLo, k % 2 ? toon(shade(fur, 0.62)) : furM, 0, 0.05 + k * 0.1, -0.08 - k * 0.07, r, 0.09, r);
+      tailPivot.add(seg);
+    }
+    tailPivot.rotation.x = -0.35;
+    mouth.position.set(0, -0.19, 0.46);
+  } else if (sp === 'otter') {
+    // カワウソ：小さな耳、白っぽい口もととおなか、太くて長いしっぽ、ひげ
+    const pale = toon('#e9dcc6');
+    for (const s of [-1, 1]) {
+      head.add(mesh(GEO.sphereLo, furDark, 0.34 * s, 0.2, -0.05, 0.08, 0.08, 0.05));
+      head.add(mesh(GEO.sphereLo, pale, 0.18 * s, -0.12, 0.34, 0.15, 0.11, 0.11));
+      for (const k of [-1, 1]) {
+        const w = mesh(GEO.cyl, basic('#3b2e27'), 0.28 * s, -0.08 + k * 0.03, 0.4, 0.004, 0.2, 0.004);
+        w.rotation.z = Math.PI / 2 + k * 0.15 * s;
+        head.add(w);
+      }
+    }
+    head.add(mesh(GEO.sphereLo, pale, 0, -0.14, 0.38, 0.16, 0.11, 0.1));
+    head.add(mesh(GEO.sphereLo, black, 0, -0.06, 0.48, 0.06, 0.04, 0.035));
+    const tail = mesh(GEO.sphereLo, furM, 0, -0.05, -0.28, 0.1, 0.08, 0.36);
+    tail.rotation.x = 0.25;
+    tailPivot.add(tail);
+    tailPivot.position.y = 0.25;
+    mouth.position.set(0, -0.2, 0.45);
   } else if (sp === 'pig') {
     for (const s of [-1, 1]) {
       const ear = mesh(GEO.cone, furDark, 0.27 * s, 0.37, 0.05, 0.12, 0.18, 0.07);
@@ -408,6 +447,16 @@ export function makeVillager(look) {
       arms[1].rotation.z = 0.2;
     }
     body.position.y = y;
+    // Meshy などの立体モデルに さしかえたとき：体ごと ゆらして 歩いているように見せる
+    if (st.model) {
+      const m = st.model;
+      m.position.y = y * 0.8;
+      m.rotation.z = Math.sin(st.phase) * 0.1 * w;
+      m.rotation.x = run * 0.1 * w + (st.talkT > 0 ? Math.sin(st.t * 9) * 0.04 : 0);
+      m.rotation.y = st.waveT > 0 ? Math.sin(st.t * 10) * 0.25 : 0;
+      const b = Math.sin(st.t * 2.2) * 0.015 * (1 - w) + Math.abs(Math.sin(st.phase)) * 0.04 * w;
+      m.scale.set(m.userData.k * (1 - b * 0.5), m.userData.k * (1 + b), m.userData.k * (1 - b * 0.5));
+    }
 
     // ふんばる（大物と ひっぱりあい）：うしろに体をたおして、さおを両手で高く
     const sp = st.pose === 'stand' ? st.strain : 0;
@@ -454,6 +503,23 @@ export function makeVillager(look) {
     hold(tool) { st.hold = tool; },
     setRodPull(v) { st.rodPull = v; },
     strain(v) { st.strain = v; }, // 0〜1：つりで ふんばる
+    // 手づくりの体を かくして、立体モデル（足もとが 0、前が +z）に さしかえる
+    attachModel(obj) {
+      if (st.model) posePivot.remove(st.model);
+      const pivot = new THREE.Group();
+      pivot.userData.k = 1 / parts.scale;
+      pivot.scale.setScalar(pivot.userData.k);
+      pivot.add(obj);
+      posePivot.add(pivot);
+      body.visible = false;
+      st.model = pivot;
+      // 道具は モデルの右手あたりに持つ
+      const hand = new THREE.Group();
+      hand.position.set(-0.3, 0.62, 0.18);
+      hand.rotation.set(-0.9, 0, 0.2);
+      pivot.add(hand);
+      for (const m of Object.values(tools)) { m.position.set(0, 0, 0); hand.add(m); }
+    },
     rodTip(out) { return rodTip.getWorldPosition(out); },
     setPose(p) { st.pose = p; },
     get pose() { return st.pose; },
