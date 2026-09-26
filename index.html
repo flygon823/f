@@ -184,12 +184,15 @@
   .range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--tide); border: 3px solid #f7faf9; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.25); }
 
   .species { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 4px; }
-  .species button {
+  .members { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 4px; width: fit-content; max-width: 100%; margin: 0 auto 5px; padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); }
+  .members[hidden] { display: none; }
+  .species button, .members button {
     border: 0; background: transparent; cursor: pointer; padding: 3px 6px; border-radius: 6px;
     font-size: 11px; letter-spacing: 0.04em; color: var(--float-ink-2);
   }
-  .species button:hover { color: var(--float-ink); background: rgba(255, 255, 255, 0.18); }
-  .species button[aria-pressed="true"] { color: var(--ink); background: rgba(255, 255, 255, 0.75); }
+  .species button:hover, .members button:hover { color: var(--float-ink); background: rgba(255, 255, 255, 0.18); }
+  .species button[aria-pressed="true"], .members button[aria-pressed="true"] { color: var(--ink); background: rgba(255, 255, 255, 0.75); }
+  .species button[aria-expanded="true"]:not([aria-pressed="true"]) { color: var(--float-ink); box-shadow: inset 0 -1px 0 currentColor; border-radius: 6px 6px 2px 2px; }
 
   .card {
     position: fixed; right: 24px; top: calc(var(--controls-h) + 34px + env(safe-area-inset-top, 0px));
@@ -311,6 +314,7 @@
 </section>
 
 <div class="dock" id="dock">
+  <div class="members" id="members" hidden></div>
   <nav class="species" id="species" aria-label="生き物をさがす"></nav>
 </div>
 
@@ -982,6 +986,7 @@ const SPECIES = {
 };
 // Where the card's BOOTH button goes. Put the item page URL in SET once it is listed.
 const BOOTH = { shop: 'https://moonlitprops.booth.pm/', set: null };
+const BOOTH_SPECIES = new Set(['madako', 'agohaze', 'isogani', 'yadokari', 'umeboshi', 'uni', 'hitode', 'mejina']);
 const ORDER = ['madako', 'agohaze', 'isogani', 'yadokari', 'umeboshi', 'uni', 'hitode', 'mejina'];
 
 /* ------------------------------------------------------------------ creature builders */
@@ -1008,17 +1013,21 @@ function blob(parent, mat, x, y, z, sx, sy = sx, sz = sx) {
   return m;
 }
 
-function makeOctopus() {
+function makeOctopus(o = {}) {
   const g = new THREE.Group(), body = new THREE.Group();
   g.add(body);
-  const skin = new THREE.MeshStandardMaterial({ color: '#dd8661', roughness: 0.6 });
+  const skin = new THREE.MeshStandardMaterial({ color: o.skin || '#dd8661', roughness: 0.6 });
   const mantle = blob(body, skin, 0, 0.8, -0.3, 0.4, 0.48, 0.46);
   mantle.rotation.x = -0.55;
   blob(body, skin, 0, 0.4, 0.02, 0.36, 0.24, 0.32);
-  const pap = M('#c86f4d', { roughness: 0.7 });
+  const pap = M(o.pap || '#c86f4d', { roughness: 0.7 });
   for (let i = 0; i < 12; i++) {
     const a = rr(0, TAU), b = rr(0.2, 1.3);
     blob(body, pap, Math.cos(a) * Math.sin(b) * 0.39, 0.8 + Math.cos(b) * 0.46, -0.3 + Math.sin(a) * Math.sin(b) * 0.44, 0.035);
+  }
+  if (o.spots) for (let i = 0; i < 16; i++) {       // pale rings or dots on the mantle
+    const a = rr(-1.2, 1.2) + (i % 2 ? Math.PI : 0), b = rr(0.3, 1.4);
+    blob(body, M(o.spots, { roughness: 0.6 }), Math.cos(a) * Math.sin(b) * 0.4, 0.8 + Math.cos(b) * 0.47, -0.3 + Math.sin(a) * Math.sin(b) * 0.45, 0.05, 0.05, 0.05);
   }
   const eyeW = M('#f1e3b4', { roughness: 0.4 });
   for (const s of [-1, 1]) {
@@ -1055,7 +1064,7 @@ function makeOctopus() {
     arms.push(joints);
   }
   g.scale.setScalar(0.56);
-  return { group: g, body, mantle, arms, base, skin, baseColor: skin.color.clone(), alarmColor: new THREE.Color('#8b3626') };
+  return { group: g, body, mantle, arms, base, skin, baseColor: skin.color.clone(), alarmColor: new THREE.Color(o.alarm || '#8b3626') };
 }
 
 function makeFish(o) {
@@ -1070,6 +1079,8 @@ function makeFish(o) {
     const s = i % 2 ? 1 : -1, z = rr(-0.3, 0.3) * o.len;
     blob(body, M(o.spots), s * o.w * 0.8, rr(-0.2, 0.5) * o.d, z, o.w * 0.28, o.d * 0.28, o.len * 0.07);
   }
+  if (o.bands) for (const z of [0.2, 0, -0.2]) blob(body, M(o.bands, { roughness: 0.5 }), 0, 0, z * o.len, o.w * 1.06, o.d * 1.03, o.len * 0.055);
+  if (o.hump) blob(body, bm, 0, o.d * 0.7, -0.02 * o.len, o.w * 0.8, o.d * 0.55, o.len * 0.28);
   const eyeY = o.eyesTop ? o.d * 0.8 : o.d * 0.2;
   const eyeX = o.eyesTop ? o.w * 0.45 : o.w * 0.78;
   for (const s of [-1, 1]) {
@@ -1207,9 +1218,11 @@ function makeAnemone() {
   return { group: g, ball, tg, tents, o: 0 };
 }
 
-function makeUrchin() {
-  const g = new THREE.Group();
-  blob(g, M('#3a2340', { roughness: 0.6 }), 0, 0, 0, 0.14, 0.11, 0.14);
+function makeUrchin(o = {}) {
+  const g = new THREE.Group(), L = o.len ?? 0.26, R = o.r ?? 0.011;
+  blob(g, M(o.body || '#3a2340', { roughness: 0.6 }), 0, 0, 0, 0.14, 0.11, 0.14);
+  if (o.ring) blob(g, M(o.ring, { roughness: 0.4 }), 0, 0.1, 0, 0.06, 0.02, 0.06);
+  if (o.dots) for (let i = 0; i < 5; i++) { const a = i / 5 * TAU; blob(g, M(o.dots, { roughness: 0.3, emissive: o.dots, emissiveIntensity: 0.4 }), Math.cos(a) * 0.07, 0.095, Math.sin(a) * 0.07, 0.014); }
   const spines = [], q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3();
   const N = 90;
   for (let i = 0; i < N; i++) {
@@ -1217,31 +1230,31 @@ function makeUrchin() {
     if (y < -0.6) continue;
     const r = Math.sqrt(1 - y * y), th = i * 2.39996;
     dir.set(Math.cos(th) * r, y, Math.sin(th) * r).normalize();
-    const c = new THREE.ConeGeometry(0.011, 0.26, 4);
-    c.translate(0, 0.13 + 0.11, 0);
+    const c = new THREE.ConeGeometry(R, L, 4);
+    c.translate(0, L / 2 + 0.11, 0);
     q.setFromUnitVectors(up, dir);
     c.applyQuaternion(q);
     spines.push(c);
   }
-  const sp = new THREE.Mesh(mergeGeometries(spines), M('#4d2c57', { roughness: 0.5 }));
+  const sp = new THREE.Mesh(mergeGeometries(spines), M(o.spine || '#4d2c57', { roughness: 0.5 }));
   g.add(sp);
   return { group: g, spines: sp };
 }
 
-function makeStar() {
-  const g = new THREE.Group();
+function makeStar(o = {}) {
+  const g = new THREE.Group(), arm = o.arm ?? 0.33, waist = o.waist ?? 0.1, depth = o.depth ?? 0.03;
   const s = new THREE.Shape();
   const pt = (i, r) => { const a = i / 5 * TAU + Math.PI / 2; return [Math.cos(a) * r, Math.sin(a) * r]; };
-  s.moveTo(...pt(0, 0.33));
-  for (let i = 0; i < 5; i++) { const [cx, cy] = pt(i + 0.5, 0.1), [ex, ey] = pt(i + 1, 0.33); s.quadraticCurveTo(cx, cy, ex, ey); }
-  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.03, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.035, bevelSegments: 2, curveSegments: 6 });
+  s.moveTo(...pt(0, arm));
+  for (let i = 0; i < 5; i++) { const [cx, cy] = pt(i + 0.5, waist), [ex, ey] = pt(i + 1, arm); s.quadraticCurveTo(cx, cy, ex, ey); }
+  const geo = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: true, bevelThickness: depth, bevelSize: 0.035, bevelSegments: 2, curveSegments: 6 });
   geo.rotateX(-Math.PI / 2);
-  const m = new THREE.Mesh(geo, M('#41619d', { roughness: 0.65 }));
-  m.position.y = 0.03;
+  const m = new THREE.Mesh(geo, M(o.color || '#41619d', { roughness: 0.65 }));
+  m.position.y = depth;
   g.add(m);
-  for (let i = 0; i < 9; i++) {
-    const a = rr(0, TAU), r = rr(0, 0.2);
-    blob(g, M('#e27b3c', { roughness: 0.6 }), Math.cos(a) * r, 0.09, Math.sin(a) * r, rr(0.03, 0.06), 0.012, rr(0.03, 0.06));
+  if (o.spots !== null) for (let i = 0; i < 9; i++) {
+    const a = rr(0, TAU), r = rr(0, Math.min(0.2, arm * 0.6));
+    blob(g, M(o.spots || '#e27b3c', { roughness: 0.6 }), Math.cos(a) * r, depth * 3, Math.sin(a) * r, rr(0.03, 0.06), 0.012, rr(0.03, 0.06));
   }
   return { group: g, mesh: m };
 }
@@ -1467,6 +1480,326 @@ function updateSchool(dt, t) {
   }
 }
 
+/* ------------------------------------------------------------------ relatives on the shore */
+// Each creature above has two close relatives living alongside it. Their builders are
+// the same ones, recoloured or reshaped, and they move the same way.
+function recolor(root, map) {
+  const done = new Map();
+  root.traverse((m) => {
+    if (!m.isMesh || !m.material || !m.material.color) return;
+    const to = map['#' + m.material.color.getHexString()];
+    if (!to) return;
+    if (!done.has(m.material)) { const c = m.material.clone(); c.color.set(to); done.set(m.material, c); }
+    m.material = done.get(m.material);
+  });
+  return root;
+}
+// n spots inside a zone where ok(x, z) holds, from the seeded random so the layout keeps
+function spotsIn(n, cx, cz, r, ok) {
+  const out = [];
+  for (let i = 0; i < 600 && out.length < n; i++) {
+    const a = sr(0, TAU), d = Math.sqrt(srand()) * r, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+    if (ok(x, z)) out.push([x, z]);
+  }
+  return out;
+}
+const octoAnim = (ind, dt, t) => {
+  const f = ind.moving ? 2.4 : 1.2;
+  ind.arms.forEach((joints, i) => joints.forEach((jt, j) => {
+    jt.rotation.x = ind.base[j] + Math.sin(t * f + i * 0.9 + j * 0.55) * 0.1 * (1 + j * 0.18);
+    jt.rotation.y = Math.sin(t * 0.8 + i * 1.3 + j * 0.4) * 0.07;
+  }));
+  ind.mantle.scale.y = 0.48 + Math.sin(t * 2.2) * 0.02;
+  ind.body.position.y = Math.sin(t * 1.3) * 0.02;
+  ind.skin.color.lerp(ind.react > 0 ? ind.alarmColor : ind.baseColor, Math.min(1, dt * 3));
+};
+const legAnim = (speed, knee) => (ind, dt, t) => {
+  const mv = ind.moving ? 1 : 0;
+  ind.legs.forEach(L => {
+    const ph = t * speed + L.phase;
+    L.root.rotation.y = L.base + Math.sin(ph) * 0.22 * mv;
+    L.knee.rotation.z = knee + Math.max(0, Math.cos(ph)) * 0.3 * mv;
+  });
+};
+const crabAnim = (ind, dt, t) => {
+  legAnim(14, -1.7)(ind, dt, t);
+  const up = ind.react > 0 ? -1.0 + Math.sin(t * 12) * 0.12 : -0.2;
+  ind.claws.forEach(c2 => { c2.rotation.x = lerp(c2.rotation.x, up, Math.min(1, dt * 8)); });
+  ind.body.position.y = (ind.moving ? 1 : 0) * Math.abs(Math.sin(t * 14)) * 0.012;
+};
+const hermitAnim = (ind, dt, t) => {
+  legAnim(9, -1.6)(ind, dt, t);
+  const s = ind.react > 0 ? 0.25 : 1;
+  const cur = lerp(ind.soft.scale.x, s, Math.min(1, dt * (s < 1 ? 10 : 2)));
+  ind.soft.scale.setScalar(cur);
+  ind.soft.position.z = (1 - cur) * -0.08;
+  ind.group.rotation.z = (ind.moving ? 1 : 0) * Math.sin(t * 9) * 0.03;
+};
+
+// ワモンダコ・シマダコ
+[['wamondako', { skin: '#9a6247', pap: '#7d4b36', spots: '#e8d6b8', alarm: '#5a2e22' }, POOLS[1], 2.8],
+ ['shimadako', { skin: '#b8412c', pap: '#8e2f22', spots: '#f4ede2', alarm: '#e9d7cf' }, POOLS[0], 3.4]].forEach(([species, look, p, sp]) => {
+  const oc = makeOctopus(look);
+  register(walker({
+    species, ...oc, x: p.x - 0.3, z: p.z - 0.2, speed: 0.3, pauseMin: 2, pauseMax: 6, turnRate: 1.5, pick: 0.6, pickY: 0.3, focus: 3.6,
+    zone: () => (tn < 0.75 ? { x: p.x, z: p.z, r: 1.1 } : { x: -1.2 + sp - 3, z: 1.8, r: 4.2 }),
+    valid: (x, z) => inside(x, z) && !nearBigRock(x, z) && depthAt(x, z) > 0.3,
+    anim: octoAnim,
+  }));
+});
+// クモハゼ (in the pools) and ヨダレカケ (a blenny that lives out of water, hopping on wet rock)
+POOLS.forEach((p, pi) => {
+  const f = makeFish({ ...GOBY, body: '#4f4a40', fin: '#77705f', spots: '#e6e0cf', belly: '#8a8270' });
+  register(walker({
+    species: 'kumohaze', ...f, x: p.x + 0.3, z: p.z - 0.3, speed: 1.4, pauseMin: 0.8, pauseMax: 3.5, turnRate: 7, yOff: 0.06, pick: 0.28, pickY: 0.02, focus: 2.4, flee: true,
+    zone: () => ({ x: p.x, z: p.z, r: p.r * (tn > 0.85 ? 1.3 : 0.7) }),
+    valid: (x, z) => inside(x, z) && !nearBigRock(x, z) && depthAt(x, z) > 0.14 && (tn > 0.85 || inPool(pi, x, z)),
+    anim(ind, dt, t) { ind.tail.rotation.y = Math.sin(t * (ind.moving ? 20 : 4) + ind.x) * (ind.moving ? 0.5 : 0.12); },
+  }));
+});
+spotsIn(3, 1.5, -1.2, 5.5, (x, z) => inside(x, z, 0.78) && !nearBigRock(x, z) && Math.abs(depthAt(x, z) + 0.15) < 0.2).forEach(([x, z]) => {
+  const f = makeFish({ len: 0.4, w: 0.055, d: 0.07, head: true, eyesTop: true, body: '#3d423c', fin: '#5b6259', spots: '#c9d3c6', belly: '#6b716a' });
+  register(walker({
+    species: 'yodarekake', ...f, x, z, speed: 0.9, pauseMin: 1, pauseMax: 4, turnRate: 6, yOff: 0.04, pick: 0.26, pickY: 0.04, focus: 2.2, flee: true, ph: sr(0, TAU),
+    zone: () => ({ x: 1.5, z: -1.2, r: 5.5 }),
+    // just above the water's edge, where the spray keeps the rock wet
+    valid: (x2, z2) => inside(x2, z2, 0.78) && !nearBigRock(x2, z2) && depthAt(x2, z2) < -0.03 && depthAt(x2, z2) > -0.5,
+    anim(ind, dt, t) {
+      const hop = ind.moving ? Math.abs(Math.sin(t * 11 + ind.ph)) : 0;
+      ind.body.position.y = hop * 0.08;
+      ind.body.rotation.x = -hop * 0.3;
+      ind.tail.rotation.y = Math.sin(t * 3 + ind.ph) * 0.2;
+    },
+  }));
+});
+// ツノメガニ (a fast pale ghost crab of the sand) and ショウジンガニ (a red-brown rock crab)
+const CRAB_BASE = ['#7c8452', '#86875b', '#9c9a6d', '#e3d6c4', '#8a3e55', '#5e4a62'];
+const crabLook = (cols) => Object.fromEntries(CRAB_BASE.map((c, i) => [c, cols[i]]));
+spotsIn(3, -2, 1, 6.5, (x, z) => inside(x, z) && !nearBigRock(x, z) && heightAt(x, z) > 1.2 && heightAt(x, z) < 2.1).forEach(([x, z]) => {
+  const c = makeCrab();
+  recolor(c.group, crabLook(['#d8c8a2', '#cbb991', '#e2d5b2', '#f1e9d6', '#cbb991', '#bfae88']));
+  c.group.scale.setScalar(1.1);
+  register(walker({
+    species: 'tsunomegani', ...c, x, z, speed: 1.7, pauseMin: 0.4, pauseMax: 2.5, turnRate: 5, sideways: true, pick: 0.36, pickY: 0.12, focus: 2.6, freeze: true, flee: true, yaw: sr(0, TAU),
+    zone: () => ({ x: -2, z: 1, r: 6.5 }),
+    // runs on the damp sand just above the waves and follows them in and out
+    valid: (x2, z2) => inside(x2, z2) && !nearBigRock(x2, z2) && depthAt(x2, z2) < -0.05 && heightAt(x2, z2) < 2.1,
+    anim: crabAnim,
+  }));
+});
+spotsIn(3, 4, 2, 4, (x, z) => inside(x, z) && !nearBigRock(x, z, 2.6) && heightAt(x, z) > -0.8 && heightAt(x, z) < 1.7).forEach(([x, z]) => {
+  const c = makeCrab();
+  recolor(c.group, crabLook(['#8e3b2c', '#9a4a35', '#b0634a', '#d9a38f', '#5a2a22', '#6e2c24']));
+  register(walker({
+    species: 'shoujingani', ...c, x, z, speed: 0.6, pauseMin: 0.8, pauseMax: 3.5, turnRate: 4, sideways: true, pick: 0.34, pickY: 0.12, focus: 2.6, freeze: true, yaw: sr(0, TAU),
+    zone: () => ({ x: 4, z: 2, r: 4 }),
+    valid: (x2, z2) => inside(x2, z2) && !nearBigRock(x2, z2, 2.6) && heightAt(x2, z2) > -1.1 && heightAt(x2, z2) < 1.8,
+    anim: crabAnim,
+  }));
+});
+// land hermit crabs: ムラサキオカヤドカリ and オカヤドカリ keep to the beach above the tide
+const HERMIT_BASE = ['#c8b08c', '#a4876a', '#8d4d34', '#e2d3bf', '#a3593a', '#b8412c'];
+const hermitLook = (cols) => Object.fromEntries(HERMIT_BASE.map((c, i) => [c, cols[i]]));
+[['murasakiokayadokari', ['#e2dccf', '#9aa38a', '#5f4a86', '#d9d2e6', '#74599e', '#9a7fc0']],
+ ['okayadokari', ['#efe4cc', '#c49a66', '#a45a36', '#ecd9c4', '#b8643c', '#c98552']]].forEach(([species, cols], k) => {
+  spotsIn(2, -3 + k * 4, -3.5, 4.5, (x, z) => inside(x, z, 0.75) && !nearBigRock(x, z) && heightAt(x, z) > DRY && heightAt(x, z) < 2.6).forEach(([x, z]) => {
+    const h = makeHermit();
+    recolor(h.group, hermitLook(cols));
+    h.group.scale.setScalar(1.15);
+    register(walker({
+      species, land: true, ...h, x, z, speed: 0.2, pauseMin: 1.5, pauseMax: 6, turnRate: 2, pick: 0.32, pickY: 0.15, focus: 2.4, freeze: true,
+      zone: () => ({ x, z, r: 2.6 }),
+      valid: (x2, z2) => inside(x2, z2, 0.75) && !nearBigRock(x2, z2) && heightAt(x2, z2) > DRY && heightAt(x2, z2) < 2.6,
+      anim: hermitAnim,
+    }));
+  });
+});
+// ヨロイイソギンチャク (armoured with pebbles) and タマイタダキイソギンチャク (bubble-tip)
+const ANEM_BASE = ['#8e1c26', '#b8252f', '#c93240', '#3b6fd6'];
+const anemLook = (cols) => Object.fromEntries(ANEM_BASE.map((c, i) => [c, cols[i]]));
+[['yoroi', ['#5d6452', '#6f7a5c', '#8b9a63', '#cfc6b2'], POOLS[1], [0.5, 1.9, 4.4]],
+ ['tamaitadaki', ['#6b4a3a', '#7e5a44', '#c28e7a', '#e07aa0'], POOLS[0], [2.2, 3.0, 5.8]]].forEach(([species, cols, p, angs]) => {
+  angs.forEach((a) => {
+    const x = p.x + Math.cos(a) * p.r * 0.85, z = p.z + Math.sin(a) * p.r * 0.85;
+    const an = makeAnemone();
+    recolor(an.group, anemLook(cols));
+    if (species === 'tamaitadaki') an.group.scale.setScalar(1.3);
+    const y = heightAt(x, z);
+    an.group.position.set(x, y - 0.02, z);
+    register({
+      species, ...an, x, z, pick: 0.24, pickY: 0.14, focus: 2.2, fixed: true, staticPos: true,
+      update(ind, dt, t) {
+        ind.submerged = waterLevelAt(x, z) > y + 0.1;
+        const target = ind.submerged && ind.react <= 0 ? 1 : 0;
+        ind.o += (target - ind.o) * Math.min(1, dt * (target > ind.o ? 0.7 : 3));
+        poseAnemone(ind, ind.o, t);
+      },
+    });
+  });
+});
+// ナガウニ (short thick spines) and ガンガゼ (long thin black spines)
+[['nagauni', { body: '#4a3a24', spine: '#6f5a34', len: 0.15, r: 0.016 }, [[POOLS[0].x + 0.4, POOLS[0].z + 0.5], [-7.2, 4.6], [-2.6, 5.4]]],
+ ['gangaze', { body: '#1b1a1f', spine: '#141318', len: 0.5, r: 0.007, ring: '#e38a2e', dots: '#6fb8ff' }, [[-5.4, 6.2], [-8.0, 3.4]]]].forEach(([species, look, pts]) => {
+  pts.forEach(([x, z]) => {
+    const u = makeUrchin(look);
+    register(walker({
+      species, ...u, x, z, speed: 0.04, pauseMin: 4, pauseMax: 10, turnRate: 1, yOff: 0.07, pick: species === 'gangaze' ? 0.45 : 0.28, pickY: 0.05, focus: 2.4,
+      zone: () => ({ x, z, r: 0.6 }),
+      valid: (x2, z2) => inside(x2, z2) && depthAt(x2, z2) > 0.2,
+      anim(ind, dt, t) { const w = ind.react > 0 ? 0.2 : 0.03; ind.spines.rotation.set(Math.sin(t * 5) * w, t * 0.05, Math.cos(t * 4) * w); },
+    }));
+  });
+});
+// アオヒトデ (bright blue, slender arms) and マンジュウヒトデ (a puffed-up cushion)
+[['aohitode', { arm: 0.42, waist: 0.065, depth: 0.03, color: '#2f6fd8', spots: null }, [[-6.6, 4.2], [POOLS[1].x + 0.6, POOLS[1].z + 0.2]]],
+ ['manjuhitode', { arm: 0.27, waist: 0.23, depth: 0.1, color: '#a8662f', spots: '#6b3a1c' }, [[-3.4, 6.6], [-8.8, 1.2]]]].forEach(([species, look, pts]) => {
+  pts.forEach(([x, z]) => {
+    const s = makeStar(look);
+    register(walker({
+      species, ...s, x, z, speed: 0.05, pauseMin: 3, pauseMax: 9, turnRate: 0.8, pick: 0.38, pickY: 0.05, focus: 2.4,
+      zone: () => ({ x, z, r: 0.8 }),
+      valid: (x2, z2) => inside(x2, z2) && depthAt(x2, z2) > 0.15,
+      anim(ind, dt, t) { ind.mesh.rotation.x = ind.react > 0 ? Math.sin(t * 6) * 0.08 : 0; },
+    }));
+  });
+});
+// small reef fish in each pool: ルリスズメダイ and ミスジリュウキュウスズメダイ, circling as a school
+[['rurisuzume', { len: 0.18, w: 0.03, d: 0.06, body: '#2f6fe0', fin: '#4d8cf2', belly: '#6fa3f7', iris: '#e6eef8' }, POOLS[0], 7],
+ ['misuji', { len: 0.19, w: 0.035, d: 0.1, body: '#eeeeea', fin: '#2a2a2a', bands: '#1d1d1f', iris: '#e6e6e0' }, POOLS[1], 6]].forEach(([species, look, p, n]) => {
+  const grp = { a: sr(0, TAU) };
+  for (let k = 0; k < n; k++) {
+    const f = makeFish(look);
+    register({
+      species, ...f, fixed: true, pick: 0.2, pickY: 0, focus: 2.2, grp, lead: k === 0, ph: sr(0, TAU), x: p.x, z: p.z, y: 0,
+      off: new THREE.Vector3(sr(-0.35, 0.35), sr(-0.12, 0.12), sr(-0.35, 0.35)),
+      update(ind, dt, t) {
+        if (ind.lead) grp.a += dt * (ind.react > 0 ? 0.9 : 0.45);
+        // round the pool at low tide, wider over the drowned rocks at high tide
+        const wide = smooth(0.8, 1, tn), r = lerp(p.r * 0.35, p.r * 1.1, wide), a = grp.a + ind.ph * 0.05;
+        const tx = p.x + Math.cos(a) * r + ind.off.x, tz = p.z + Math.sin(a) * r * 0.8 + ind.off.z;
+        const nx = lerp(ind.x, tx, Math.min(1, dt * 1.6)), nz = lerp(ind.z, tz, Math.min(1, dt * 1.6));
+        if (Math.hypot(nx - ind.x, nz - ind.z) > 1e-4) ind.yaw = turnTo(ind.yaw, Math.atan2(nx - ind.x, nz - ind.z), dt * 5);
+        ind.x = nx; ind.z = nz;
+        const floor = heightAt(ind.x, ind.z), water = waterLevelAt(ind.x, ind.z);
+        ind.y = lerp(ind.y || floor, clamp((floor + water) / 2 + ind.off.y, floor + 0.08, water - 0.06), Math.min(1, dt * 2));
+        ind.group.position.set(ind.x, ind.y, ind.z);
+        ind.group.rotation.y = ind.yaw;
+        ind.tail.rotation.y = Math.sin(t * 14 + ind.ph) * 0.4;
+      },
+    });
+  }
+});
+Object.assign(SPECIES, {
+  wamondako: {
+    name: 'ワモンダコ', sci: 'Octopus cyanea', kind: '軟体動物・タコのなかま',
+    desc: '暖かい海のサンゴ礁や岩場にすむタコ。昼間もさかんに動き回り、茶色の体に輪のような模様を浮かべて、岩の穴をのぞいてエサを探します。',
+    size: '全長 約60〜80cm', habitat: 'サンゴ礁・岩礁',
+    status: (ind) => ind.react > 0 ? '体の色をさっと濃くして、身がまえました。' : tn < 0.75 ? '潮だまりの岩のかげで、じっと様子をうかがっています。' : '満ちた海で、岩の穴をひとつずつのぞいています。',
+  },
+  shimadako: {
+    name: 'シマダコ', sci: 'Callistoctopus ornatus', kind: '軟体動物・タコのなかま',
+    desc: '赤い体に白い点としまの模様があるタコ。夜になると岩場やサンゴ礁に出てきて、カニや貝を探します。',
+    size: '全長 約70cm', habitat: 'サンゴ礁・岩礁（夜に活動）',
+    status: (ind) => ind.react > 0 ? '白い模様がすっと消えて、体が白っぽくなりました。' : nightF > 0.5 ? '夜の海で、腕を長く伸ばしてカニを探しています。' : '昼間は岩のすき間で休んでいます。',
+  },
+  kumohaze: {
+    name: 'クモハゼ', sci: 'Bathygobius fuscus', kind: '魚類・ハゼのなかま',
+    desc: '潮だまりでよく見られるハゼ。黒っぽい体に白い点があり、胸びれの上のほうが糸のようにほどけているのが目印です。',
+    size: '全長 約8cm', habitat: '潮だまり・岩のすき間',
+    status: (ind) => ind.react > 0 ? 'さっと岩かげに逃げこみました。' : '潮だまりの底で、腹びれをつけてじっとしています。',
+  },
+  yodarekake: {
+    name: 'ヨダレカケ', sci: 'Andamia tetradactyla', kind: '魚類・イソギンポのなかま',
+    desc: '水の外で暮らすめずらしい魚。波しぶきのかかる岩の上をぴょんぴょん跳ねて移動し、岩についた藻を食べます。潮が満ちると、水ぎわに合わせて上へ引っこしていきます。',
+    size: '全長 約10cm', habitat: '波打ち際の岩の上',
+    status: (ind) => ind.react > 0 ? 'ぴょんと跳ねて、岩のすき間に入りました。' : ind.moving ? '岩の上を跳ねて、水ぎわを追いかけています。' : 'ぬれた岩にはりついて、藻を食べています。',
+  },
+  tsunomegani: {
+    name: 'ツノメガニ', sci: 'Ocypode ceratophthalma', kind: '甲殻類・スナガニのなかま',
+    desc: '砂浜にすむ、足のとても速いカニ。目の先に角のような突起があり、波が引くたびに波打ち際を走り回ります。',
+    size: '甲幅 約4cm', habitat: '砂浜',
+    status: (ind) => ind.react > 0 ? '目にもとまらない速さで走り去りました。' : ind.moving ? '寄せる波をよけて、砂浜を横走りしています。' : '砂浜で、長い目をきょろきょろさせています。',
+  },
+  shoujingani: {
+    name: 'ショウジンガニ', sci: 'Plagusia dentipes', kind: '甲殻類・イワガニのなかま',
+    desc: '岩場の波打ち際にすむ、赤茶色の平たいカニ。脚にかたい毛が生え、波にさらわれないよう岩にしっかりしがみつきます。',
+    size: '甲幅 約5cm', habitat: '岩礁の波打ち際',
+    status: (ind) => ind.react > 0 ? 'はさみを振り上げて、いかくしています。' : '岩にしがみついて、波をやり過ごしています。',
+  },
+  murasakiokayadokari: {
+    name: 'ムラサキオカヤドカリ', sci: 'Coenobita purpureus', kind: '甲殻類・ヤドカリのなかま',
+    desc: '陸で暮らすヤドカリ。紫がかった体で、夜になると海岸の林や砂浜を歩き回ります。オカヤドカリのなかまは国の天然記念物です。',
+    size: '体長 約5cm', habitat: '海岸の林・砂浜',
+    status: (ind) => ind.react > 0 ? '貝がらの中に引っこみました。' : nightF > 0.5 ? '夜の砂浜で、落ちた実を探しています。' : '木かげで、じっと暑さをしのいでいます。',
+  },
+  okayadokari: {
+    name: 'オカヤドカリ', sci: 'Coenobita cavipes', kind: '甲殻類・ヤドカリのなかま',
+    desc: '陸にすむ赤茶色のヤドカリ。大きな巻き貝を背負って、落ち葉や木の実を食べます。卵を産むときだけ海へ行きます。',
+    size: '体長 約5cm', habitat: '海岸の林・砂浜',
+    status: (ind) => ind.react > 0 ? '貝がらの中に引っこみました。' : ind.moving ? '大きな貝をかついで、ゆっくり歩いています。' : '落ち葉の上で休んでいます。',
+  },
+  yoroi: {
+    name: 'ヨロイイソギンチャク', sci: 'Anthopleura uchidai', kind: '刺胞動物・イソギンチャクのなかま',
+    desc: '体のまわりに小石や貝がらをくっつけて、よろいのように身を守るイソギンチャク。潮が引くと縮んで、小石のかたまりのように見えます。',
+    size: '直径 約3cm', habitat: '岩のすき間・潮だまり',
+    status: (ind) => ind.react > 0 ? 'きゅっと縮みました。' : ind.submerged ? '水の中で、触手を広げています。' : '縮んで、小石のかたまりのふりをしています。',
+  },
+  tamaitadaki: {
+    name: 'タマイタダキイソギンチャク', sci: 'Entacmaea quadricolor', kind: '刺胞動物・イソギンチャクのなかま',
+    desc: '触手の先が玉のようにふくらむイソギンチャク。クマノミのなかまがすみかにすることで知られます。',
+    size: '直径 約20cm', habitat: 'サンゴ礁・岩のくぼみ',
+    status: (ind) => ind.react > 0 ? '触手を引っこめました。' : ind.submerged ? '玉のような触手を、ゆらゆらさせています。' : '潮が引いて、触手をたたんでいます。',
+  },
+  nagauni: {
+    name: 'ナガウニ', sci: 'Echinometra sp.', kind: '棘皮動物・ウニのなかま',
+    desc: '岩に穴を掘ってすむウニ。太く短いとげで少しずつ岩をけずり、その穴の中で一生を過ごします。',
+    size: '殻の直径 約5cm', habitat: '岩礁の浅い所',
+    status: (ind) => ind.react > 0 ? 'とげを動かして、身がまえました。' : '岩の穴にすっぽりおさまっています。',
+  },
+  gangaze: {
+    name: 'ガンガゼ', sci: 'Diadema setosum', kind: '棘皮動物・ウニのなかま',
+    desc: '黒くて長い、細いとげを持つウニ。とげは折れやすく、刺さると痛むので近づくときは注意が必要です。体の上に青く光る点があります。',
+    size: 'とげを含めて 約30cm', habitat: '岩礁・サンゴ礁',
+    status: (ind) => ind.react > 0 ? '長いとげを、影のほうへ向けました。' : '長いとげをゆっくり動かしています。',
+  },
+  aohitode: {
+    name: 'アオヒトデ', sci: 'Linckia laevigata', kind: '棘皮動物・ヒトデのなかま',
+    desc: 'あざやかな青色のヒトデ。細長い5本の腕を持ち、サンゴ礁の浅い海でよく目立ちます。',
+    size: '直径 約30cm', habitat: 'サンゴ礁の浅い所',
+    status: () => '海の底で、ゆっくりと腕を動かしています。',
+  },
+  manjuhitode: {
+    name: 'マンジュウヒトデ', sci: 'Culcita novaeguineae', kind: '棘皮動物・ヒトデのなかま',
+    desc: 'まんじゅうのように丸くふくらんだヒトデ。腕がほとんどなく、五角形のクッションのような形をしています。',
+    size: '直径 約25cm', habitat: 'サンゴ礁・砂地',
+    status: () => '海の底に、ころんと座っています。',
+  },
+  rurisuzume: {
+    name: 'ルリスズメダイ', sci: 'Chrysiptera cyanea', kind: '魚類・スズメダイのなかま',
+    desc: '瑠璃色にかがやく小さな魚。サンゴ礁や潮だまりで、群れになって泳ぎます。',
+    size: '全長 約6cm', habitat: 'サンゴ礁・潮だまり',
+    status: (ind) => ind.react > 0 ? '群れがさっと散りました。' : '潮だまりの中を、群れでくるくる回っています。',
+  },
+  misuji: {
+    name: 'ミスジリュウキュウスズメダイ', sci: 'Dascyllus aruanus', kind: '魚類・スズメダイのなかま',
+    desc: '白い体に3本の黒い帯がある小さな魚。サンゴの枝のまわりに群れですみ、危ないとすぐ枝のすき間に隠れます。',
+    size: '全長 約8cm', habitat: 'サンゴ礁・潮だまり',
+    status: (ind) => ind.react > 0 ? 'みんなで岩かげに隠れました。' : '潮だまりの中を、群れで泳いでいます。',
+  },
+  ogomadara: {
+    name: 'オオゴマダラ', sci: 'Idea leuconoe', kind: '昆虫・チョウのなかま',
+    desc: '白い羽に黒い点がちらばる大きなチョウ。ふわふわとゆっくり飛び、「南の島の貴婦人」とも呼ばれます。さなぎは金色です。',
+    size: '羽を広げて 約13cm', habitat: '南の島の海岸林',
+    status: () => '大きな羽で、ふわりふわりと風にのっています。',
+  },
+  asagimadara: {
+    name: 'アサギマダラ', sci: 'Parantica sita', kind: '昆虫・チョウのなかま',
+    desc: '浅葱色（うすい青緑）の羽を持つチョウ。秋に南へ、春に北へ、海をこえて1000km以上も旅をします。',
+    size: '羽を広げて 約10cm', habitat: '花のある林や草地（秋〜春に南の島へ）',
+    status: () => '長い旅のとちゅうで、花のみつを吸いに立ち寄っています。',
+  },
+});
+
 /* ------------------------------------------------------------------ the other side: drift-ice sea */
 // Local frame of iceSide: same slab outline and tide as the shore, but a snowy
 // coast at the back and deep, cold water with drifting floes in front.
@@ -1579,6 +1912,7 @@ function recolorIce(col = iceColorData.col) {
 
 
 // conifers with snow, and a bare snag for the eagle
+const conifers = [];
 {
   const needle = M('#2e5a49', { roughness: 0.85, flatShading: true }), snowTop = M('#f3f7f9', { roughness: 0.8, flatShading: true });
   const trunk = M('#6b5a4c', { roughness: 0.9 });
@@ -1596,6 +1930,7 @@ function recolorIce(col = iceColorData.col) {
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     g.position.set(x, iceHeight(x, z) - 0.05, z); g.scale.setScalar(s); g.rotation.y = sr(0, TAU);
     iceSide.add(g);
+    conifers.push({ x, z, s });
     n++;
   }
   const mounds = [];
@@ -2312,6 +2647,469 @@ Object.assign(SPECIES, {
   },
 });
 ORDER_ICE.push('higuma', 'usagi', 'shimarisu');
+/* ------------------------------------------------------------------ relatives on the Okhotsk side */
+const SEAL_BASE = ['#b8b6ae', '#d6d3c9', '#56585b'];
+const sealLook = (cols) => Object.fromEntries(SEAL_BASE.map((c, i) => [c, cols[i]]));
+const sealIdle = (ind, dt, t) => {
+  const up = ind.react > 0 ? -0.55 : -0.12 + Math.max(0, Math.sin(t * 0.35 + ind.ph)) * -0.35;
+  ind.head.rotation.x = lerp(ind.head.rotation.x, up, Math.min(1, dt * 3));
+  ind.head.rotation.y = Math.sin(t * 0.25 + ind.ph) * 0.4;
+  ind.tail.rotation.x = Math.sin(t * 1.3 + ind.ph) * 0.2 - 0.15;
+  ind.body.scale.y = 1 + Math.sin(t * 1.1 + ind.ph) * 0.015;
+};
+// クラカケアザラシ: black with white ribbons, out on the drift ice in winter
+{
+  const f = floes[3] || floes[0];
+  const s = makeSeal();
+  recolor(s.group, sealLook(['#2f2c2b', '#3d3835', '#2a2726']));
+  const white = M('#efece6', { roughness: 0.6 });
+  blob(s.body, white, 0, 0.19, 0.3, 0.232, 0.182, 0.07);
+  blob(s.body, white, 0, 0.19, -0.28, 0.238, 0.186, 0.07);
+  s.group.position.set(rr(-0.3, 0.3) * f.r, 0.18, rr(-0.3, 0.3) * f.r);
+  s.group.rotation.y = rr(0, TAU);
+  register({
+    species: 'kurakake', sideName: 'ice', ...s, parent: f.mesh, floe: f, fixed: true, activeFn: () => SEASON.ice > 0.3, pick: 0.55, pickY: 0.28, focus: 3.4, ph: rr(0, TAU),
+    ringY: () => f.y + 0.2, update: sealIdle,
+  });
+}
+// ゼニガタアザラシ: dark with pale rings, hauled out on the islet's rocks all year
+// (the islet floods at high tide: then they float with their heads up)
+spotsIn(2, ISLET.x, ISLET.z, 2.4, (x, z) => iceHeight(x, z) > 0.7 && iceHeight(x, z) < 1.6).forEach(([x, z]) => {
+  const s = makeSeal();
+  recolor(s.group, sealLook(['#5c5852', '#8f897e', '#d2cbbb']));
+  const rock = iceHeight(x, z);
+  register({
+    species: 'zenigata', sideName: 'ice', ...s, x, z, fixed: true, pick: 0.55, pickY: 0.28, focus: 3.4, ph: sr(0, TAU), yaw: Math.atan2(ISLET.x - x, ISLET.z - z) + Math.PI,
+    ringY: () => Math.max(rock, tideY) + 0.03,
+    update(ind, dt, t) {
+      ind.afloat = tideY > rock + 0.12;
+      ind.group.position.set(x, ind.afloat ? tideY - 0.2 + Math.sin(t * 1.2 + ind.ph) * 0.03 : rock - 0.04, z);
+      ind.group.rotation.set(ind.afloat ? -0.5 : 0, ind.yaw + (ind.afloat ? Math.sin(t * 0.2 + ind.ph) * 0.6 : 0), 0);
+      sealIdle(ind, dt, t);
+    },
+  });
+});
+// drifters under the ice: the sea butterfly (the clione's food) and, in summer, moon jellies
+function makeSeaButterfly() {
+  const g = new THREE.Group();
+  const shell = M('#4b2f3a', { roughness: 0.4, flatShading: true });
+  for (let k = 0; k < 3; k++) { const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), shell); const r = 0.05 * Math.pow(0.7, k); m.scale.setScalar(r); m.position.set(Math.cos(k * 2) * r * 0.4, -k * r * 0.9, Math.sin(k * 2) * r * 0.4); g.add(m); }
+  const skin = new THREE.MeshStandardMaterial({ color: '#dfeaf2', roughness: 0.2, transparent: true, opacity: 0.55, depthWrite: false });
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(s * 0.03, 0.04, 0); g.add(w);
+    const m = blob(w, skin, s * 0.06, 0, 0, 0.065, 0.01, 0.04); m.rotation.z = s * 0.2;
+    wings.push(w);
+  }
+  return { group: g, wings };
+}
+function makeJelly() {
+  const g = new THREE.Group(), bell = new THREE.Group(); g.add(bell);
+  const glass = new THREE.MeshStandardMaterial({ color: '#dceef6', roughness: 0.15, transparent: true, opacity: 0.4, depthWrite: false, side: THREE.DoubleSide, emissive: '#bfe4f5', emissiveIntensity: 0.15 });
+  bell.add(new THREE.Mesh(new THREE.SphereGeometry(0.22, 20, 10, 0, TAU, 0, Math.PI / 2), glass));
+  bell.scale.y = 0.55;
+  const pink = M('#e9a7c2', { roughness: 0.4, transparent: true, opacity: 0.85 });
+  for (let i = 0; i < 4; i++) { const a = i / 4 * TAU; const r = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.009, 5, 14), pink); r.rotation.x = Math.PI / 2; r.position.set(Math.cos(a) * 0.06, 0.12, Math.sin(a) * 0.06); bell.add(r); }
+  const fr = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.06, 20, 1, true), glass); fr.position.y = -0.02; g.add(fr);
+  return { group: g, bell };
+}
+function driftSwim(ind, dt, t) {
+  ind.pause -= dt;
+  if (ind.pause <= 0) {
+    for (let i = 0; i < 12; i++) {
+      const x = ind.x + rr(-1.5, 1.5), z = ind.z + rr(-1.5, 1.5);
+      if (seF(x, z) < 0.7 && iceHeight(x, z) < tideY - 1.0) { ind.tx = x; ind.tz = z; break; }
+    }
+    ind.pause = rr(4, 9);
+  }
+  const floor = iceHeight(ind.x, ind.z);
+  ind.ty = clamp(lerp(floor, tideY, ind.depth ?? 0.55) + Math.sin(t * 0.4 + ind.ph) * 0.3, floor + 0.4, tideY - 0.3);
+  const k2 = Math.min(1, dt * 0.2);
+  ind.x += (ind.tx - ind.x) * k2; ind.z += (ind.tz - ind.z) * k2; ind.y += (ind.ty - ind.y) * Math.min(1, dt * 0.8);
+  ind.group.position.set(ind.x, ind.y + Math.sin(t * 2 + ind.ph) * 0.03, ind.z);
+}
+for (let k = 0; k < 6; k++) {
+  const c = makeSeaButterfly();
+  register({
+    species: 'mijinuki', sideName: 'ice', ...c, fixed: true, pick: 0.2, pickY: 0.02, focus: 1.6, ph: rr(0, TAU),
+    x: rr(-6, 2), z: rr(1, 6), tx: 0, tz: 0, y: -1.2, ty: -1.2, pause: 0, ringY: (p) => p.y - 0.2,
+    update(ind, dt, t) {
+      driftSwim(ind, dt, t);
+      ind.group.rotation.y = t * 0.3 + ind.ph;
+      const flap = Math.sin(t * (ind.react > 0 ? 18 : 9) + ind.ph) * 0.8;
+      ind.wings[0].rotation.z = flap; ind.wings[1].rotation.z = -flap;
+    },
+  });
+}
+for (let k = 0; k < 5; k++) {
+  const j = makeJelly();
+  register({
+    species: 'mizukurage', sideName: 'ice', ...j, fixed: true, pick: 0.3, pickY: 0.05, focus: 2, ph: rr(0, TAU), depth: 0.8,
+    x: rr(-6, 3), z: rr(0.5, 6.5), tx: 0, tz: 0, y: -0.8, ty: -0.8, pause: 0, ringY: (p) => p.y - 0.2,
+    update(ind, dt, t) {
+      driftSwim(ind, dt, t);
+      // a slow pulse: the bell squeezes and relaxes
+      const beat = Math.pow(Math.max(0, Math.sin(t * (ind.react > 0 ? 3 : 1.4) + ind.ph)), 3);
+      ind.bell.scale.set(1 - beat * 0.14, 0.55 + beat * 0.12, 1 - beat * 0.14);
+    },
+  });
+}
+// soaring birds of prey: オジロワシ (white tail, all year) and トビ (the black kite)
+function soarer(species, cols, n, alt, active) {
+  const [body, wing, tip, tail, beak] = cols;
+  for (let k = 0; k < n; k++) {
+    // a broad-winged gliding shape: the gull's body, bigger, with long fingered wings
+    const e = makeGull();
+    recolor(e.group, { '#f7f7f4': body, '#5f6770': wing, '#16181a': tip, '#f0c83c': beak });
+    e.wings.forEach((w, i) => { w.scale.set(1.25, 1, 1.35); blob(w, M(tip), (i ? 1 : -1) * 0.62, 0, -0.01, 0.1, 0.012, 0.09); });
+    blob(e.group, M(tail), 0, 0.012, -0.31, 0.075, 0.02, species === 'tobi' ? 0.13 : 0.1);
+    if (species === 'tobi') for (const sd of [-1, 1]) blob(e.group, M(tail), sd * 0.05, 0.012, -0.42, 0.03, 0.015, 0.05);
+    e.group.scale.setScalar(1.5);
+    register({
+      species, sideName: 'ice', ...e, fixed: true, pick: 0.7, pickY: 0, focus: 3.4, a: rr(0, TAU), r: rr(3.5, 5.5), cx: rr(-3, 3), cz: rr(-3, 2), ph: rr(0, TAU),
+      activeFn: active, ringY: (p) => p.y - 0.6,
+      update(ind, dt, t) {
+        ind.a += dt * (0.55 / ind.r);
+        const x = ind.cx + Math.cos(ind.a) * ind.r, z = ind.cz + Math.sin(ind.a) * ind.r * 0.8;
+        ind.group.position.set(x, tideY + alt + Math.sin(t * 0.3 + ind.ph) * 0.3, z);
+        ind.group.rotation.set(0, Math.atan2(-Math.sin(ind.a) * ind.r, Math.cos(ind.a) * ind.r * 0.8), -0.3);
+        // soaring: wings held up in a shallow V, a few beats only when startled
+        const flap = ind.react > 0 ? Math.sin(t * 9) * 0.5 : -0.12 + Math.sin(t * 0.7 + ind.ph) * 0.04;
+        ind.wings[0].rotation.z = flap; ind.wings[1].rotation.z = -flap;
+      },
+    });
+  }
+}
+soarer('ojirowashi', ['#6a5038', '#5a4431', '#2e241c', '#f3efe6', '#e8c84a'], 1, 3.9, () => true);
+soarer('tobi', ['#6b5240', '#5c4637', '#2a211b', '#6b5240', '#3d3834'], 2, 3.4, () => SEASON.m >= 2.5 && SEASON.m < 11);
+// the fox's neighbours: エゾタヌキ (stocky, masked) and エゾクロテン (a slim marten)
+const FOX_BASE = ['#c9763c', '#f2ede4', '#2a2522'];
+const foxLook = (cols) => Object.fromEntries(FOX_BASE.map((c, i) => [c, cols[i]]));
+[['tanuki', ['#9a8466', '#e0d6c2', '#2a2522'], [1.15, 0.95, 0.85], 0.62, 1, 0.45],
+ ['kuroten', ['#b58a4e', '#ecdcaa', '#4a3322'], [0.72, 0.8, 1.2], 0.7, 0.85, 0.8]].forEach(([species, cols, shape, legK, sc, speed], k) => {
+  for (let n = 0; n < 2; n++) {
+    const f = makeFox();
+    recolor(f.group, foxLook(cols));
+    if (species === 'tanuki') for (const sd of [-1, 1]) blob(f.head, M('#2a2522'), sd * 0.05, 0.01, 0.07, 0.034, 0.028, 0.03);
+    f.body.scale.set(...shape);
+    f.legs.forEach(l => { l.scale.y = legK; });
+    f.body.position.y = -0.24 * (1 - legK) * shape[1];
+    f.tail.scale.setScalar(species === 'tanuki' ? 0.75 : 1.1);
+    f.group.scale.setScalar(sc);
+    register(walker({
+      species, land: true, sideName: 'ice', ...f, fixed: true, x: -3 + k * 4 + n, z: -6.5, speed, pauseMin: 1.5, pauseMax: 5, turnRate: 3, pick: 0.4, pickY: 0.25, focus: 2.8, freeze: true,
+      zone: () => ({ x: -1 + k * 2, z: -6, r: 5.5 }),
+      valid: (x, z) => seF(x, z) < 0.82 && iceHeight(x, z) > DRY,
+      update(ind, dt, t) {
+        stepWalker(ind, dt);
+        ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02, ind.z);
+        ind.group.rotation.y = ind.yaw;
+        const mv = ind.moving ? 1 : 0;
+        ind.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 11 + (i % 2 ? Math.PI : 0) + (i > 1 ? Math.PI / 2 : 0)) * 0.5 * mv; });
+        ind.tail.rotation.y = Math.sin(t * 2) * 0.2;
+        ind.head.rotation.x = ind.react > 0 ? -0.3 : mv ? 0 : 0.35 + Math.sin(t * 0.8) * 0.1;
+      },
+    }));
+  }
+});
+// gulls: オオセグロカモメ (dark back, all year) and ユリカモメ (red bill, a winter visitor)
+[['oosegurokamome', { '#5f6770': '#3e444b' }, 1.15, 2, () => true],
+ ['yurikamome', { '#5f6770': '#c5ccd3', '#f0c83c': '#c83a3a' }, 0.85, 3, () => SEASON.m >= 9.5 || SEASON.m < 4]].forEach(([species, map, sc, n, active]) => {
+  for (let k = 0; k < n; k++) {
+    const gl = makeGull();
+    recolor(gl.group, map);
+    if (species === 'yurikamome') for (const sd of [-1, 1]) blob(gl.group, M('#26282b'), sd * 0.055, 0.07, 0.24, 0.018);
+    gl.group.scale.setScalar(sc);
+    register({
+      species, sideName: 'ice', ...gl, fixed: true, pick: 0.45, pickY: 0, focus: 3.6, a: rr(0, TAU), r: rr(2.5, 6), cx: rr(-4, 3), cz: rr(1, 5.5), ph: rr(0, TAU), activeFn: active,
+      ringY: (p) => p.y - 0.5,
+      update(ind, dt, t) {
+        ind.a += dt * (0.9 / ind.r);
+        const x = ind.cx + Math.cos(ind.a) * ind.r, z = ind.cz + Math.sin(ind.a) * ind.r * 0.7;
+        ind.group.position.set(x, tideY + 2.2 + Math.sin(t * 0.7 + ind.ph) * 0.4, z);
+        ind.group.rotation.set(0, Math.atan2(-Math.sin(ind.a) * ind.r, Math.cos(ind.a) * ind.r * 0.7), -0.25);
+        const flap = Math.sin(t * (ind.react > 0 ? 12 : 5.5) + ind.ph) * 0.45;
+        ind.wings[0].rotation.z = flap; ind.wings[1].rotation.z = -flap;
+      },
+    });
+  }
+});
+// salmon: カラフトマス (humped males, late summer) and サクラマス (pinkish, spring to autumn)
+[['karafutomasu', { ...SALMON, len: 0.6, body: '#8a979b', spots: '#2c2e30', hump: true }, () => SEASON.m >= 6.8 && SEASON.m < 9.3, 0.2],
+ ['sakuramasu', { ...SALMON, body: '#b89c95', belly: '#eadfd6', spots: '#5e3f47', bands: '#8a5a60' }, () => SEASON.m >= 4 && SEASON.m < 9.5, 0.55]].forEach(([species, look, active, start]) => {
+  for (let k = 0; k < 4; k++) {
+    const f = makeFish(look);
+    register({
+      species, sideName: 'ice', ...f, fixed: true, pick: 0.35, pickY: 0, focus: 3, a: start + k * 0.3, ph: rr(0, TAU), off: rr(-0.6, 0.6), activeFn: active,
+      ringY: (p) => p.y - 0.3,
+      update(ind, dt, t) {
+        ind.a += dt * 0.045;
+        const u = ind.a * TAU, x = -0.5 + Math.cos(u) * 5, z = 1.2 + Math.sin(u) * 1.4 + ind.off;
+        const floor = iceHeight(x, z), y = clamp(tideY - 0.7, floor + 0.3, tideY - 0.3);
+        ind.group.position.set(x, y, z);
+        ind.group.rotation.y = Math.atan2(-Math.sin(u) * 5, Math.cos(u) * 1.4);
+        ind.tail.rotation.y = Math.sin(t * 7 + ind.ph) * 0.35;
+      },
+    });
+  }
+});
+// エゾシカ: a stag and two hinds; red-brown in summer, grey-brown in winter; antlers grow each summer
+function makeDeer(stag) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const fur = new THREE.MeshStandardMaterial({ color: '#95643f', roughness: 0.85 });
+  const pale = M('#efe7da', { roughness: 0.8 }), dark = M('#2a211b'), antM = M('#d9ccb0', { roughness: 0.7 });
+  blob(body, fur, 0, 0.62, 0, 0.15, 0.16, 0.33);
+  blob(body, pale, 0, 0.6, -0.31, 0.1, 0.1, 0.05);
+  const neck = blob(body, fur, 0, 0.8, 0.27, 0.065, 0.17, 0.075); neck.rotation.x = 0.55;
+  const head = new THREE.Group(); head.position.set(0, 0.96, 0.38); body.add(head);
+  const hd = blob(head, fur, 0, 0, 0.04, 0.06, 0.065, 0.12); hd.rotation.x = 0.35;
+  blob(head, dark, 0, -0.045, 0.15, 0.022);
+  for (const s of [-1, 1]) {
+    const ear = blob(head, fur, s * 0.06, 0.06, -0.03, 0.028, 0.05, 0.012); ear.rotation.z = s * -0.7;
+    blob(head, dark, s * 0.045, 0.02, 0.07, 0.012);
+  }
+  const antlers = new THREE.Group(); antlers.position.set(0, 0.06, -0.02); head.add(antlers);
+  if (stag) for (const s of [-1, 1]) {
+    const beam = new THREE.Group(); beam.rotation.set(-0.5, 0, s * -0.45); antlers.add(beam);
+    const cyl = (h, r) => new THREE.CylinderGeometry(r * 0.6, r, h, 5).translate(0, h / 2, 0);
+    beam.add(new THREE.Mesh(cyl(0.34, 0.014), antM));
+    for (const [y, a] of [[0.1, 1.0], [0.2, 0.8], [0.3, 0.5]]) { const t = new THREE.Mesh(cyl(0.11, 0.009), antM); t.position.y = y; t.rotation.x = a; beam.add(t); }
+  }
+  const legs = [];
+  for (const [x, z] of [[-0.07, 0.2], [0.07, 0.2], [-0.07, -0.22], [0.07, -0.22]]) {
+    const l = new THREE.Group(); l.position.set(x, 0.55, z); body.add(l);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.016, 0.55, 5), fur); m.position.y = -0.275; l.add(m);
+    blob(l, dark, 0, -0.55, 0.005, 0.02, 0.018, 0.024);
+    legs.push(l);
+  }
+  const tail = blob(body, pale, 0, 0.68, -0.34, 0.03, 0.05, 0.02);
+  return { group: g, body, head, legs, antlers, fur, tail };
+}
+{
+  const summer = new THREE.Color('#95643f'), winter = new THREE.Color('#6d6259');
+  [true, false, false].forEach((stag, k) => {
+    const d = makeDeer(stag);
+    d.group.scale.setScalar(stag ? 1.15 : 0.95);
+    register(walker({
+      species: 'ezoshika', land: true, sideName: 'ice', ...d, fixed: true, stag, x: 1 + k * 1.2, z: -6.6, speed: 0.4, pauseMin: 2, pauseMax: 6, turnRate: 2, pick: 0.6, pickY: 0.6, focus: 3.6, freeze: true,
+      zone: () => ({ x: 1, z: -6.3, r: 4.8 }),
+      valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > DRY,
+      update(ind, dt, t) {
+        stepWalker(ind, dt);
+        ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02, ind.z);
+        ind.group.rotation.y = ind.yaw;
+        const mv = ind.moving ? 1 : 0;
+        ind.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 6 + (i % 2 ? Math.PI : 0) + (i > 1 ? Math.PI / 2 : 0)) * 0.4 * mv; });
+        // grazing between walks, head up when startled
+        ind.head.rotation.x = ind.react > 0 ? -0.4 : mv ? 0 : 0.9 + Math.sin(t * 0.6 + ind.x) * 0.15;
+        ind.fur.color.copy(summer).lerp(winter, smooth(0.2, 0.8, Math.max(SEASON.snow, SEASON.m >= 10 || SEASON.m < 4 ? 1 : 0)));
+        // antlers drop in spring and grow back over the summer
+        const m = SEASON.m, grow = m >= 3.5 && m < 5 ? 0 : m >= 5 && m < 8 ? (m - 5) / 3 : 1;
+        ind.antlers.scale.setScalar(Math.max(0.001, grow));
+      },
+    }));
+  });
+}
+// エゾナキウサギ: a small round pika of the rock piles, calling "pichit"
+function makePika() {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const fur = M('#7d6c5a', { roughness: 0.85 }), dark = M('#1b1614');
+  blob(body, fur, 0, 0.07, 0, 0.075, 0.065, 0.085);
+  const head = new THREE.Group(); head.position.set(0, 0.1, 0.07); body.add(head);
+  blob(head, fur, 0, 0, 0, 0.052, 0.048, 0.05);
+  for (const s of [-1, 1]) { blob(head, fur, s * 0.035, 0.045, -0.01, 0.02, 0.022, 0.008); blob(head, dark, s * 0.032, 0.01, 0.038, 0.009); }
+  return { group: g, body, head };
+}
+for (let k = 0; k < 3; k++) {
+  const p = makePika();
+  p.group.scale.setScalar(1.5);
+  register(walker({
+    species: 'nakiusagi', land: true, sideName: 'ice', ...p, fixed: true, x: 4 + k * 0.6, z: -6.8, speed: 1.2, pauseMin: 1.5, pauseMax: 5, turnRate: 6, pick: 0.22, pickY: 0.1, focus: 1.8, freeze: true, ph: rr(0, TAU),
+    zone: () => ({ x: 4.2, z: -6.6, r: 2.6 }),
+    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > DRY,
+    update(ind, dt, t) {
+      stepWalker(ind, dt);
+      ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.01, ind.z);
+      ind.group.rotation.y = ind.yaw;
+      ind.head.rotation.x = ind.react > 0 ? -0.5 : Math.sin(t * 0.9 + ind.ph) > 0.7 ? -0.25 : 0;
+    },
+  }));
+}
+// squirrels: エゾリス (bushy tail and ear tufts, awake all winter) and エゾモモンガ (glides between trees at night)
+for (let k = 0; k < 2; k++) {
+  const c = makeChipmunk();
+  recolor(c.group, { '#c98b4f': '#8c5a3a', '#3b2a1e': '#8c5a3a', '#f1e2c4': '#8c5a3a' });
+  c.tail.scale.set(1.8, 2.4, 1.6);
+  for (const sd of [-1, 1]) blob(c.head, M('#3b2a1e'), sd * 0.022, 0.058, -0.008, 0.006, 0.016, 0.004);
+  blob(c.body, M('#efe5d3'), 0, 0.05, 0.05, 0.035, 0.035, 0.05);
+  c.group.scale.setScalar(1.8);
+  register(walker({
+    species: 'ezorisu', land: true, sideName: 'ice', ...c, fixed: true, x: -4 + k * 5, z: -7, speed: 1.1, pauseMin: 0.8, pauseMax: 3.5, turnRate: 6, pick: 0.3, pickY: 0.15, focus: 2, freeze: true, ph: rr(0, TAU),
+    zone: () => ({ x: -1, z: -7, r: 4.5 }),
+    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > DRY,
+    update(ind, dt, t) {
+      stepWalker(ind, dt);
+      ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.01, ind.z);
+      ind.group.rotation.y = ind.yaw;
+      const up = !ind.moving && Math.sin(t * 0.7 + ind.ph) > 0.3 ? -0.9 : 0;
+      ind.body.rotation.x = lerp(ind.body.rotation.x, up, Math.min(1, dt * 6));
+      ind.tail.rotation.x = 0.9 + Math.sin(t * 5 + ind.ph) * 0.2;
+    },
+  }));
+}
+function makeMomonga() {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const fur = M('#c9c4ba', { roughness: 0.85 }), belly = M('#f4f1ea', { roughness: 0.85 }), dark = M('#141110');
+  blob(body, fur, 0, 0.05, 0, 0.05, 0.035, 0.075);
+  const skin = blob(body, fur, 0, 0.045, 0, 0.11, 0.008, 0.07);   // the gliding membrane
+  blob(body, belly, 0, 0.03, 0.01, 0.04, 0.02, 0.06);
+  const head = new THREE.Group(); head.position.set(0, 0.07, 0.07); body.add(head);
+  blob(head, fur, 0, 0, 0, 0.038, 0.034, 0.036);
+  for (const s of [-1, 1]) { blob(head, dark, s * 0.022, 0.008, 0.025, 0.013); blob(head, fur, s * 0.022, 0.035, -0.01, 0.01, 0.012, 0.005); }
+  const tail = blob(body, fur, 0, 0.045, -0.12, 0.03, 0.008, 0.06);
+  return { group: g, body, head, skin, tail };
+}
+{
+  const trees = conifers.length > 2 ? conifers : [{ x: -3, z: -7, s: 1 }, { x: 0, z: -7.5, s: 1 }, { x: 3, z: -7, s: 1 }];
+  for (let k = 0; k < 2; k++) {
+    const mo = makeMomonga();
+    mo.group.scale.setScalar(1.8);
+    const t0 = trees[(k * 3) % trees.length];
+    register({
+      species: 'momonga', sideName: 'ice', ...mo, fixed: true, pick: 0.28, pickY: 0.05, focus: 2.2, ph: rr(0, TAU),
+      from: t0, to: t0, u: 1, rest: rr(1, 4), y0: 1.6,
+      activeFn: () => nightF > 0.5,
+      ringY: (p) => iceHeight(p.x, p.z) + 0.03,
+      update(ind, dt, t) {
+        if (nightF <= 0.5) return;
+        // rest on a trunk, then glide down to another tree and climb it
+        if (ind.u >= 1) {
+          ind.rest -= dt;
+          if (ind.rest <= 0) { ind.from = ind.to; ind.to = trees[Math.floor(Math.random() * trees.length)]; if (ind.to === ind.from) ind.to = trees[(trees.indexOf(ind.from) + 1) % trees.length]; ind.u = 0; ind.rest = rr(3, 8); }
+        }
+        const a = ind.from, b = ind.to;
+        let x = b.x, z = b.z, y, glide = 0;
+        if (ind.u < 1) {
+          ind.u = Math.min(1, ind.u + dt / (Math.hypot(b.x - a.x, b.z - a.z) / 1.6 + 1.5));
+          const g = smooth(0, 0.75, ind.u), climb = smooth(0.75, 1, ind.u);
+          x = lerp(a.x, b.x, g); z = lerp(a.z, b.z, g);
+          y = iceHeight(x, z) + lerp(lerp(a.s * 1.6, 0.35, g), b.s * 1.6, climb);
+          glide = ind.u < 0.75 ? 1 : 0;
+          if (glide) ind.group.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+        } else y = iceHeight(x, z) + b.s * 1.6 + Math.sin(t * 0.5 + ind.ph) * 0.02;
+        ind.group.position.set(x + (glide ? 0 : 0.14 * b.s), y, z);
+        ind.skin.scale.x = lerp(ind.skin.scale.x, glide ? 0.11 : 0.05, Math.min(1, dt * 6));
+        ind.body.rotation.x = glide ? 0 : -1.3;
+      },
+    });
+  }
+}
+Object.assign(SPECIES, {
+  kurakake: {
+    name: 'クラカケアザラシ', sci: 'Histriophoca fasciata', kind: '哺乳類・アザラシのなかま', side: 'ice', active: () => SEASON.ice > 0.3,
+    desc: '黒っぽい体に、白いリボンを巻いたような帯の模様があるアザラシ。「鞍掛け」の名前もこの模様から。冬から春に流氷の上で過ごします。',
+    size: '全長 約1.6m', habitat: '流氷の上・オホーツク海の沖',
+    status: (ind) => ind.react > 0 ? '顔を上げて、こちらを見ました。' : '流氷の上で、のんびり寝そべっています。',
+  },
+  zenigata: {
+    name: 'ゼニガタアザラシ', sci: 'Phoca vitulina stejnegeri', kind: '哺乳類・アザラシのなかま', side: 'ice',
+    desc: '黒っぽい体に、古いお金（銭）のような白い輪の模様があるアザラシ。北海道の岩場に一年中すみ、潮が引くと岩の上で休みます。',
+    size: '全長 約1.6m', habitat: '北海道の岩礁（一年中）',
+    status: (ind) => ind.react > 0 ? '首を持ち上げて、まわりを確かめています。' : ind.afloat ? '潮が満ちて岩がしずみ、頭だけ出して浮かんでいます。' : '潮が引いた岩の上で、体をかわかしながら休んでいます。',
+  },
+  mijinuki: {
+    name: 'ミジンウキマイマイ', sci: 'Limacina helicina', kind: '軟体動物・巻き貝のなかま', side: 'ice', active: () => SEASON.m < 6 || SEASON.m >= 11,
+    desc: '小さな殻を持ったまま、翼のような足ではばたいて泳ぐ巻き貝。「海の天使」クリオネが食べるのはこの貝だけです。',
+    size: '殻の直径 約5mm', habitat: '冷たい海',
+    status: () => '小さな翼足をぱたぱたさせて、ただよっています。',
+  },
+  mizukurage: {
+    name: 'ミズクラゲ', sci: 'Aurelia coerulea', kind: '刺胞動物・クラゲのなかま', side: 'ice', active: () => SEASON.m >= 5 && SEASON.m < 10.5,
+    desc: '透きとおったかさに、4つの輪の模様が見えるクラゲ。かさをふくらませたり縮めたりして、ゆっくり泳ぎます。',
+    size: 'かさの直径 約15cm', habitat: '夏の沿岸の海',
+    status: (ind) => ind.react > 0 ? 'かさを大きく動かして、急いで泳いでいます。' : 'かさをふわり、ふわりと動かしてただよっています。',
+  },
+  ojirowashi: {
+    name: 'オジロワシ', sci: 'Haliaeetus albicilla', kind: '鳥類・タカのなかま', side: 'ice',
+    desc: '白い尾が目印の大きなワシ。冬に大陸から渡ってくるものに加え、北海道で一年中暮らして子育てするものもいます。',
+    size: '全長 約85cm・翼を広げると約2.2m', habitat: '海岸・湖・川の近くの林',
+    status: (ind) => ind.react > 0 ? '大きく羽ばたいて、高度を上げました。' : '翼を広げたまま、上昇気流にのって輪をえがいています。',
+  },
+  tobi: {
+    name: 'トビ', sci: 'Milvus migrans', kind: '鳥類・タカのなかま', side: 'ice', active: () => SEASON.m >= 2.5 && SEASON.m < 11,
+    desc: '「ピーヒョロロ」と鳴きながら空に輪をえがくタカ。尾の先が三味線のばちのような形をしています。海辺や漁港でよく見られます。',
+    size: '全長 約60cm', habitat: '海岸・漁港・川',
+    status: (ind) => ind.react > 0 ? '「ピーヒョロロ」と鳴きました。' : 'ほとんど羽ばたかずに、ゆったり輪をえがいています。',
+  },
+  tanuki: {
+    name: 'エゾタヌキ', sci: 'Nyctereutes procyonoides albus', kind: '哺乳類・イヌのなかま', side: 'ice',
+    desc: '北海道にすむタヌキ。目のまわりが黒く、ずんぐりした体つき。冬は毛がふかふかになり、雪の多い日は巣穴でじっと過ごします。',
+    size: '体長 約55cm', habitat: '北海道の森・海岸の林',
+    status: (ind) => ind.react > 0 ? 'びっくりして、動かなくなりました。' : nightF > 0.5 ? '夜の林で、においをかぎながらエサを探しています。' : 'のそのそと、林のまわりを歩いています。',
+  },
+  kuroten: {
+    name: 'エゾクロテン', sci: 'Martes zibellina brachyura', kind: '哺乳類・イタチのなかま', side: 'ice',
+    desc: '細長い体のイタチのなかま。冬の毛は明るい黄色がかった茶色になり、とてもやわらかいことで知られます。木登りも上手です。',
+    size: '体長 約45cm', habitat: '北海道の森',
+    status: (ind) => ind.react > 0 ? 'ぴたりと止まって、こちらを見ています。' : ind.moving ? 'すばやく、森のなかを走っています。' : '立ち止まって、耳をすませています。',
+  },
+  oosegurokamome: {
+    name: 'オオセグロカモメ', sci: 'Larus schistisagus', kind: '鳥類・カモメのなかま', side: 'ice',
+    desc: '背中と翼が黒っぽい灰色の、大きなカモメ。北海道の海岸で一年中見られ、崖や屋根の上で子育てをします。',
+    size: '全長 約61cm', habitat: '海岸・漁港（一年中）',
+    status: () => '海の上を、ゆったりと回っています。',
+  },
+  yurikamome: {
+    name: 'ユリカモメ', sci: 'Chroicocephalus ridibundus', kind: '鳥類・カモメのなかま', side: 'ice', active: () => SEASON.m >= 9.5 || SEASON.m < 4,
+    desc: '赤いくちばしと足の小さなカモメ。冬に北の国から渡ってきます。冬は頭が白く、耳のあたりに黒い点があります。',
+    size: '全長 約40cm', habitat: '冬の海岸・河口',
+    status: () => '軽やかに、海の上を飛び回っています。',
+  },
+  karafutomasu: {
+    name: 'カラフトマス', sci: 'Oncorhynchus gorbuscha', kind: '魚類・サケのなかま', side: 'ice', active: () => SEASON.m >= 6.8 && SEASON.m < 9.3,
+    desc: '夏の終わりに、北海道のオホーツク側の川へのぼるサケのなかま。オスは背中が大きく盛り上がるので「セッパリマス」とも呼ばれます。',
+    size: '全長 約50cm', habitat: '北の海から、生まれた川へ',
+    status: () => '川をのぼる前に、岸の近くに集まっています。',
+  },
+  sakuramasu: {
+    name: 'サクラマス', sci: 'Oncorhynchus masou', kind: '魚類・サケのなかま', side: 'ice', active: () => SEASON.m >= 4 && SEASON.m < 9.5,
+    desc: '桜の咲くころに川へ帰ってくるので、この名前があります。川に残ったものは「ヤマメ」と呼ばれ、同じ魚です。',
+    size: '全長 約60cm', habitat: '北の海と川',
+    status: () => '生まれた川の近くを、ゆっくり泳いでいます。',
+  },
+  ezoshika: {
+    name: 'エゾシカ', sci: 'Cervus nippon yesoensis', kind: '哺乳類・シカのなかま', side: 'ice',
+    desc: '北海道にすむ大きなシカ。夏は赤茶色、冬は灰色がかった茶色の毛になります。オスの角は毎年春に落ちて、夏にまた生えてきます。',
+    size: '体長 約1.6m（オス）', habitat: '北海道の森・草原・海岸',
+    status: (ind) => {
+      if (ind.react > 0) return 'おしりの白い毛を広げて、仲間に危険を知らせました。';
+      if (ind.stag && SEASON.m >= 3.5 && SEASON.m < 5) return '春になって、角が落ちたところです。';
+      if (ind.stag && SEASON.m >= 5 && SEASON.m < 8) return '新しい角が、やわらかい毛につつまれて伸びています。';
+      if (ind.stag && SEASON.m >= 8.5 && SEASON.m < 10.5) return '恋の季節。「フィーヨー」と高い声で鳴いています。';
+      return ind.moving ? '群れで、ゆっくり移動しています。' : '頭を下げて、草を食べています。';
+    },
+  },
+  nakiusagi: {
+    name: 'エゾナキウサギ', sci: 'Ochotona hyperborea yesoensis', kind: '哺乳類・ウサギのなかま', side: 'ice',
+    desc: '丸い耳の小さなウサギのなかま。氷河期から生き残る動物で、岩の積み重なった場所にすみ、「ピチッ」と鳴きます。冬眠せず、夏に集めた草を食べて冬をこします。',
+    size: '体長 約15cm', habitat: '岩の積み重なった斜面',
+    status: (ind) => ind.react > 0 ? '「ピチッ」と鳴いて、岩のすき間に逃げました。' : SEASON.m >= 7 && SEASON.m < 10 ? '冬にそなえて、草をせっせと運んでいます。' : '岩の上で、あたりを見回しています。',
+  },
+  ezorisu: {
+    name: 'エゾリス', sci: 'Sciurus vulgaris orientis', kind: '哺乳類・リスのなかま', side: 'ice',
+    desc: 'ふさふさのしっぽと、耳の先の長い毛が目印のリス。冬眠せず、秋に地面にうめておいた木の実を掘り出して冬をこします。',
+    size: '体長 約23cm', habitat: '北海道の森・公園',
+    status: (ind) => ind.react > 0 ? 'しっぽを立てて、木のほうへ走りました。' : SEASON.snow > 0.5 ? '雪を掘って、うめておいた木の実を探しています。' : SEASON.m >= 8.5 ? '木の実を地面にうめて、冬じたくをしています。' : '後ろ足で立って、木の実をかじっています。',
+  },
+  momonga: {
+    name: 'エゾモモンガ', sci: 'Pteromys volans orii', kind: '哺乳類・リスのなかま', side: 'ice', active: () => nightF > 0.5,
+    desc: '大きな黒い目の小さなリスのなかま。前足と後ろ足のあいだの膜を広げて、木から木へ滑空します。夜に活動し、昼は木の穴で眠ります。',
+    size: '体長 約15cm', habitat: '北海道の森（夜）',
+    status: (ind) => ind.react > 0 ? '大きな目で、こちらをじっと見ています。' : ind.u < 0.75 ? '膜を広げて、木から木へ滑空しています！' : '木の幹につかまって、次に飛ぶ木を見ています。',
+  },
+});
+ORDER_ICE.push('kurakake', 'zenigata', 'mijinuki', 'mizukurage', 'ojirowashi', 'tobi', 'tanuki', 'kuroten', 'oosegurokamome', 'yurikamome', 'karafutomasu', 'sakuramasu', 'ezoshika', 'nakiusagi', 'ezorisu', 'momonga');
+
 const heightOnSide = (name) => name === 'ice' ? iceHeight : heightAt;
 
 
@@ -2385,14 +3183,14 @@ function makeMomo() {
     },
   }));
 }
-// Tsumabeni butterflies over the flowers of the southern shore, by day only
-{
-  const wingGeo = new THREE.CircleGeometry(0.16, 10).translate(0.15, 0, 0);
-  const tipGeo = new THREE.CircleGeometry(0.07, 8).translate(0.24, 0.03, 0.001);
-  const wingM = new THREE.MeshStandardMaterial({ color: '#fbf6ea', roughness: 0.6, side: THREE.DoubleSide });
-  const tipM = new THREE.MeshStandardMaterial({ color: '#f08a2c', roughness: 0.6, side: THREE.DoubleSide });
+// Butterflies over the flowers of the southern shore, by day only
+const wingGeo = new THREE.CircleGeometry(0.16, 10).translate(0.15, 0, 0);
+const tipGeo = new THREE.CircleGeometry(0.07, 8).translate(0.24, 0.03, 0.001);
+function butterflies(species, o = {}) {
+  const wingM = new THREE.MeshStandardMaterial({ color: o.wing || '#fbf6ea', roughness: 0.6, side: THREE.DoubleSide, transparent: !!o.sheer, opacity: o.sheer ? 0.85 : 1 });
+  const tipM = new THREE.MeshStandardMaterial({ color: o.tip || '#f08a2c', roughness: 0.6, side: THREE.DoubleSide });
   const spots = [];
-  for (let i = 0; i < 400 && spots.length < 5; i++) {
+  for (let i = 0; i < 400 && spots.length < (o.n ?? 5); i++) {
     const x = sr(-9, 6), z = sr(-7.5, -3.5);
     if (heightAt(x, z) > 2.0 && seF(x, z) < 0.8) spots.push([x, z]);
   }
@@ -2401,26 +3199,32 @@ function makeMomo() {
     const l = new THREE.Mesh(wingGeo, wingM), r = new THREE.Mesh(wingGeo, wingM);
     const lt = new THREE.Mesh(tipGeo, tipM), rt = new THREE.Mesh(tipGeo, tipM);
     wl.add(l, lt); wr.add(r, rt); wr.scale.x = -1;
+    if (o.dots) for (const w of [wl, wr]) for (let i = 0; i < 5; i++) blob(w, M(o.dots), 0.05 + i * 0.045, sr(-0.08, 0.08), 0.004, 0.018, 0.018, 0.004);
     g.add(wl, wr);
     blob(g, M('#2d2a27'), 0, 0, 0, 0.018, 0.018, 0.09);
-    g.scale.setScalar(0.7);
+    g.scale.setScalar(0.7 * (o.scale ?? 1));
     register({
-      species: 'tsumabeni', ...{ group: g }, wl, wr, fixed: true, pick: 0.25, pickY: 0, focus: 2, cx, cz, ph: k * 1.7, sp: 0.5 + k * 0.08,
+      species, ...{ group: g }, wl, wr, fixed: true, pick: 0.25 * (o.scale ?? 1), pickY: 0, focus: 2 * (o.scale ?? 1), cx, cz, ph: k * 1.7 + (o.ph ?? 0), sp: (0.5 + k * 0.08) * (o.speed ?? 1),
       ringY: (p) => heightAt(p.x, p.z) + 0.03,
       update(ind, dt, t) {
-        ind.hidden = nightF > 0.5;
+        ind.hidden = nightF > 0.5 || (o.active ? !o.active() : false);
         ind.group.visible = !ind.hidden;
         if (ind.hidden) return;
         const u = t * ind.sp + ind.ph;
         const x = ind.cx + Math.sin(u * 0.9) * 1.6 + Math.sin(u * 2.3) * 0.3, z = ind.cz + Math.cos(u * 0.7) * 1.2;
-        ind.group.position.set(x, heightAt(ind.cx, ind.cz) + 0.7 + Math.sin(u * 3.1) * 0.2, z);
+        ind.group.position.set(x, heightAt(ind.cx, ind.cz) + 0.7 + (o.high ?? 0) + Math.sin(u * 3.1) * 0.2, z);
         ind.group.rotation.set(0, Math.atan2(Math.cos(u * 0.9), -Math.sin(u * 0.7)), 0);
-        const flap = Math.sin(t * 20 + ind.ph) * 0.9;
+        // big milkweed butterflies mostly glide, with a few slow beats
+        const flap = o.glide ? Math.sin(t * 7 + ind.ph) * (Math.sin(t * 0.9 + ind.ph) > 0.2 ? 0.8 : 0.15) : Math.sin(t * 20 + ind.ph) * 0.9;
         ind.wl.rotation.z = flap; ind.wr.rotation.z = -flap;
       },
     });
   });
 }
+butterflies('tsumabeni');
+butterflies('ogomadara', { wing: '#f5f3ec', tip: '#26262a', dots: '#26262a', scale: 1.5, speed: 0.6, glide: true, n: 3, ph: 2, high: 0.3 });
+// the migrants come through from autumn to spring
+butterflies('asagimadara', { wing: '#bfe2ea', tip: '#5a3527', sheer: true, scale: 1.25, speed: 0.8, glide: true, n: 3, ph: 4, high: 0.5, active: () => SEASON.m >= 8.5 || SEASON.m < 4.5 });
 Object.assign(SPECIES, {
   momo: {
     name: 'MOMO', sci: 'ぽかぽか島からの訪問ロボット', kind: 'ロボット・観察係', noBooth: true,
@@ -2606,7 +3410,7 @@ function whalePose(ind, u) {
   ind.body.position.y = k[1] + 0.04 * Math.sin(u * 1.4);
   ind.body.rotation.set(-k[2], 0, k[3]);
   ind.flukes.rotation.x = 0.16 * Math.sin(u * 1.6);
-  for (const at of ind.variant ? [3.2, 5.9] : [3.2, 5.9, 8.2]) if (crossed(ind, at)) spout(ind.fx, 0, k[1] + 0.45, 0.85);
+  for (const at of ind.variant ? [3.2, 5.9] : [3.2, 5.9, 8.2]) if (crossed(ind, at)) spout(ind.fx, ind.blowX ?? 0, k[1] + 0.45, ind.blowZ ?? 0.85);
   if (ind.variant) {
     if (crossed(ind, 9.6)) splash(ind.fx, 0, 0.6, 0.7);
     if (crossed(ind, 10.8)) splash(ind.fx, 0, 0, 1.3);
@@ -2652,6 +3456,46 @@ function podPose(ind, u) {
     const o = makeOrca(len, fin); o.c.position.set(x, 0, z); o.len = len; pod.add(o.c); orcas.push(o);
   });
   rareVisitor({ species: 'shachi', sideName: 'ice', group: pod, orcas, speed: 0.45, dur: 15, need: 1.8, pick: 1.3, focus: 4, can: () => SEASON.ice < 0.5, toast: 'の群れがやってきました', pose: podPose });
+  // relatives: ミンククジラ (small and sleek) and マッコウクジラ (the square-headed diver)
+  const minke = () => {
+    const w = makeHumpback();
+    recolor(w.group, { '#3a4753': '#2c3640' });
+    w.body.scale.set(0.72, 0.7, 0.82);
+    w.body.children.filter(c => c.isGroup && c !== w.flukes).forEach(g => g.scale.setScalar(0.45));
+    return w;
+  };
+  const sperm = () => {
+    const w = makeHumpback();
+    recolor(w.group, { '#3a4753': '#55504c', '#d3dadd': '#625c57' });
+    w.body.children.filter(c => c.isGroup && c !== w.flukes).forEach(g => g.scale.setScalar(0.35));
+    const head = new THREE.Mesh(new RoundedBoxGeometry(0.78, 0.78, 1.25, 3, 0.26), M('#55504c', { roughness: 0.7 }));
+    head.position.set(0, 0.04, 0.85); w.body.add(head);
+    return w;
+  };
+  [['shore', () => true], ['ice', () => SEASON.ice < 0.3 && SEASON.m >= 3.5 && SEASON.m < 10.5]].forEach(([sideName, can]) => {
+    rareVisitor({ species: 'minku', sideName, ...minke(), speed: 0.5, dur: 13, need: 2, pick: 1.3, focus: 3.6, can, toast: 'がすがたを見せました', pose: whalePose });
+  });
+  [['shore', () => true], ['ice', () => SEASON.ice < 0.3 && SEASON.m >= 6 && SEASON.m < 10.5]].forEach(([sideName, can]) => {
+    // it logs at the surface, blows forward and to the left, and dives flukes up
+    rareVisitor({ species: 'makkou', sideName, ...sperm(), speed: 0.34, dur: 15, need: 2.4, pick: 1.7, focus: 4.4, can, noBreach: true, blowX: -0.28, blowZ: 1.45, toast: 'が海面に浮かんでいます', pose: whalePose });
+  });
+  // turtles: タイマイ (amber shell, hooked beak) and アカウミガメ (big-headed, reddish)
+  [['taimai', { '#6c6636': '#8a5a2c', '#8b8c5c': '#9a8a6a', '#d8cf9c': '#e6d6a4' }, [0.9, 0.9, 1.3]],
+   ['akaumigame', { '#6c6636': '#8a4a2c', '#8b8c5c': '#a0775a', '#d8cf9c': '#e2c79a' }, [1.35, 1.3, 1.3]]].forEach(([species, map, head]) => {
+    const tu2 = makeTurtle();
+    recolor(tu2.group, map);
+    tu2.head.scale.set(...head);
+    rareVisitor({ species, sideName: 'shore', ...tu2, speed: 0.24, dur: 20, need: 1.4, pick: 0.7, focus: 2.6, can: () => true, toast: 'が息つぎに上がってきました', pose: turtlePose });
+  });
+  // dolphins: イシイルカ (a fast little porpoise) and カマイルカ (sickle-finned, in summer)
+  [['ishiiruka', { '#9aa1a6': '#f2f3f0' }, [[0.95, 0.14, 0, 0], [0.9, 0.13, -0.6, -0.9], [0.85, 0.13, 0.55, -0.8], [0.8, 0.12, 0, -1.6]], 0.55, () => SEASON.ice < 0.5],
+   ['kamairuka', { '#16191c': '#2d3338', '#f2f3f0': '#dfe3e3' }, [[1.05, 0.26, 0, 0], [1, 0.25, -0.7, -0.8], [1, 0.25, 0.7, -0.9], [0.95, 0.24, -0.3, -1.7], [0.7, 0.2, 0.35, -1.6]], 0.5, () => SEASON.ice < 0.3 && SEASON.m >= 5 && SEASON.m < 10.5]].forEach(([species, map, members, speed, can]) => {
+    const grp = new THREE.Group(), list = [];
+    members.forEach(([len, fin, x, z]) => {
+      const o = makeOrca(len, fin); recolor(o.c, map); o.c.position.set(x, 0, z); o.len = len; grp.add(o.c); list.push(o);
+    });
+    rareVisitor({ species, sideName: 'ice', group: grp, orcas: list, speed, dur: 13, need: 1.6, pick: 1.2, focus: 3.6, can, toast: 'の群れがやってきました', pose: podPose });
+  });
 }
 Object.assign(SPECIES, {
   zatou: {
@@ -2689,7 +3533,7 @@ function spawnRare(r) {
       if (Math.hypot(x, z) > 11 || depth(x, z) < r.need) ok = false;
     }
     if (!ok) continue;
-    Object.assign(r, { x0, z0, hx, hz, s: 0, u: 0, prevU: 0, present: true, hidden: false, variant: Math.random() < 0.45 ? 1 : 0 });
+    Object.assign(r, { x0, z0, hx, hz, s: 0, u: 0, prevU: 0, present: true, hidden: false, variant: !r.noBreach && Math.random() < 0.45 ? 1 : 0 });
     r.fx.clear();
     r.update(r, 0, 0);
     r.group.visible = true;
@@ -2894,6 +3738,27 @@ flock({
   make: makeSwan, shown: () => SEASON.m >= 8.6 || SEASON.m < 3.8,
   slots: [[0, 0, 0], ...Array.from({ length: 6 }, (_, i) => { const k = Math.ceil((i + 1) / 2), s = i % 2 ? 1 : -1; return [s * 0.62 * k, 0.03 * k, -0.62 * k]; })],
 });
+// the terns' relatives over the southern sea, and the swans' over the northern one
+const vSlots = (n, gap) => [[0, 0, 0], ...Array.from({ length: n - 1 }, (_, i) => { const k = Math.ceil((i + 1) / 2), s = i % 2 ? 1 : -1; return [s * gap * k, 0.03 * k, -gap * k]; })];
+const looseSlots = (n) => [[0, 0, 0], ...Array.from({ length: n - 1 }, () => [sr(-0.9, 0.9), sr(-0.25, 0.25), sr(-1.3, -0.2)])];
+flock({
+  species: 'beniajisashi', over: 'shore', cx: 4.6, cz: 4.8, rho: 0.28, alt: 3.2, speed: 0.1, flap: 9, wander: 0.15, scale: 1.25, pick: 0.9, focus: 2.4,
+  make: () => { const b = makeTern(); recolor(b.g, { '#f6f6f2': '#fbefee' }); return b; }, shown: () => nightF < 0.55, slots: looseSlots(6),
+});
+flock({
+  species: 'kuroajisashi', over: 'shore', cx: -2, cz: 7.8, rho: 0.25, alt: 2.5, speed: 0.13, flap: 8, wander: 0.2, scale: 1.3, pick: 0.9, focus: 2.4,
+  make: () => { const b = makeTern(); recolor(b.g, { '#f6f6f2': '#4a3b31', '#dfe4e6': '#3b2f27', '#1b1d1f': '#d8d4cc' }); return b; }, shown: () => nightF < 0.55, slots: looseSlots(5),
+});
+flock({
+  species: 'kohakucho', over: 'ice', cx: 3, cz: -0.5, rho: 0.36, alt: 3.3, speed: 0.08, flap: 3.3, wander: 0.03, scale: 0.85, pick: 1, focus: 3.2,
+  make: () => { const b = makeSwan(); recolor(b.g, { '#e9c33a': '#2b2b2b' }); return b; },
+  shown: () => (SEASON.m >= 9.3 && SEASON.m < 11.5) || (SEASON.m >= 2.5 && SEASON.m < 4.3), slots: vSlots(5, 0.55),
+});
+flock({
+  species: 'magan', over: 'ice', cx: -3.5, cz: 2.2, rho: 0.4, alt: 3.9, speed: 0.07, flap: 3.8, wander: 0.03, scale: 0.8, pick: 1.1, focus: 3.2,
+  make: () => { const b = makeSwan(); recolor(b.g, { '#f8f8f5': '#8a7b68', '#e9c33a': '#e39a4a' }); b.g.children.slice(1, 3).forEach(m => m.scale.multiplyScalar(0.7)); return b; },
+  shown: () => (SEASON.m >= 8.7 && SEASON.m < 11) || (SEASON.m >= 2 && SEASON.m < 4.5), slots: vSlots(9, 0.5),
+});
 {
   const pl = makePlane();
   pl.group.scale.setScalar(1.15);
@@ -3008,6 +3873,90 @@ const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(PR + 2.4, 96, 64), at
 atmosphere.renderOrder = 6;
 flipGroup.add(atmosphere);
 
+/* ------------------------------------------------------------------ individuals differ */
+// Within each species three looks are mixed: the usual one, a darker variant (for the fox,
+// the dark "cross fox"), and a young, smaller one. A lone animal gets one of them at random.
+const NO_VARIANTS = new Set(['momo', 'ryuhyo', 'sakura', 'nanakamado', 'hamanasu', 'ryokakuki', 'iss', 'himawari']);
+const MAMMALS = new Set(['kitsune', 'higuma', 'usagi', 'shimarisu', 'tanuki', 'kuroten', 'ezoshika', 'nakiusagi', 'ezorisu', 'momonga', 'gomafu', 'kurakake', 'zenigata']);
+const BIRDS = new Set(['oowashi', 'ojirowashi', 'tobi', 'umineko', 'oosegurokamome', 'yurikamome']);
+const MORPH_LABEL = { kitsune: '黒っぽい毛の十字ギツネ', higuma: '毛の黒っぽい個体', madako: '色の濃い個体', usagi: '毛色の濃い個体' };
+function applyVariant(ind, v) {
+  if (v === 0) return;
+  const young = v === 2, shift = young ? { h: 0, s: -0.04, l: 0.06 } : { h: 0.012, s: 0.06, l: -0.1 };
+  const swap = new Map();
+  ind.group.traverse((m) => {
+    if (!m.isMesh || !m.material || m.material === proxyMat || Array.isArray(m.material)) return;
+    if (!swap.has(m.material)) {
+      const c = m.material.clone();
+      if (c.color && !(c.transparent && c.opacity < 0.7)) c.color.offsetHSL(shift.h, shift.s, shift.l);
+      swap.set(m.material, c);
+    }
+    m.material = swap.get(m.material);
+  });
+  for (const k of Object.keys(ind)) if (ind[k] && ind[k].isMaterial && swap.has(ind[k])) ind[k] = swap.get(ind[k]);
+  if (ind.skin && ind.baseColor) ind.baseColor = ind.skin.color.clone();
+  if (young) {
+    const k = ind.school || ind.grp ? 0.75 : 0.68;
+    ind.group.scale.multiplyScalar(k);
+    ind.focus *= 0.8;
+    ind.young = true;
+    ind.variantLabel = MAMMALS.has(ind.species) ? '子ども' : BIRDS.has(ind.species) ? '若鳥' : '若い個体';
+  } else ind.variantLabel = MORPH_LABEL[ind.species] || '色の濃い個体';
+}
+{
+  const bySpecies = new Map();
+  for (const ind of inds) {
+    if (NO_VARIANTS.has(ind.species) || RARE.includes(ind) || ind.sideName === 'sky') continue;
+    if (!bySpecies.has(ind.species)) bySpecies.set(ind.species, []);
+    bySpecies.get(ind.species).push(ind);
+  }
+  for (const list of bySpecies.values()) {
+    if (list.length === 1) { const r = srand(); applyVariant(list[0], r < 0.55 ? 0 : r < 0.8 ? 1 : 2); continue; }
+    const off = Math.floor(srand() * 3);
+    list.forEach((ind, i) => applyVariant(ind, (i + off) % 3));
+  }
+}
+
+// Fewer draw calls: inside each creature, parts that never move on their own and share a
+// material (spots, bumps, eyes) are merged into one mesh.
+const proxySet = new Set(proxies);
+function compact(ind) {
+  const keep = new Set();
+  const mark = (v, depth) => {
+    if (!v || depth > 3 || typeof v !== 'object') return;
+    if (v.isObject3D) { keep.add(v); return; }
+    if (v.isMaterial || v.isVector3 || v.isColor || v.isTexture) return;
+    (Array.isArray(v) ? v : Object.values(v)).forEach(x => mark(x, depth + 1));
+  };
+  for (const [k, v] of Object.entries(ind)) if (k !== 'group' && k !== 'parent' && k !== 'floe') mark(v, 0);
+  const parents = [];
+  ind.group.traverse((o) => { if (o.children.length > 1) parents.push(o); });
+  for (const P of parents) {
+    const buckets = new Map();
+    for (const m of P.children) {
+      if (!m.isMesh || m.isInstancedMesh || m.children.length || keep.has(m) || proxySet.has(m) || Array.isArray(m.material) || !m.visible) continue;
+      const g = m.geometry, key = m.material.uuid + '|' + Object.keys(g.attributes).sort().join() + '|' + (g.index ? 1 : 0) + '|' + m.renderOrder;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(m);
+    }
+    for (const list of buckets.values()) {
+      if (list.length < 2) continue;
+      const geos = list.map((m) => { m.updateMatrix(); return m.geometry.clone().applyMatrix4(m.matrix); });
+      const merged = mergeGeometries(geos);
+      geos.forEach(g => g.dispose());
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, list[0].material);
+      mesh.castShadow = list[0].castShadow; mesh.receiveShadow = list[0].receiveShadow; mesh.renderOrder = list[0].renderOrder;
+      list.forEach(m => P.remove(m));
+      P.add(mesh);
+    }
+  }
+}
+inds.forEach(compact);
+// tiny creatures and ones that live under water cast no shadow worth drawing
+const UNDERWATER = new Set(['agohaze', 'kumohaze', 'mejina', 'rurisuzume', 'misuji', 'clione', 'mijinuki', 'mizukurage', 'sake', 'karafutomasu', 'sakuramasu', 'uni', 'nagauni', 'gangaze', 'hitode', 'aohitode', 'manjuhitode', 'umeboshi', 'yoroi', 'tamaitadaki']);
+for (const ind of inds) if (ind.pick < 0.3 || UNDERWATER.has(ind.species)) ind.group.traverse(o => { if (o.isMesh) o.castShadow = false; });
+
 /* ------------------------------------------------------------------ planet placement */
 // Objects keep flat coordinates (what all the behaviour code works in). A wrapper
 // parent puts each one on the sphere, turned so its "up" follows the ground.
@@ -3032,6 +3981,67 @@ function applyBend(e) {
   });
 });
 
+Object.assign(SPECIES, {
+  beniajisashi: {
+    name: 'ベニアジサシ', sci: 'Sterna dougallii', kind: '鳥類・カモメのなかま', side: 'sky', noBooth: true,
+    desc: '夏に南の島へやってくるアジサシ。白い体の胸がほんのり紅色をおび、黒い帽子をかぶったような頭と、長い尾が目印です。',
+    size: '全長 約35cm', habitat: '南の島の海の上・岩の小島（夏）',
+    status: () => '群れで海の上をめぐり、ときどき急降下して小魚をとっています。',
+  },
+  kuroajisashi: {
+    name: 'クロアジサシ', sci: 'Anous stolidus', kind: '鳥類・カモメのなかま', side: 'sky', noBooth: true,
+    desc: 'こげ茶色の体に、白っぽい頭のアジサシ。海面すれすれを飛んで、跳ねた小魚をすくいとります。',
+    size: '全長 約40cm', habitat: '南の島のまわりの海',
+    status: () => '海面すれすれを、ひらひらと飛んでいます。',
+  },
+  kohakucho: {
+    name: 'コハクチョウ', sci: 'Cygnus columbianus', kind: '鳥類・カモのなかま', side: 'sky', noBooth: true,
+    desc: 'オオハクチョウより小さく、くちばしの黒い部分が多いハクチョウ。北海道には春と秋、渡りのとちゅうに立ち寄ります。',
+    size: '全長 約1.2m', habitat: '湖・沼（春と秋の渡りのとちゅう）',
+    status: () => SEASON.m < 6 ? '春の渡りで、北の国へ帰っていくところです。' : '秋の渡りで、南へ向かうとちゅうに立ち寄りました。',
+  },
+  magan: {
+    name: 'マガン', sci: 'Anser albifrons', kind: '鳥類・カモのなかま', side: 'sky', noBooth: true,
+    desc: 'くちばしのつけ根が白い、灰色がかった茶色のガン。春と秋の渡りのときに、何万羽もの群れが北海道の沼に立ち寄ります。',
+    size: '全長 約70cm', habitat: '湖・沼・田んぼ（渡りのとちゅう）',
+    status: () => '「キャハハン」と鳴きかわしながら、V字の列で飛んでいます。',
+  },
+  minku: {
+    name: 'ミンククジラ', sci: 'Balaenoptera acutorostrata', kind: '哺乳類・クジラのなかま', noBooth: true,
+    desc: 'ヒゲクジラのなかまでいちばん小さなクジラのひとつ。細い体でとがった頭を持ち、胸びれに白い帯があります。潮吹きはあまり目立ちません。',
+    size: '全長 約7〜9m', habitat: '世界中の海（知床沖では春から秋）', status: whaleStatus,
+  },
+  makkou: {
+    name: 'マッコウクジラ', sci: 'Physeter macrocephalus', kind: '哺乳類・クジラのなかま', noBooth: true,
+    desc: '四角く大きな頭を持つハクジラ。深さ1000m以上まで潜ってイカを食べます。潮吹きは頭の左前から、ななめ前に吹き出します。',
+    size: '全長 約11〜18m', habitat: '深い外洋（知床の羅臼沖では夏）',
+    status: (ind) => ind.u < 9 ? '海面に丸太のように浮かんで、息を整えています。' : '尾びれを高く上げて、深い海へ潜っていきます。',
+  },
+  taimai: {
+    name: 'タイマイ', sci: 'Eretmochelys imbricata', kind: '爬虫類・ウミガメのなかま', noBooth: true,
+    desc: 'べっこう色の甲らと、タカのようにとがったくちばしを持つウミガメ。サンゴ礁で海綿を食べて暮らします。',
+    size: '甲長 約80cm', habitat: 'サンゴ礁の海',
+    status: (ind) => ind.u > 8.6 && ind.u < 11.6 ? '海面に鼻先を出して、息つぎをしています。' : 'サンゴ礁の上を、ゆったり泳いでいます。',
+  },
+  akaumigame: {
+    name: 'アカウミガメ', sci: 'Caretta caretta', kind: '爬虫類・ウミガメのなかま', noBooth: true,
+    desc: '大きな頭と赤茶色の甲らのウミガメ。日本の砂浜は、北太平洋でたった一つのアカウミガメの産卵地です。',
+    size: '甲長 約90cm', habitat: '暖かい海・砂浜（夏に産卵）',
+    status: (ind) => ind.u > 8.6 && ind.u < 11.6 ? '大きな頭を海面に出して、息つぎをしています。' : '大きな頭で、貝やカニを探しています。',
+  },
+  ishiiruka: {
+    name: 'イシイルカ', sci: 'Phocoenoides dalli', kind: '哺乳類・ネズミイルカのなかま', side: 'ice', noBooth: true,
+    desc: '黒い体に白い模様がある、ずんぐりしたイルカ。とても速く泳ぎ、海面を切るときに水しぶきを高く上げます。',
+    size: '全長 約2m', habitat: '冷たい北の海（知床沖）',
+    status: () => '水しぶきを上げながら、すごい速さで泳いでいます。',
+  },
+  kamairuka: {
+    name: 'カマイルカ', sci: 'Lagenorhynchus obliquidens', kind: '哺乳類・マイルカのなかま', side: 'ice', noBooth: true,
+    desc: '鎌のような形の背びれを持つイルカ。群れで暮らし、海面をジャンプしながら泳ぎます。夏の知床沖でもよく見られます。',
+    size: '全長 約2.3m', habitat: '北太平洋の海（夏）',
+    status: () => '群れで、跳ねるように泳いでいます。',
+  },
+});
 /* ------------------------------------------------------------------ weather and sky events */
 // Now and then the sky does something: a passing shower with a rainbow, a typhoon, a
 // waterspout, an aurora, shooting stars. Each comes as often as it roughly does in the
@@ -3801,30 +4811,84 @@ function updateTideUI() {
   }
 }
 
-// species list
-let chipBtns = {};
+// species list, grouped by family: a family chip opens a small row of its species
+const GROUPS = {
+  shore: [
+    { name: 'タコ', members: ['madako', 'wamondako', 'shimadako'] },
+    { name: 'ハゼ・ギンポ', members: ['agohaze', 'kumohaze', 'yodarekake'] },
+    { name: 'カニ', members: ['isogani', 'tsunomegani', 'shoujingani'] },
+    { name: 'ヤドカリ', members: ['yadokari', 'murasakiokayadokari', 'okayadokari'] },
+    { name: 'イソギンチャク', members: ['umeboshi', 'yoroi', 'tamaitadaki'] },
+    { name: 'ウニ', members: ['uni', 'nagauni', 'gangaze'] },
+    { name: 'ヒトデ', members: ['hitode', 'aohitode', 'manjuhitode'] },
+    { name: '群れの魚', members: ['mejina', 'rurisuzume', 'misuji'] },
+    { name: 'チョウ', members: ['tsumabeni', 'ogomadara', 'asagimadara'] },
+    { name: 'MOMO', members: ['momo'] },
+  ],
+  ice: [
+    { name: '流氷', members: ['ryuhyo'] },
+    { name: 'アザラシ', members: ['gomafu', 'kurakake', 'zenigata'] },
+    { name: '海の中の小さな生き物', members: ['clione', 'mijinuki', 'mizukurage'] },
+    { name: 'ワシ・タカ', members: ['oowashi', 'ojirowashi', 'tobi'] },
+    { name: 'キツネ・タヌキ', members: ['kitsune', 'tanuki', 'kuroten'] },
+    { name: 'カモメ', members: ['umineko', 'oosegurokamome', 'yurikamome'] },
+    { name: 'サケ・マス', members: ['sake', 'karafutomasu', 'sakuramasu'] },
+    { name: 'クマ・シカ', members: ['higuma', 'ezoshika'] },
+    { name: 'ウサギ', members: ['usagi', 'nakiusagi'] },
+    { name: 'リス', members: ['shimarisu', 'ezorisu', 'momonga'] },
+    { name: '木と花', members: ['sakura', 'nanakamado', 'hamanasu'] },
+  ],
+};
+let chipBtns = {}, memberBtns = {}, openGroup = null;
 const cycle = {};
+const groupsNow = () => GROUPS[side]
+  .map(g => ({ ...g, members: side === 'ice' ? g.members.filter(k => inds.some(i => i.species === k && isActive(i))) : g.members }))
+  .filter(g => g.members.length);
+const groupOf = (key) => groupsNow().find(g => g.members.includes(key));
+function pickSpecies(key) {
+  // pressing the creature already shown puts it away and returns to the earlier view
+  if (sel && sel.species === key) { if (pov) exitPov(false); deselect(true); return; }
+  const list = inds.filter(i => i.species === key && !i.hidden);
+  if (!list.length) return;
+  cycle[key] = ((cycle[key] ?? -1) + 1) % list.length;
+  select(list[cycle[key]], true);
+}
+function chip(label, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.textContent = label; b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', onClick);
+  return b;
+}
 function buildChips() {
   ui.species.replaceChildren();
   chipBtns = {};
-  (side === 'ice' ? ORDER_ICE.filter(k => inds.some(i => i.species === k && isActive(i))) : ORDER).forEach(addChip);
+  for (const g of groupsNow()) {
+    const b = chip(g.name, () => {
+      if (g.members.length === 1) { openGroup = null; buildMembers(); pickSpecies(g.members[0]); return; }
+      openGroup = openGroup === g.name ? null : g.name;
+      buildMembers(); syncChips();
+    });
+    if (g.members.length > 1) b.setAttribute('aria-expanded', 'false');
+    ui.species.appendChild(b);
+    chipBtns[g.name] = b;
+  }
+  buildMembers(); syncChips();
 }
-function addChip(key) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.textContent = SPECIES[key].name.replace('（幼魚）', '');
-  b.setAttribute('aria-pressed', 'false');
-  b.addEventListener('click', () => {
-    // pressing the chip of the creature already shown puts it away and returns to the earlier view
-    if (sel && sel.species === key) { if (pov) exitPov(false); deselect(true); return; }
-    const list = inds.filter(i => i.species === key && !i.hidden);
-    cycle[key] = ((cycle[key] ?? -1) + 1) % list.length;
-    select(list[cycle[key]], true);
-  });
-  ui.species.appendChild(b);
-  chipBtns[key] = b;
+function buildMembers() {
+  const row = $('members'), g = groupsNow().find(x => x.name === openGroup);
+  row.replaceChildren(); memberBtns = {};
+  row.hidden = !g;
+  if (!g) return;
+  for (const k of g.members) { const b = chip(SPECIES[k].name.replace('（幼魚）', ''), () => pickSpecies(k)); row.appendChild(b); memberBtns[k] = b; }
 }
-buildChips();
+function syncChips() {
+  const gs = sel ? groupOf(sel.species) : null;
+  for (const [name, b] of Object.entries(chipBtns)) {
+    b.setAttribute('aria-pressed', String(!!gs && gs.name === name));
+    if (b.hasAttribute('aria-expanded')) b.setAttribute('aria-expanded', String(name === openGroup));
+  }
+  for (const [k, b] of Object.entries(memberBtns)) b.setAttribute('aria-pressed', String(!!sel && sel.species === k));
+}
 
 // where each creature's eyes are: [height above its feet, distance forward], in world units
 const EYES = {
@@ -3906,25 +4970,29 @@ $('rareGo').addEventListener('click', () => {
 });
 let sel = null, statusTimer = 0;
 let homePose = null;   // where the camera was before the first creature was picked
+buildChips();
 function select(ind, fly) {
   if (pov) exitPov(false);
   if (!sel && fly) homePose = { pos: camera.position.clone(), target: controls.target.clone(), up: camera.up.clone(), view: currentView };
   sel = ind;
   const sp = SPECIES[ind.species];
-  $('cardKind').textContent = sp.kind;
+  $('cardKind').textContent = sp.kind + (ind.variantLabel ? `・${ind.variantLabel}` : '');
   $('cardName').textContent = sp.name;
   $('cardSci').textContent = sp.sci;
   $('cardDesc').textContent = sp.desc;
   $('cardSize').textContent = sp.size;
   $('cardHabitat').textContent = sp.habitat;
   $('cardBuy').href = BOOTH.set || BOOTH.shop;
-  $('cardBuy').hidden = sp.side === 'ice' || !!sp.noBooth;
+  $('cardBuy').hidden = !BOOTH_SPECIES.has(ind.species);   // only the creatures in the BOOTH model set
   $('cardPov').hidden = NO_POV.has(ind.species) || !!ind.staticPos;   // only creatures that move get an eye view
   sideGroup(ind.sideName).add(ring.parent);
   $('cardNow').textContent = sp.status(ind);
   ui.card.hidden = false;
   document.body.classList.add('has-card');
-  Object.entries(chipBtns).forEach(([k, b]) => b.setAttribute('aria-pressed', String(k === ind.species)));
+  // show the creature's relatives in the row above the family chips
+  const fam = groupOf(ind.species);
+  if (fam && fam.members.length > 1 && openGroup !== fam.name) { openGroup = fam.name; buildMembers(); }
+  syncChips();
   ring.visible = !ind.noRing;
   if (ind === rareNow) hideNotice(ind);
   if (fly) {
@@ -3951,7 +5019,7 @@ function deselect(back = false) {
   ui.card.hidden = true;
   document.body.classList.remove('has-card');
   ring.visible = false;
-  Object.values(chipBtns).forEach(b => b.setAttribute('aria-pressed', 'false'));
+  syncChips();
 }
 $('cardClose').addEventListener('click', () => deselect(true));
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (pov) exitPov(true); else deselect(true); } });
@@ -4125,6 +5193,7 @@ const clock = new THREE.Clock();
 const easeInOut = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
 const followDelta = new THREE.Vector3(), selWorld = new THREE.Vector3(), selLocal = new THREE.Vector3();
 const viewOff = { x: 0, y: 0 };
+const cullC = new THREE.Vector3(), cullP = new THREE.Vector3(), cullO = new THREE.Vector3(), CORE_R = PR + SEA_FLOOR - 0.4;
 
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -4233,6 +5302,14 @@ function frame() {
   scene.fog.far = camUnder ? 17 : 1000;
   ui.under.classList.toggle('on', camUnder);
 
+  // skip whatever sits behind the planet's solid core (below the deepest sea floor)
+  cullC.copy(camera.position);
+  for (const e of bendRoots) {
+    const w = e.wrap.matrixWorld.elements;
+    cullP.set(w[12], w[13], w[14]).sub(cullC);
+    const L2 = cullP.lengthSq(), k = clamp(-cullO.copy(cullC).sub(PLANET_C).dot(cullP) / (L2 || 1), 0, 1);
+    e.wrap.visible = cullO.copy(cullC).addScaledVector(cullP, k).distanceTo(PLANET_C) > CORE_R;
+  }
   updateTideUI();
   renderer.render(scene, camera);
 }
@@ -4251,7 +5328,7 @@ const BUILDERS = {
   mejina: () => makeFish(MEJINA),
 };
 window.__tidal = {
-  THREE, BUILDERS, mergeGeometries, camera, controls, scene, lights: { hemi, sun, moon }, iceHeight, heightAt, inds, stepWalker,
+  THREE, BUILDERS, mergeGeometries, camera, controls, scene, renderer, lights: { hemi, sun, moon }, iceHeight, heightAt, inds, stepWalker,
   get tn() { return tn; }, set tn(v) { tn = v; },
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
