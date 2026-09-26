@@ -81,7 +81,22 @@
   .flip:hover { background: #ffffff; }
   .flip-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--tide); color: #f4faf9; font-size: 13px; }
   .flip:disabled { opacity: 0.6; cursor: default; }
-  .buy[hidden] { display: none; }
+  .buy[hidden], .pov[hidden], .povbar[hidden] { display: none; }
+  .pov {
+    margin-top: 4px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 12px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--tide); background: transparent; color: var(--tide); font-size: 12px; font-weight: 500; letter-spacing: 0.06em;
+  }
+  .pov:hover { background: rgba(43, 104, 102, 0.08); }
+  .pov-eye { width: 14px; height: 9px; border: 1.5px solid currentColor; border-radius: 50% / 60%; position: relative; flex: none; }
+  .pov-eye::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: currentColor; }
+  .povbar {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--dock-h) + 26px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-radius: 999px;
+    background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(10px); color: var(--ink); font-size: 12px; letter-spacing: 0.06em; white-space: nowrap;
+  }
+  .povbar .pov-hint { color: var(--ink-3); font-size: 11px; }
+  .povbar button { border: 0; border-radius: 999px; padding: 7px 14px; background: var(--tide); color: #f4faf9; font-size: 12px; cursor: pointer; }
+  @media (max-width: 720px) { .povbar .pov-hint { display: none; } }
   .brand .lede { margin: 0; font-size: 12px; letter-spacing: 0.08em; color: var(--float-ink-2); }
 
   .views {
@@ -315,12 +330,19 @@
     <dt>大きさ</dt><dd id="cardSize"></dd>
     <dt>すみか</dt><dd id="cardHabitat"></dd>
   </dl>
+  <button type="button" class="pov" id="cardPov"><span class="pov-eye" aria-hidden="true"></span>この生き物の目線で見る</button>
   <a class="buy" id="cardBuy" href="https://moonlitprops.booth.pm/" target="_blank" rel="noopener">
     <b>この 3D モデルを BOOTH で見る</b>
     <span>Moonlit Props「磯の生き物 3D セット」（FBX / GLB / Blender）</span>
   </a>
 </aside>
 
+<div class="povbar" id="povbar" hidden>
+  <span class="pov-eye" aria-hidden="true"></span>
+  <span id="povName">マダコの目線</span>
+  <span class="pov-hint">ドラッグで見回す</span>
+  <button type="button" id="povExit">もとにもどる</button>
+</div>
 <div class="tip" id="tip" hidden></div>
 <p class="credit">日本の磯をもとにした箱庭です。生き物は見やすい大きさに変えています。</p>
 <div class="loader" id="loader"><p id="loaderText">月と潮の磯をひらいています</p></div>
@@ -1810,7 +1832,11 @@ const snow = (() => {
   const N = 1400, p = new Float32Array(N * 3);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(p, 3));
-  const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: 0.07, transparent: true, opacity: 0.85, depthWrite: false }));
+  const dot = document.createElement('canvas'); dot.width = dot.height = 32;
+  const dctx = dot.getContext('2d'), grad = dctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.6, 'rgba(255,255,255,0.9)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  dctx.fillStyle = grad; dctx.fillRect(0, 0, 32, 32);
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: 0.07, map: new THREE.CanvasTexture(dot), transparent: true, opacity: 0.9, depthWrite: false }));
   pts.userData = { noBend: true, flat: Array.from({ length: N }, () => { const x = rr(-RIM, RIM) * 0.9, z = rr(-RIM, RIM) * 0.9; return { x, z, y: rr(0, 10), v: rr(0.35, 0.6), g: iceHeight(x, z) }; }) };
   pts.visible = false;
   pts.frustumCulled = false;
@@ -2619,6 +2645,7 @@ function setViewButtons(name) { viewBtns.forEach(b => b.setAttribute('aria-press
 
 let tideAnim = null, autoMode = false, autoPhase = 0, tideDir = -1, lastTn = tn;
 function goView(name) {
+  if (pov) exitPov(false);
   deselect();
   setViewButtons(name);
   const { pos, target } = viewPose(name);
@@ -2707,8 +2734,76 @@ function addChip(key) {
 }
 buildChips();
 
+// where each creature's eyes are: [height above its feet, distance forward], in world units
+const EYES = {
+  madako: [0.32, 0.2], agohaze: [0.1, 0.25], isogani: [0.26, 0.18], yadokari: [0.24, 0.24], umeboshi: [0.35, 0], uni: [0.3, 0], hitode: [0.14, 0],
+  mejina: [0.04, 0.2], momo: [0.6, 0.2], tsumabeni: [0.04, 0.06], gomafu: [0.42, 0.75], clione: [0.22, 0.04], oowashi: [0.72, 0.18],
+  kitsune: [0.48, 0.45], umineko: [0.08, 0.38], sake: [0.05, 0.42], higuma: [0.82, 0.95], usagi: [0.3, 0.26], shimarisu: [0.17, 0.16],
+};
+const NO_POV = new Set(['ryuhyo', 'sakura', 'nanakamado', 'hamanasu']);   // plants and ice have no eyes
+let pov = null, povYaw = 0, povPitch = 0, povDrag = null, povSnap = false;
+const povP = new THREE.Vector3(), povF = new THREE.Vector3(), povU = new THREE.Vector3(), povR = new THREE.Vector3(), povEye = new THREE.Vector3(), povLook = new THREE.Vector3(), povQ = new THREE.Quaternion();
+function enterPov(ind) {
+  pov = ind;
+  povYaw = 0; povPitch = 0; povSnap = true; camAnim = null;
+  controls.enabled = false;
+  camera.near = 0.02; camera.fov = camera.aspect < 1 ? 70 : 58; camera.updateProjectionMatrix();
+  ui.card.hidden = true;
+  document.body.classList.remove('has-card');
+  ring.visible = false;
+  ui.tip.hidden = true;
+  $('povName').textContent = `${SPECIES[ind.species].name}の目線`;
+  $('povbar').hidden = false;
+}
+function exitPov(reselect = true) {
+  if (!pov) return;
+  const ind = pov;
+  pov = null;
+  controls.enabled = true;
+  camera.near = 0.1; fitFov();
+  $('povbar').hidden = true;
+  if (reselect && !ind.hidden) { ind.group.getWorldPosition(controls.target); select(ind, true); }
+}
+function updatePov(dt) {
+  const g = pov.group;
+  g.updateWorldMatrix(true, false);
+  g.getWorldPosition(povP);
+  g.getWorldQuaternion(povQ);
+  povF.set(0, 0, 1).applyQuaternion(povQ).normalize();
+  povU.set(0, 1, 0).applyQuaternion(povQ).normalize();
+  const [h, f] = EYES[pov.species] || [(pov.pickY ?? 0.15) + 0.2, pov.pick * 0.5];
+  povEye.copy(povP).addScaledVector(povU, h).addScaledVector(povF, f);
+  // keep the horizon level: "up" is the planet's up at the eye, and the creature's heading
+  // is laid flat along the ground; the viewer can look around from there
+  const centre = flipGroup.getWorldPosition(new THREE.Vector3());
+  const up = povEye.clone().sub(centre).normalize();
+  const fwd = povF.clone().addScaledVector(up, -povF.dot(up));
+  if (fwd.lengthSq() < 1e-6) fwd.set(1, 0, 0).addScaledVector(up, -up.x);
+  fwd.normalize();
+  // on a small planet the horizon sits below eye level; start the gaze just under it,
+  // measured from the real ground (or sea) beneath, so flying birds look down
+  const flat = unbend(sideGroup(pov.sideName).worldToLocal(povEye.clone()));
+  const ground = heightOnSide(pov.sideName)(flat.x, flat.z), wl = pov.sideName === 'ice' ? tideY : waterLevelAt(flat.x, flat.z);
+  const surface = PR + (flat.y > wl ? Math.max(ground, wl) : ground);
+  const eyeR = povEye.distanceTo(centre);
+  const dip = eyeR > surface ? Math.acos(clamp(surface / eyeR, -1, 1)) : 0;
+  const dir = fwd.clone().applyAxisAngle(up, povYaw);
+  povR.crossVectors(dir, up).normalize();
+  dir.applyAxisAngle(povR, povPitch - dip - 0.05);
+  povU.copy(up);
+  const k = povSnap ? 1 : 1 - Math.exp(-dt * 8);
+  camera.position.lerp(povEye, k);
+  povLook.lerp(povEye.clone().addScaledVector(dir, 6), k);
+  camera.up.lerp(povU, k).normalize();
+  camera.lookAt(povLook);
+  controls.target.copy(povLook);
+  povSnap = false;
+}
+$('cardPov').addEventListener('click', () => { if (sel) enterPov(sel); });
+$('povExit').addEventListener('click', () => exitPov(true));
 let sel = null, statusTimer = 0;
 function select(ind, fly) {
+  if (pov) exitPov(false);
   sel = ind;
   const sp = SPECIES[ind.species];
   $('cardKind').textContent = sp.kind;
@@ -2719,6 +2814,7 @@ function select(ind, fly) {
   $('cardHabitat').textContent = sp.habitat;
   $('cardBuy').href = BOOTH.set || BOOTH.shop;
   $('cardBuy').hidden = sp.side === 'ice' || !!sp.noBooth;
+  $('cardPov').hidden = NO_POV.has(ind.species);
   sideGroup(ind.sideName).add(ring.parent);
   $('cardNow').textContent = sp.status(ind);
   ui.card.hidden = false;
@@ -2747,7 +2843,7 @@ function deselect() {
   Object.values(chipBtns).forEach(b => b.setAttribute('aria-pressed', 'false'));
 }
 $('cardClose').addEventListener('click', deselect);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') deselect(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (pov) exitPov(true); else deselect(); } });
 
 // picking
 const raycaster = new THREE.Raycaster();
@@ -2769,9 +2865,19 @@ function pick(e, occlude) {
 }
 let down = null;
 const canvas = renderer.domElement;
-canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+canvas.addEventListener('pointerdown', (e) => {
+  down = { x: e.clientX, y: e.clientY, t: performance.now() };
+  if (pov) povDrag = { x: e.clientX, y: e.clientY };
+});
+window.addEventListener('pointerup', () => { povDrag = null; });
+canvas.addEventListener('pointermove', (e) => {
+  if (!pov || !povDrag) return;
+  povYaw -= (e.clientX - povDrag.x) * 0.005;
+  povPitch = clamp(povPitch + (povDrag.y - e.clientY) * 0.004, -1.2, 1.2);
+  povDrag = { x: e.clientX, y: e.clientY };
+});
 canvas.addEventListener('pointerup', (e) => {
-  if (!down) return;
+  if (!down || pov) { down = null; return; }
   const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dt = performance.now() - down.t;
   down = null;
   if (moved > 6 || dt > 600) return;
@@ -2780,7 +2886,7 @@ canvas.addEventListener('pointerup', (e) => {
 });
 let hoverFrame = 0;
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerType !== 'mouse' || e.buttons) { ui.tip.hidden = true; return; }
+  if (pov || e.pointerType !== 'mouse' || e.buttons) { ui.tip.hidden = true; return; }
   if (++hoverFrame % 2) return;
   const ind = pick(e, false);
   stage.classList.toggle('hovering', !!ind);
@@ -2870,6 +2976,7 @@ function updateSeasons(dt) {
 const iceLiveNow = () => flipF > 0.001;
 function flipWorld() {
   if (flipAnim) return;
+  if (pov) exitPov(false);
   deselect();
   side = side === 'shore' ? 'ice' : 'shore';
   flipAnim = { from: flipGroup.rotation.z, to: side === 'ice' ? Math.PI : 0, t: 0, dur: reduceMotion ? 0.01 : 2.6 };
@@ -2959,7 +3066,8 @@ function frame() {
   for (const e of bendRoots) if (e.dynamic && e.obj !== ring && (e.side === 'ice' ? iceLive : shoreLive)) applyBend(e);
 
   // selection
-  if (sel) {
+  if (pov && (pov.hidden || !pov.group.visible)) { exitPov(false); goView('shore'); }
+  if (sel && !pov) {
     const p = sel.group.getWorldPosition(selWorld);
     const lp = unbend(sideGroup(sel.sideName).worldToLocal(selLocal.copy(p)));
     ring.position.set(lp.x, sel.ringY ? sel.ringY(lp) : heightOnSide(sel.sideName)(lp.x, lp.z) + 0.03, lp.z);
@@ -2976,7 +3084,8 @@ function frame() {
   }
 
   // camera
-  if (camAnim) {
+  if (pov) updatePov(dt);
+  else if (camAnim) {
     camAnim.t += dt / camAnim.dur;
     const e = easeInOut(Math.min(1, camAnim.t));
     camera.position.lerpVectors(camAnim.p0, camAnim.p1, e);
@@ -2984,17 +3093,18 @@ function frame() {
     controls.target.lerpVectors(camAnim.t0, camAnim.t1, e);
     if (camAnim.t >= 1) camAnim = null;
   }
-  if (autoMode && !reduceMotion && !camAnim && !dragging) {
+  if (autoMode && !reduceMotion && !camAnim && !dragging && !pov) {
     // slow turn around the planet's axis while watching
     const off = camera.position.clone().sub(controls.target).applyAxisAngle(UP, dt * 0.08);
     camera.position.copy(controls.target).add(off);
   }
-  controls.update();
+  if (!pov) controls.update();
 
   // keep the selected creature clear of the info card
   const narrow = window.innerWidth <= 720;
-  const wantX = sel && !narrow ? Math.min(ui.card.offsetWidth * 0.5, window.innerWidth * 0.18) : 0;
-  const wantY = sel && narrow ? ui.card.offsetHeight * 0.5 + 16 : 0;
+  const cardUp = sel && !pov;
+  const wantX = cardUp && !narrow ? Math.min(ui.card.offsetWidth * 0.5, window.innerWidth * 0.18) : 0;
+  const wantY = cardUp && narrow ? ui.card.offsetHeight * 0.5 + 16 : 0;
   viewOff.x += (wantX - viewOff.x) * Math.min(1, dt * 4);
   viewOff.y += (wantY - viewOff.y) * Math.min(1, dt * 4);
   if (Math.abs(viewOff.x) + Math.abs(viewOff.y) > 0.5) {
@@ -3030,7 +3140,7 @@ window.__tidal = {
   get tn() { return tn; }, set tn(v) { tn = v; },
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
-  goView, flip: flipWorld,
+  goView, flip: flipWorld, pov: (k) => enterPov(inds.find(i => i.species === k && !i.hidden)), exitPov,
   season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
   jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camera.up.copy(camAnim.u1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
