@@ -338,7 +338,7 @@
   <button type="button" id="povExit">もとにもどる</button>
 </div>
 <div class="rare" id="rare" role="status" hidden>
-  <span class="rare-mark">めずらしい！</span>
+  <span class="rare-mark" id="rareMark">めずらしい！</span>
   <span id="rareText">ザトウクジラが姿を見せました</span>
   <button type="button" id="rareGo">見にいく</button>
 </div>
@@ -579,8 +579,9 @@ function wetShader(mat, sideU = SHORE_U) {
 function swayShader(mat, amp = 0.22) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = U.uTime;
+    sh.uniforms.uWind = U_WIND;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;')
+      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uWind;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         float k = clamp(position.y, 0.0, 1.0);
         vec3 ip = vec3(0.0);
@@ -588,8 +589,8 @@ function swayShader(mat, amp = 0.22) {
           ip = instanceMatrix[3].xyz;
         #endif
         float ph = ip.x * 1.7 + ip.z * 1.3;
-        transformed.x += sin(uTime * 1.3 + ph) * k * k * ${amp.toFixed(3)};
-        transformed.z += cos(uTime * 1.1 + ph * 0.7) * k * k * ${(amp * 0.55).toFixed(3)};`);
+        transformed.x += (sin(uTime * 1.3 * (0.7 + 0.3 * uWind) + ph) + uWind - 1.0) * k * k * ${amp.toFixed(3)} * uWind;
+        transformed.z += cos(uTime * 1.1 * (0.7 + 0.3 * uWind) + ph * 0.7) * k * k * ${(amp * 0.55).toFixed(3)} * uWind;`);
   };
   return mat;
 }
@@ -2693,8 +2694,8 @@ function spawnRare(r) {
     r.update(r, 0, 0);
     r.group.visible = true;
     rareNow = r;
-    $('rareText').textContent = SPECIES[r.species].name + r.toast;
-    $('rare').hidden = sel === r;
+    showNotice(r, 'めずらしい！', SPECIES[r.species].name + r.toast);
+    if (sel === r) hideNotice(r);
     return true;
   }
   return false;
@@ -2703,7 +2704,7 @@ function endRare() {
   const r = rareNow;
   rareNow = null;
   rareWait = rr(50, 100);
-  $('rare').hidden = true;
+  hideNotice(r);
   if (pov === r) exitPov(false);
   if (sel === r) deselect(true);
   r.present = false; r.hidden = true; r.group.visible = false;
@@ -3030,6 +3031,448 @@ function applyBend(e) {
     bendRoots.push(e);
   });
 });
+
+/* ------------------------------------------------------------------ weather and sky events */
+// Now and then the sky does something: a passing shower with a rainbow, a typhoon, a
+// waterspout, an aurora, shooting stars. Each comes as often as it roughly does in the
+// real world, relative to the others: rainbows are common in the south, typhoons come
+// only in their season, a waterspout is rarer, and an aurora over Hokkaido rarer still
+// and only on dark nights. Time is squeezed (WX_SCALE) so a visit can still catch them.
+const WX_SCALE = 4;
+const WX_C = new THREE.Vector3(0, CEN, 0);   // the planet's centre in the world
+const U_WIND = { value: 1 };
+let noticeOwner = null;
+function showNotice(owner, mark, text, secs = 0) {
+  noticeOwner = owner;
+  $('rareMark').textContent = mark; $('rareText').textContent = text;
+  $('rareGo').hidden = typeof owner !== 'object';
+  $('rare').hidden = false;
+  if (secs) setTimeout(() => hideNotice(owner), secs * 1000);
+}
+function hideNotice(owner) { if (noticeOwner === owner) { $('rare').hidden = true; noticeOwner = null; } }
+// an object kept on a side's surface from flat coordinates, re-placed every frame
+function onSide(obj) {
+  const wrap = new THREE.Group();
+  wrap.add(obj);
+  const e = { obj, wrap, side: 'shore', dynamic: true };
+  bendRoots.push(e);
+  return e;
+}
+function toSide(e, sideName) { (sideName === 'ice' ? iceSide : shoreSide).add(e.wrap); e.side = sideName; }
+const sideOf = (name) => (name === 'ice' ? iceSide : shoreSide);
+function camAzimuth(sideName) {
+  const cp = unbend(sideOf(sideName).worldToLocal(camera.position.clone()));
+  return Math.atan2(cp.z, cp.x);
+}
+// the sun's direction in a side's flat frame, seen from the middle of that side
+function sunFlat(sideName) {
+  const q = sideOf(sideName).getWorldQuaternion(new THREE.Quaternion()).invert();
+  const v = sunDir.clone().applyQuaternion(q);
+  const l = Math.hypot(v.x, v.z) || 1;
+  return { x: v.x / l, z: v.z / l };
+}
+function flyToWorld(p, dist, from) {
+  const up = p.clone().sub(WX_C).normalize();
+  const dir = (from || camera.position.clone().sub(controls.target)).clone().normalize();
+  const lift = dir.dot(up);
+  if (lift < 0.6) dir.addScaledVector(up, 0.6 - lift).normalize();
+  deselect();
+  flyTo(p.clone().addScaledVector(dir, dist), p.clone(), 1.6, up);
+  setViewButtons('');
+}
+const groundAt = (sideName, x, z) => Math.max(tideY, sideName === 'ice' ? iceHeight(x, z) : heightAt(x, z));
+
+const puffGeo = new THREE.IcosahedronGeometry(1, 1);
+function makeCloud(n, color, spread) {
+  const g = new THREE.Group(), mat = new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true, transparent: true, opacity: 0, depthWrite: false });
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(puffGeo, mat), s = sr(0.45, 0.95);
+    m.scale.set(s * 1.3, s * 0.65, s);
+    m.position.set(sr(-spread, spread), sr(-0.12, 0.2), sr(-spread * 0.6, spread * 0.6));
+    g.add(m);
+  }
+  g.userData.mat = mat;
+  return g;
+}
+// rain drawn straight in a side's bent frame, so it falls toward the planet everywhere
+function makeRain(n) {
+  const pos = new Float32Array(n * 6), geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.LineBasicMaterial({ color: '#d4e4ee', transparent: true, opacity: 0, depthWrite: false });
+  const lines = new THREE.LineSegments(geo, mat);
+  lines.frustumCulled = false; lines.visible = false;
+  const drops = Array.from({ length: n }, () => ({ a: sr(0, TAU), r: Math.sqrt(srand()), y: sr(0, 1) }));
+  const A = new THREE.Vector3(), B = new THREE.Vector3();
+  return {
+    lines, mat,
+    place(sideName) { sideOf(sideName).add(lines); lines.userData.side = sideName; },
+    update(dt, cx, cz, R, top, sideName, lean = 0) {
+      for (let i = 0; i < n; i++) {
+        const d = drops[i];
+        d.y -= dt * 2.4;
+        if (d.y < 0) { d.y += 1; d.a = rr(0, TAU); d.r = Math.sqrt(Math.random()); }
+        const x = cx + Math.cos(d.a) * d.r * R, z = cz + Math.sin(d.a) * d.r * R;
+        const bottom = groundAt(sideName, x, z), y = bottom + (top - bottom) * d.y;
+        bendVec(x, y, z, A); bendVec(x + lean * 0.12, y + 0.3, z, B);
+        pos.set([A.x, A.y, A.z, B.x, B.y, B.z], i * 6);
+      }
+      geo.attributes.position.needsUpdate = true;
+    },
+  };
+}
+const envelope = (u, dur, rise, fall) => smooth(0, rise, u) * (1 - smooth(dur - fall, dur, u));
+
+// --- a passing shower, then a rainbow opposite the sun
+function rainbowMat(inner, outer, rev, strength) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uIn: { value: inner }, uOut: { value: outer }, uRev: { value: rev }, uA: { value: 0 }, uK: { value: strength } },
+    vertexShader: `varying vec3 vP; void main() { vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform float uIn, uOut, uRev, uA, uK; varying vec3 vP;
+      vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }
+      void main() {
+        float t = clamp((length(vP.xy) - uIn) / (uOut - uIn), 0.0, 1.0);
+        if (uRev > 0.5) t = 1.0 - t;
+        float a = sin(t * 3.14159) * uA * uK * smoothstep(0.0, 1.2, vP.y);
+        gl_FragColor = vec4(hue((1.0 - t) * 0.78) * a, a);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+}
+const bow = new THREE.Group();
+const bowMats = [rainbowMat(2.6, 3.15, 0, 0.75), rainbowMat(3.45, 3.8, 1, 0.28)];
+bow.add(new THREE.Mesh(new THREE.RingGeometry(2.6, 3.15, 96, 1, 0, Math.PI), bowMats[0]));
+bow.add(new THREE.Mesh(new THREE.RingGeometry(3.45, 3.8, 96, 1, 0, Math.PI), bowMats[1]));
+bow.visible = false;
+const bowE = onSide(bow);
+const showerCloud = makeCloud(9, '#e9edf0', 1.5);
+showerCloud.visible = false;
+const showerE = onSide(showerCloud);
+const showerRain = makeRain(260);
+
+// --- a typhoon: a spiral of cloud turning over the sea
+function spiralTex() {
+  const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d'), rnd = mulberry32(5), m = S / 2;
+  const puff = (x, y, r, a) => {
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, `rgba(255,255,255,${a})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
+  };
+  for (let i = 0; i < 900; i++) {                   // the dense disc round the eye
+    const r = Math.pow(rnd(), 0.7) * 120, a = rnd() * TAU;
+    puff(m + Math.cos(a) * r, m + Math.sin(a) * r, 14 + rnd() * 20, 0.16);
+  }
+  for (let k = 0; k < 4; k++) {                     // spiral rain bands
+    for (let i = 0; i < 260; i++) {
+      const t = i / 260, r = 60 + t * 190, a = k * TAU / 4 + Math.log(r / 60) * 2.3 + (rnd() - 0.5) * 0.25;
+      puff(m + Math.cos(a) * r, m + Math.sin(a) * r, 8 + (1 - t) * 26 * rnd(), 0.22 * (1 - t * 0.7));
+    }
+  }
+  g.globalCompositeOperation = 'destination-out';   // the clear eye
+  puff(m, m, 26, 1); puff(m, m, 16, 1);
+  g.globalCompositeOperation = 'source-over';
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.center.set(0.5, 0.5);
+  return t;
+}
+const TY_N = 40, TY_S = 6;
+const tyGeo = new THREE.PlaneGeometry(TY_S * 2, TY_S * 2, TY_N, TY_N).rotateX(-Math.PI / 2);
+const tyFlat = tyGeo.attributes.position.array.slice();
+const tyMat = new THREE.MeshStandardMaterial({ map: spiralTex(), transparent: true, depthWrite: false, roughness: 1, side: THREE.DoubleSide, opacity: 0 });
+const typhoon = new THREE.Mesh(tyGeo, tyMat);
+typhoon.frustumCulled = false; typhoon.visible = false; typhoon.renderOrder = 4;
+const tyRain = makeRain(900);
+function placeTyphoon(cx, cz, alt) {
+  const p = tyGeo.attributes.position, n = tyGeo.attributes.normal, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    bendVec(cx + tyFlat[i * 3], alt, cz + tyFlat[i * 3 + 2], v);
+    p.setXYZ(i, v.x, v.y, v.z);
+    v.y -= CEN; v.normalize(); n.setXYZ(i, v.x, v.y, v.z);
+  }
+  p.needsUpdate = true; n.needsUpdate = true;
+}
+
+// --- a waterspout: a twisting funnel under a dark cloud, spray at its foot
+const spoutMat = new THREE.ShaderMaterial({
+  uniforms: { uTime: U.uTime, uGrow: { value: 0 }, uA: { value: 0 }, uLight: { value: 1 } },
+  vertexShader: `uniform float uTime; varying vec2 vUv; varying float vY;
+    void main() {
+      vec3 p = position; float h = p.y / 3.2;
+      p.x += sin(p.y * 1.1 + uTime * 0.9) * 0.2 * h + sin(uTime * 1.7) * 0.05;
+      p.z += cos(p.y * 0.9 + uTime * 0.7) * 0.14 * h;
+      vY = h; vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }`,
+  fragmentShader: `uniform float uTime, uGrow, uA, uLight; varying vec2 vUv; varying float vY;
+    void main() {
+      float spin = sin(vUv.x * 31.4159 + vY * 9.0 - uTime * 7.0) * 0.5 + 0.5;
+      float show = smoothstep(1.0 - uGrow - 0.06, 1.0 - uGrow + 0.06, vY);
+      float a = (0.38 + 0.34 * spin) * show * uA;
+      gl_FragColor = vec4(mix(vec3(0.5, 0.55, 0.6), vec3(0.86, 0.89, 0.92), spin) * uLight, a);
+    }`,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
+});
+const spout3 = new THREE.Group();
+spout3.add(new THREE.Mesh(new THREE.LatheGeometry(Array.from({ length: 25 }, (_, i) => {
+  const y = i / 24 * 3.2; return new THREE.Vector2(0.07 + 0.62 * Math.pow(y / 3.2, 2.2), y);
+}), 28), spoutMat));
+const spoutCloud = makeCloud(8, '#737a80', 1.1);
+spoutCloud.scale.set(0.8, 0.55, 0.8);
+spoutCloud.position.y = 3.35;
+spout3.add(spoutCloud);
+const spoutFx = makeFx(spout3, 40);
+spout3.visible = false;
+const spoutE = onSide(spout3);
+
+// --- an aurora: curtains of light over the northern sea, on dark nights
+const auroraMat = new THREE.ShaderMaterial({
+  uniforms: { uTime: U.uTime, uGain: { value: 0 } },
+  vertexShader: `uniform float uTime; attribute float aS; attribute float aH; attribute vec3 aN; varying float vS; varying float vH;
+    void main() {
+      vec3 p = position + aN * sin(aS * 40.0 + uTime * 0.8) * 0.14 * aH;
+      vS = aS; vH = aH; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }`,
+  fragmentShader: `uniform float uTime, uGain; varying float vS; varying float vH;
+    void main() {
+      float rays = 0.5 + 0.5 * sin(vS * 260.0 + uTime * 2.0 + sin(vS * 37.0 + uTime * 0.7) * 3.0);
+      float ends = smoothstep(0.0, 0.1, vS) * (1.0 - smoothstep(0.9, 1.0, vS));
+      float green = smoothstep(0.0, 0.05, vH) * pow(1.0 - vH, 1.6) * (0.45 + 0.55 * rays);
+      float red = smoothstep(0.35, 0.7, vH) * (1.0 - vH) * 0.95;
+      vec3 c = vec3(0.25, 1.0, 0.55) * green + vec3(1.0, 0.25, 0.5) * red;
+      float a = (green + red) * ends * uGain;
+      gl_FragColor = vec4(c * ends * uGain, a);
+    }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+});
+const aurora = new THREE.Group();
+aurora.visible = false;
+[[7.2, -1.35, 1.35, 0.3], [6.4, -0.9, 1.05, 1.9], [8, -0.7, 0.9, 3.4]].forEach(([rad, a0, a1, ph]) => {
+  const N = 160, pos = [], aS = [], aH = [], aN = [], idx = [], v = new THREE.Vector3();
+  for (let i = 0; i <= N; i++) {
+    const s = i / N, a = lerp(a0, a1, s), r = rad + 0.8 * Math.sin(s * 9 + ph) + 0.35 * Math.sin(s * 23 + ph * 2);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    for (const [h, y] of [[0, 2.0], [1, 4.5]]) {
+      bendVec(x, y, z, v); pos.push(v.x, v.y, v.z); aS.push(s); aH.push(h); aN.push(Math.cos(a), 0, Math.sin(a));
+    }
+    if (i < N) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aS', new THREE.Float32BufferAttribute(aS, 1));
+  g.setAttribute('aH', new THREE.Float32BufferAttribute(aH, 1));
+  g.setAttribute('aN', new THREE.Float32BufferAttribute(aN, 3));
+  g.setIndex(idx);
+  const m = new THREE.Mesh(g, auroraMat); m.frustumCulled = false; m.renderOrder = 7;
+  aurora.add(m);
+});
+iceSide.add(aurora);
+
+const WX = [
+  {
+    key: 'rainbow', dur: 46, mark: '空もよう', text: 'にわか雨のあとに、虹が出ています',
+    // the sun must be low (under 42°) for a bow above the horizon; Okinawa's showers make
+    // rainbows common, Hokkaido has them in the warm months
+    rate: (s) => (sunDir.y < 0.05 || sunDir.y > 0.64 ? 0 : s === 'shore' ? 0.6 : SEASON.m >= 4 && SEASON.m < 10 ? 0.3 : 0),
+    start(ev, s) {
+      const sf = sunFlat(s), hx = -sf.x, hz = -sf.z;
+      ev.bx = hx * 6.2; ev.bz = hz * 6.2; ev.cx = hx * 7.6; ev.cz = hz * 7.6; ev.dx = -hz * 0.08; ev.dz = hx * 0.08;
+      bow.rotation.y = Math.atan2(sf.x, sf.z);
+      toSide(bowE, s); toSide(showerE, s); showerRain.place(s);
+      bow.visible = showerCloud.visible = showerRain.lines.visible = true;
+    },
+    update(ev, dt, u) {
+      ev.cx += ev.dx * dt; ev.cz += ev.dz * dt;
+      bow.position.set(ev.bx, groundAt(ev.side, ev.bx, ev.bz) - 0.3, ev.bz);
+      bowMats.forEach(m => { m.uniforms.uA.value = envelope(u, 44, 6, 10) * smooth(9, 15, u); });
+      showerCloud.position.set(ev.cx, groundAt(ev.side, ev.cx, ev.cz) + 3.2, ev.cz);
+      showerCloud.userData.mat.opacity = envelope(u, 40, 4, 10) * 0.92;
+      showerRain.mat.opacity = envelope(u, 24, 2, 7) * 0.55;
+      showerRain.update(dt, ev.cx, ev.cz, 1.5, groundAt(ev.side, ev.cx, ev.cz) + 3, ev.side);
+    },
+    end() { bow.visible = showerCloud.visible = showerRain.lines.visible = false; },
+    // look from the sun's side, as you must to see a rainbow
+    focus: () => { const p = bow.localToWorld(new THREE.Vector3(0, 1.4, 0)); return { p, d: 12, from: bow.localToWorld(new THREE.Vector3(0, 1.4, 1)).sub(p) }; },
+  },
+  {
+    key: 'typhoon', dur: 80, mark: '台風情報', text: '大きな台風が近づいています',
+    // Okinawa's typhoon season: a few a month from July to October, none in winter
+    rate: (s) => (s !== 'shore' ? 0 : [0, 0, 0, 0, 0.01, 0.03, 0.08, 0.12, 0.12, 0.07, 0.02, 0][Math.floor(SEASON.m) % 12]),
+    start(ev, s) {
+      const a0 = camAzimuth(s) + rr(-0.6, 0.6), a2 = a0 + Math.PI + rr(-0.7, 0.7), off = rr(-2.5, 2.5);
+      ev.p0 = [Math.cos(a0) * 10.5, Math.sin(a0) * 10.5];
+      ev.p2 = [Math.cos(a2) * 10.5, Math.sin(a2) * 10.5];
+      ev.p1 = [-Math.sin(a0) * off, Math.cos(a0) * off];
+      shoreSide.add(typhoon); tyRain.place('shore');
+      typhoon.visible = tyRain.lines.visible = true;
+    },
+    update(ev, dt, u) {
+      const k = u / ev.dur, b = (i) => (1 - k) * (1 - k) * ev.p0[i] + 2 * (1 - k) * k * ev.p1[i] + k * k * ev.p2[i];
+      ev.cx = b(0); ev.cz = b(1);
+      placeTyphoon(ev.cx, ev.cz, 3.9);
+      tyMat.map.rotation += dt * 0.35;
+      const env = envelope(u, ev.dur, 8, 10);
+      tyMat.opacity = env * 0.95;
+      ev.storm = env * (1 - smooth(2.2, 6, Math.hypot(ev.cx, ev.cz)));
+      tyRain.mat.opacity = env * 0.5;
+      tyRain.update(dt, ev.cx, ev.cz, 4.2, 3.7, 'shore', 3);
+      if (ev.storm > 0.6 && !ev.told) { ev.told = true; showNotice(ev, '台風情報', '台風の中心が島のすぐそばを通っています'); }
+    },
+    end() { typhoon.visible = tyRain.lines.visible = false; },
+    focus: (ev) => ({ p: sideOf('shore').localToWorld(bendVec(ev.cx, 3.9, ev.cz)), d: 28 }),
+  },
+  {
+    key: 'waterspout', dur: 40, mark: 'めずらしい！', text: '海の上で竜巻（水上竜巻）が起きています',
+    // needs warm, unsettled daytime air over the sea: summer and autumn in the south
+    rate: (s) => (sunDir.y < 0.1 ? 0 : s === 'shore' ? (SEASON.m >= 5 && SEASON.m < 10 ? 0.03 : 0.012) : SEASON.m >= 4 && SEASON.m < 9 ? 0.008 : 0),
+    start(ev, s) {
+      const depth = s === 'ice' ? (x, z) => tideY - iceHeight(x, z) : depthAt, ca = camAzimuth(s);
+      for (let k = 0; k < 40; k++) {
+        const a = ca + rr(-0.9, 0.9), r = rr(5.5, 9.5), dir = Math.random() < 0.5 ? 1 : -1;
+        const x = Math.cos(a) * r, z = Math.sin(a) * r, hx = -Math.sin(a) * dir * 0.22, hz = Math.cos(a) * dir * 0.22;
+        if (depth(x, z) > 0.8 && depth(x + hx * 40, z + hz * 40) > 0.8 && Math.hypot(x + hx * 40, z + hz * 40) < 10.8) {
+          Object.assign(ev, { x, z, hx, hz }); toSide(spoutE, s); spout3.visible = true; spoutFx.clear(); return;
+        }
+      }
+      ev.u = ev.dur;   // no open water in view: let it pass
+    },
+    update(ev, dt, u, t) {
+      ev.x += ev.hx * dt; ev.z += ev.hz * dt;
+      spout3.position.set(ev.x, tideY, ev.z);
+      const grow = smooth(2, 8, u) * (1 - smooth(33, 39, u));
+      spoutMat.uniforms.uGrow.value = grow;
+      spoutMat.uniforms.uA.value = envelope(u, ev.dur, 1, 3);
+      spoutMat.uniforms.uLight.value = 0.45 + 0.55 * (1 - nightF);
+      spoutCloud.userData.mat.opacity = envelope(u, ev.dur, 3, 5) * 0.95;
+      ev.tick = (ev.tick || 0) + dt;
+      if (grow > 0.9 && ev.tick > 0.12) {
+        ev.tick = 0;
+        spoutFx.burst(0, 0.05, 0, 3, (p) => { const a = rr(0, TAU); p.v.set(Math.cos(a) * 0.9, rr(0.8, 1.6), Math.sin(a) * 0.9); Object.assign(p, { max: rr(0.8, 1.2), s0: 0.05, s1: 0.13, g: -1.5, a0: 0.7 }); });
+        if (Math.random() < 0.15) spoutFx.foam(0, 0, 0.2, 1.1, 1.2);
+      }
+      spoutFx.update(dt);
+    },
+    end() { spout3.visible = false; spoutFx.clear(); },
+    focus: () => ({ p: spout3.getWorldPosition(new THREE.Vector3()).addScaledVector(spout3.getWorldPosition(new THREE.Vector3()).sub(WX_C).normalize(), 1.6), d: 10 }),
+  },
+  {
+    key: 'aurora', dur: 95, mark: 'めずらしい！', text: '夜空にオーロラが揺れています（北海道ではめったに見られません）',
+    // only on dark nights; the magnetic storms that bring it are likelier near the
+    // equinoxes and the long winter nights help
+    rate: (s) => (s !== 'ice' || sunDir.y > -0.2 ? 0 : 0.08 * ([2, 8, 9].includes(Math.floor(SEASON.m) % 12) ? 2 : SEASON.m >= 10.5 || SEASON.m < 2 ? 1.3 : 1)),
+    start(ev, s) { aurora.rotation.y = -camAzimuth('ice'); aurora.visible = true; },
+    update(ev, dt, u, t) {
+      if (sunDir.y > -0.08 && ev.dur > u + 6) ev.dur = u + 6;   // dawn washes it out
+      auroraMat.uniforms.uGain.value = envelope(u, ev.dur, 14, 12) * (1 + 0.35 * Math.sin(t * 1.3) * smooth(20, 40, u));
+    },
+    end() { aurora.visible = false; },
+    focus: () => ({ p: aurora.localToWorld(bendVec(7.2, 3.2, 0)), d: 22 }),
+  },
+];
+let wxNow = null, wxClock = 0, wxCool = rr(25, 45);
+function startWx(ev, s) {
+  wxNow = ev; ev.side = s; ev.u = 0; ev.storm = 0; ev.told = false;
+  if (ev.baseDur == null) ev.baseDur = ev.dur;
+  ev.dur = ev.baseDur;
+  ev.start(ev, s);
+  if (ev.u < ev.dur) showNotice(ev, ev.mark, ev.text);
+}
+function endWx() {
+  const ev = wxNow;
+  wxNow = null; wxCool = rr(40, 80);
+  ev.end(ev); ev.storm = 0;
+  hideNotice(ev);
+}
+function updateWeather(dt, t) {
+  updateMeteors(dt);
+  if (wxNow) {
+    const ev = wxNow;
+    ev.u += dt;
+    const live = ev.side === 'ice' ? flipF > 0.001 : flipF < 0.999;
+    if (!live || ev.u >= ev.dur) endWx(); else ev.update(ev, dt, ev.u, t);
+  } else if (!flipAnim && !pov) {
+    if (wxCool > 0) wxCool -= dt;
+    else {
+      wxClock += dt * MINUTES_PER_SECOND / 60;   // roll once per garden hour
+      if (wxClock >= 1) {
+        wxClock = 0;
+        for (const ev of [...WX].sort(() => Math.random() - 0.5)) {
+          if (Math.random() < ev.rate(side) * WX_SCALE / 24) { startWx(ev, side); break; }
+        }
+      }
+    }
+  }
+  // storms dim the light, bend the grass and stir the sea
+  const storm = wxNow ? wxNow.storm || 0 : 0;
+  U_WIND.value = 1 + 2.2 * storm;
+  sun.intensity *= 1 - 0.6 * storm;
+  hemi.intensity *= 1 - 0.45 * storm;
+  waterPhase += dt * (1 + 3 * storm);
+}
+let waterPhase = 0;
+
+// --- shooting stars: short streaks burning in the atmosphere over the night side
+function glowTexW(stops) {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  stops.forEach(([o, col]) => gr.addColorStop(o, col));
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const METEOR_SHOWERS = [
+  { name: 'しぶんぎ座流星群', day: 3, width: 1.2, radiant: new THREE.Vector3(0.3, 0.8, -0.5) },
+  { name: 'ペルセウス座流星群', day: 224, width: 2.5, radiant: new THREE.Vector3(-0.2, 0.7, -0.7) },
+  { name: 'ふたご座流星群', day: 347, width: 2, radiant: new THREE.Vector3(0.6, 0.6, 0.5) },
+];
+METEOR_SHOWERS.forEach(m => m.radiant.normalize());
+const meteorHeadMat = new THREE.SpriteMaterial({ map: glowTexW([[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(220,235,255,0.6)'], [1, 'rgba(200,220,255,0)']]), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+const meteors = Array.from({ length: 8 }, () => {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array([1, 0.97, 0.9, 1, 0.55, 0.75, 1, 0]), 4));
+  const l = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  l.frustumCulled = false; l.visible = false;
+  const head = new THREE.Sprite(meteorHeadMat.clone()); head.scale.setScalar(0.32); l.add(head);
+  scene.add(l);
+  return { l, head, age: 0, life: 0, p: new THREE.Vector3(), d: new THREE.Vector3(), sp: 4 };
+});
+let meteorWait = rr(3, 6), showerNoticed = '';
+function activeShower() {
+  const day = ((yearT % 1) + 1) % 1 * 365;
+  return METEOR_SHOWERS.find(m => Math.abs(day - m.day) < m.width) || null;
+}
+function spawnMeteor(shower) {
+  const m = meteors.find(x => !x.l.visible);
+  if (!m) return;
+  const camDir = camera.position.clone().sub(WX_C).normalize(), v = new THREE.Vector3();
+  for (let k = 0; k < 20; k++) {
+    v.set(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize();
+    if (v.dot(sunDir) > -0.2 || v.dot(camDir) < 0.35) continue;
+    m.p.copy(WX_C).addScaledVector(v, PR + 2.3);
+    if (shower) m.d.copy(shower.radiant).multiplyScalar(-1);
+    else m.d.set(rr(-1, 1), rr(-1, 1), rr(-1, 1));
+    m.d.addScaledVector(v, -m.d.dot(v)).normalize().addScaledVector(v, -0.35).normalize();
+    m.age = 0; m.life = rr(0.6, 1.1); m.sp = rr(3, 5); m.l.visible = true;
+    return;
+  }
+}
+function updateMeteors(dt) {
+  const shower = activeShower();
+  meteorWait -= dt;
+  if (meteorWait <= 0) { meteorWait = shower ? rr(0.5, 1.5) : rr(4, 9); spawnMeteor(shower); }
+  if (shower && nightF > 0.6 && !wxNow && showerNoticed !== shower.name && !noticeOwner) {
+    showerNoticed = shower.name; showNotice('meteor', '今夜の空', `${shower.name}がピークです。流れ星が多く流れます`, 12);
+  }
+  for (const m of meteors) {
+    if (!m.l.visible) continue;
+    m.age += dt;
+    if (m.age > m.life) { m.l.visible = false; continue; }
+    const pos = m.l.geometry.attributes.position, trav = m.sp * m.age;
+    const hx = m.p.x + m.d.x * trav, hy = m.p.y + m.d.y * trav, hz = m.p.z + m.d.z * trav, tl = Math.min(1.3, trav * 0.8);
+    pos.setXYZ(0, hx, hy, hz); pos.setXYZ(1, hx - m.d.x * tl, hy - m.d.y * tl, hz - m.d.z * tl);
+    pos.needsUpdate = true;
+    m.l.material.opacity = smooth(0, 0.12, m.age) * (1 - smooth(m.life * 0.6, m.life, m.age));
+    m.head.position.set(hx, hy, hz); m.head.material.opacity = m.l.material.opacity;
+  }
+}
 
 /* ------------------------------------------------------------------ camera views */
 const VIEWS = {
@@ -3456,7 +3899,11 @@ function updatePov(dt) {
 }
 $('cardPov').addEventListener('click', () => { if (sel) enterPov(sel); });
 $('povExit').addEventListener('click', () => exitPov(true));
-$('rareGo').addEventListener('click', () => { if (rareNow) select(rareNow, true); });
+$('rareGo').addEventListener('click', () => {
+  const o = noticeOwner;
+  if (o && typeof o.focus === 'function') { const f = o.focus(o); flyToWorld(f.p, f.d, f.from); hideNotice(o); }
+  else if (rareNow) select(rareNow, true);
+});
 let sel = null, statusTimer = 0;
 let homePose = null;   // where the camera was before the first creature was picked
 function select(ind, fly) {
@@ -3479,7 +3926,7 @@ function select(ind, fly) {
   document.body.classList.add('has-card');
   Object.entries(chipBtns).forEach(([k, b]) => b.setAttribute('aria-pressed', String(k === ind.species)));
   ring.visible = !ind.noRing;
-  if (ind === rareNow) $('rare').hidden = true;
+  if (ind === rareNow) hideNotice(ind);
   if (fly) {
     const target = ind.group.getWorldPosition(new THREE.Vector3());
     target.y += 0.15;
@@ -3707,7 +4154,7 @@ function frame() {
   ICE_U.uSideInv.value.copy(iceSide.matrixWorld).invert();
   const shoreLive = flipF < 0.999, iceLive = flipF > 0.001;
   poolDiscs.forEach((d, i) => { d.visible = tideY < POOLS[i].level - 0.005; });
-  waterNormal.offset.set(t * 0.012, t * 0.008);
+  waterNormal.offset.set(waterPhase * 0.012, waterPhase * 0.008);
   updateDay(dt);
   updateSeasons(dt);
 
@@ -3728,6 +4175,7 @@ function frame() {
   }
   if (shoreLive) updateSchool(dt, t);
   updateRare(dt);
+  updateWeather(dt, t);
   for (const e of bendRoots) if (e.dynamic && e.obj !== ring && (e.side === 'ice' ? iceLive : shoreLive)) applyBend(e);
 
   // selection
@@ -3813,6 +4261,10 @@ window.__tidal = {
   season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
   get rareNow() { return rareNow; },
+  get wxNow() { return wxNow; },
+  meteorBurst(n) { for (let i = 0; i < n; i++) { spawnMeteor(null); } meteors.forEach(m => { m.age = 0.3; }); },
+  wx(k) { if (wxNow) endWx(); startWx(WX.find(e => e.key === k), side); return !!wxNow; },
+  wxSkip(sec) { for (let i = 0; i < sec * 30 && wxNow; i++) { wxNow.u += 1 / 30; wxNow.update(wxNow, 1 / 30, wxNow.u, i / 30); } },
   jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camera.up.copy(camAnim.u1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
 };
 </script>
