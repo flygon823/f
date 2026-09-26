@@ -686,12 +686,16 @@ poolMat.opacity = 0.5;
 
 // One ocean around the whole planet: warm green-blue in the north fading to cold blue
 // in the south, with no line at the equator.
-const waterGeo = new THREE.SphereGeometry(1, 180, 128);
+// A cube blown up into a ball: a UV sphere would pinch the ripple texture into spokes at
+// its poles, right in the middle of each side; this way every patch of sea is tiled alike.
+const waterGeo = new THREE.BoxGeometry(2, 2, 2, 64, 64, 64);
 {
-  const uv = waterGeo.attributes.uv, p = waterGeo.attributes.position, cols = [];
+  const uv = waterGeo.attributes.uv, p = waterGeo.attributes.position, n = waterGeo.attributes.normal, cols = [], v = new THREE.Vector3();
   const warm = new THREE.Color('#5fbab0'), cold = new THREE.Color('#3a7d93'), c = new THREE.Color();
   for (let i = 0; i < uv.count; i++) {
-    uv.setXY(i, uv.getX(i) * 64, uv.getY(i) * 32);
+    v.fromBufferAttribute(p, i).normalize();
+    p.setXYZ(i, v.x, v.y, v.z); n.setXYZ(i, v.x, v.y, v.z);
+    uv.setXY(i, uv.getX(i) * 16, uv.getY(i) * 16);
     c.copy(cold).lerp(warm, smooth(-0.55, 0.55, p.getY(i)));
     cols.push(c.r, c.g, c.b);
   }
