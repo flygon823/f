@@ -2710,6 +2710,8 @@ function addChip(key) {
   b.textContent = SPECIES[key].name.replace('（幼魚）', '');
   b.setAttribute('aria-pressed', 'false');
   b.addEventListener('click', () => {
+    // pressing the chip of the creature already shown puts it away and returns to the earlier view
+    if (sel && sel.species === key) { if (pov) exitPov(false); deselect(true); return; }
     const list = inds.filter(i => i.species === key && !i.hidden);
     cycle[key] = ((cycle[key] ?? -1) + 1) % list.length;
     select(list[cycle[key]], true);
@@ -2787,8 +2789,10 @@ function updatePov(dt) {
 $('cardPov').addEventListener('click', () => { if (sel) enterPov(sel); });
 $('povExit').addEventListener('click', () => exitPov(true));
 let sel = null, statusTimer = 0;
+let homePose = null;   // where the camera was before the first creature was picked
 function select(ind, fly) {
   if (pov) exitPov(false);
+  if (!sel && fly) homePose = { pos: camera.position.clone(), target: controls.target.clone(), up: camera.up.clone(), view: currentView };
   sel = ind;
   const sp = SPECIES[ind.species];
   $('cardKind').textContent = sp.kind;
@@ -2820,15 +2824,20 @@ function select(ind, fly) {
     setViewButtons('');
   }
 }
-function deselect() {
+function deselect(back = false) {
+  if (back && sel && homePose) {
+    flyTo(homePose.pos, homePose.target, 1.4, homePose.up);
+    setViewButtons(homePose.view);
+  }
+  homePose = null;
   sel = null;
   ui.card.hidden = true;
   document.body.classList.remove('has-card');
   ring.visible = false;
   Object.values(chipBtns).forEach(b => b.setAttribute('aria-pressed', 'false'));
 }
-$('cardClose').addEventListener('click', deselect);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (pov) exitPov(true); else deselect(); } });
+$('cardClose').addEventListener('click', () => deselect(true));
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (pov) exitPov(true); else deselect(true); } });
 
 // picking
 const raycaster = new THREE.Raycaster();
