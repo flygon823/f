@@ -99,6 +99,15 @@
     background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(10px); color: var(--ink); font-size: 12px; letter-spacing: 0.06em; white-space: nowrap;
   }
   .povbar .pov-hint { color: var(--ink-3); font-size: 11px; }
+  .rare {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--dock-h) + 20px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; border-radius: 999px; animation: rare-in 0.6s ease;
+    background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(10px); color: var(--ink); font-size: 12px; letter-spacing: 0.06em; white-space: nowrap;
+  }
+  .rare[hidden], body.pov-on .rare { display: none; }
+  .rare .rare-mark { color: var(--tide); font-weight: 600; font-size: 11px; }
+  .rare button { border: 0; border-radius: 999px; padding: 6px 12px; background: var(--tide); color: #f4faf9; font-size: 11px; cursor: pointer; }
+  @keyframes rare-in { from { opacity: 0; transform: translate(-50%, 6px); } }
   .povbar button { border: 0; border-radius: 999px; padding: 7px 14px; background: var(--tide); color: #f4faf9; font-size: 12px; cursor: pointer; }
   @media (max-width: 720px) { .povbar .pov-hint { display: none; } }
   .brand .lede { margin: 0; font-size: 12px; letter-spacing: 0.08em; color: var(--float-ink-2); }
@@ -238,7 +247,9 @@
     .views { justify-self: end; }
     .views button { padding: 6px 11px; }
     .dock { bottom: calc(var(--controls-h) + 18px + env(safe-area-inset-bottom, 0px)); }
-    .povbar { bottom: calc(var(--controls-h) + var(--dock-h) + 24px + env(safe-area-inset-bottom, 0px)); }
+    .povbar, .rare { bottom: calc(var(--controls-h) + var(--dock-h) + 24px + env(safe-area-inset-bottom, 0px)); }
+    .rare { font-size: 11px; gap: 8px; }
+    body.has-card .rare { display: none; }
     .caption { left: 16px; right: 16px; bottom: auto; top: calc(128px + env(safe-area-inset-top, 0px)); }
     .caption .state { margin-bottom: 4px; font-size: 10px; }
     .caption .poem { font-size: 15px; line-height: 1.6; }
@@ -327,6 +338,11 @@
   <span id="povName">マダコの目線</span>
   <span class="pov-hint">ドラッグで見回す</span>
   <button type="button" id="povExit">もとにもどる</button>
+</div>
+<div class="rare" id="rare" role="status" hidden>
+  <span class="rare-mark">めずらしい！</span>
+  <span id="rareText">ザトウクジラが姿を見せました</span>
+  <button type="button" id="rareGo">見にいく</button>
 </div>
 <div class="tip" id="tip" hidden></div>
 <p class="credit">ドラッグで回転・スクロールで拡大。生き物は見やすい大きさに変えています。</p>
@@ -2417,6 +2433,541 @@ Object.assign(SPECIES, {
 ORDER.push('momo', 'tsumabeni');
 
 /* ------------------------------------------------------------------ selection ring */
+/* ------------------------------------------------------------------ rare visitors */
+// Now and then something big surfaces in the open sea near the equator: a humpback,
+// a green turtle, or a pod of orcas off Shiretoko. One at a time, on the side facing up.
+const fxGeo = new THREE.IcosahedronGeometry(1, 1);
+const foamGeo = new THREE.RingGeometry(0.72, 1, 40).rotateX(-Math.PI / 2);
+// spray and foam in the visitor's own frame (y = 0 is the sea surface)
+function makeFx(parent, n = 36) {
+  const parts = [], rings = [];
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(fxGeo, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, transparent: true, opacity: 0, depthWrite: false }));
+    m.visible = false; parent.add(m);
+    parts.push({ m, v: new THREE.Vector3(), life: 0, max: 1, s0: 0.05, s1: 0.2, g: -1, a0: 0.8 });
+  }
+  for (let i = 0; i < 2; i++) {
+    const m = new THREE.Mesh(foamGeo, new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false }));
+    m.visible = false; m.renderOrder = 3; parent.add(m);
+    rings.push({ m, life: 0, max: 2, r0: 0.3, r1: 2 });
+  }
+  let next = 0, nextR = 0;
+  return {
+    burst(x, y, z, count, init) {
+      for (let i = 0; i < count; i++) { const p = parts[next++ % n]; p.m.position.set(x, y, z); init(p); p.life = p.max; p.m.visible = true; }
+    },
+    foam(x, z, r0, r1, max) {
+      const r = rings[nextR++ % rings.length];
+      r.m.position.set(x, 0.03, z); Object.assign(r, { r0, r1, max, life: max }); r.m.visible = true;
+    },
+    // the visitor swims on while its spray stays where it was thrown
+    shift(dz) { for (const p of parts) if (p.life > 0) p.m.position.z += dz; for (const r of rings) if (r.life > 0) r.m.position.z += dz; },
+    update(dt) {
+      for (const p of parts) {
+        if (p.life <= 0) continue;
+        p.life -= dt;
+        const f = 1 - p.life / p.max;
+        p.v.y += p.g * dt; p.v.multiplyScalar(1 - dt * 0.8);
+        p.m.position.addScaledVector(p.v, dt);
+        p.m.scale.setScalar(lerp(p.s0, p.s1, f));
+        p.m.material.opacity = p.a0 * (1 - f);
+        if (p.life <= 0) p.m.visible = false;
+      }
+      for (const r of rings) {
+        if (r.life <= 0) continue;
+        r.life -= dt;
+        const f = 1 - r.life / r.max;
+        r.m.scale.setScalar(lerp(r.r0, r.r1, Math.sqrt(f)));
+        r.m.material.opacity = 0.55 * (1 - f);
+        if (r.life <= 0) r.m.visible = false;
+      }
+    },
+    clear() { for (const p of parts) { p.life = 0; p.m.visible = false; } for (const r of rings) { r.life = 0; r.m.visible = false; } },
+  };
+}
+// a whale's blow: a tall, narrow puff of mist
+const spout = (fx, x, y, z, k = 1) => fx.burst(x, y, z, 16, (p) => {
+  p.v.set(rr(-0.13, 0.13) * k, rr(1.9, 3.1) * k, rr(-0.13, 0.13) * k);
+  Object.assign(p, { max: rr(1.3, 2), s0: 0.025 * k, s1: 0.13 * k, g: -1.1, a0: 0.55 });
+});
+function splash(fx, x, z, k = 1) {
+  fx.burst(x, 0.05, z, 18, (p) => {
+    const a = rr(0, TAU), s = rr(0.6, 1.5) * k;
+    p.v.set(Math.cos(a) * s, rr(1.4, 2.8) * k, Math.sin(a) * s);
+    Object.assign(p, { max: rr(0.9, 1.3), s0: 0.07 * k, s1: 0.14 * k, g: -4.5, a0: 0.85 });
+  });
+  fx.foam(x, z, 0.3 * k, 2.2 * k, 2.2);
+}
+// keyframes [time, y, pitch (nose up +), roll], eased between keys
+function keyed(keys, u) {
+  if (u <= keys[0][0]) return keys[0];
+  for (let i = 1; i < keys.length; i++) {
+    const b = keys[i];
+    if (u <= b[0]) { const a = keys[i - 1], f = smooth(a[0], b[0], u); return a.map((v, j) => lerp(v, b[j], f)); }
+  }
+  return keys[keys.length - 1];
+}
+const crossed = (ind, at) => ind.prevU < at && ind.u >= at;
+
+// a thin fin blade in the y-z plane, its base along the back from z = 0 to z = -len
+function bladeGeo(h, len, sweep, w = 0.03) {
+  const s = new THREE.Shape();
+  s.moveTo(0, 0); s.lineTo(len, 0); s.quadraticCurveTo(len * 0.7, h * 0.4, sweep, h); s.quadraticCurveTo(len * 0.05, h * 0.5, 0, 0);
+  return new THREE.ExtrudeGeometry(s, { depth: w, bevelEnabled: false }).translate(0, 0, -w / 2).rotateY(Math.PI / 2);
+}
+function makeHumpback() {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const dark = M('#3a4753', { roughness: 0.5 }), pale = M('#d3dadd', { roughness: 0.6 });
+  blob(body, dark, 0, 0, 0.35, 0.46, 0.42, 1.0);
+  blob(body, pale, 0, -0.16, 0.5, 0.38, 0.28, 0.86);
+  blob(body, dark, 0, 0.03, -0.72, 0.27, 0.25, 0.72);
+  for (const s of [-1, 1]) {
+    blob(body, dark, s * 0.1, 0.28, 1.02, 0.028);
+    blob(body, dark, s * 0.07, 0.2, 1.24, 0.024);
+    blob(body, eyeMat, s * 0.39, -0.04, 0.92, 0.03);
+    const fin = new THREE.Group(); fin.position.set(s * 0.38, -0.2, 0.55); fin.rotation.set(0, s * -0.55, s * -0.4); body.add(fin);
+    blob(fin, pale, s * 0.48, 0, -0.1, 0.52, 0.035, 0.12);
+  }
+  const hump = new THREE.Mesh(bladeGeo(0.14, 0.34, 0.24, 0.07), dark); hump.position.set(0, 0.24, -0.35); body.add(hump);
+  const flukes = new THREE.Group(); flukes.position.set(0, 0.03, -1.35); body.add(flukes);
+  for (const s of [-1, 1]) {
+    const f = blob(flukes, dark, s * 0.34, 0, -0.2, 0.38, 0.035, 0.17); f.rotation.y = s * 0.35;
+    const u = blob(flukes, pale, s * 0.32, -0.02, -0.2, 0.33, 0.02, 0.13); u.rotation.y = s * 0.35;
+  }
+  return { group: g, body, flukes };
+}
+function makeTurtle() {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), M('#6c6636', { roughness: 0.55, flatShading: true }));
+  shell.scale.set(0.36, 0.13, 0.45); shell.position.y = 0.05; body.add(shell);
+  const skin = M('#8b8c5c', { roughness: 0.7 });
+  blob(body, M('#d8cf9c', { roughness: 0.7 }), 0, -0.03, 0, 0.32, 0.06, 0.4);
+  const head = blob(body, skin, 0, 0.04, 0.52, 0.12, 0.1, 0.15);
+  for (const s of [-1, 1]) blob(body, eyeMat, s * 0.08, 0.08, 0.6, 0.018);
+  const flips = [];
+  for (const [s, z, l] of [[-1, 0.22, 0.3], [1, 0.22, 0.3], [-1, -0.34, 0.12], [1, -0.34, 0.12]]) {
+    const f = new THREE.Group(); f.position.set(s * 0.26, 0, z); body.add(f);
+    const m = blob(f, skin, s * l * 0.85, 0, -l * 0.25, l, 0.025, l * 0.32); m.rotation.y = s * 0.45;
+    flips.push({ f, s, front: l > 0.2 });
+  }
+  return { group: g, body, head, flips };
+}
+function makeOrca(len, fin) {
+  const c = new THREE.Group(), body = new THREE.Group(); c.add(body);
+  const black = M('#16191c', { roughness: 0.35 }), white = M('#f2f3f0', { roughness: 0.5 });
+  const k = len / 1.5;
+  blob(body, black, 0, 0, 0.1 * k, 0.24 * k, 0.24 * k, 0.62 * k);
+  blob(body, black, 0, 0.01, -0.5 * k, 0.13 * k, 0.13 * k, 0.4 * k);
+  blob(body, white, 0, -0.12 * k, 0.25 * k, 0.16 * k, 0.1 * k, 0.4 * k);
+  blob(body, M('#9aa1a6', { roughness: 0.5 }), 0, 0.15 * k, -0.18 * k, 0.12 * k, 0.07 * k, 0.14 * k);
+  for (const s of [-1, 1]) {
+    blob(body, white, s * 0.17 * k, 0.08 * k, 0.42 * k, 0.05 * k, 0.04 * k, 0.1 * k);
+    const p = blob(body, black, s * 0.26 * k, -0.12 * k, 0.28 * k, 0.16 * k, 0.025 * k, 0.09 * k); p.rotation.set(0, s * -0.4, s * -0.5);
+    const f = blob(body, black, s * 0.17 * k, 0.01, -0.92 * k, 0.19 * k, 0.02 * k, 0.08 * k); f.rotation.y = s * 0.35;
+  }
+  const d = new THREE.Mesh(bladeGeo(fin * k, 0.26 * k, fin > 0.4 ? 0.06 * k : 0.2 * k, 0.035 * k), black);
+  d.position.set(0, 0.2 * k, 0.02 * k); body.add(d);
+  return { c, body };
+}
+
+const RARE = [];
+let rareNow = null, rareWait = rr(20, 34);
+function rareVisitor(o) {
+  const ind = register({
+    fixed: true, hidden: true, present: false, u: 0, prevU: 0, s: 0, pickY: 0, ringY: () => tideY + 0.03, ...o,
+    update(ind, dt, t) {
+      if (!ind.present) return;
+      ind.prevU = ind.u; ind.u += dt;
+      const step = ind.speed * dt;
+      ind.s += step; ind.fx.shift(-step);
+      ind.group.position.set(ind.x0 + ind.hx * ind.s, tideY, ind.z0 + ind.hz * ind.s);
+      ind.group.rotation.y = Math.atan2(ind.hx, ind.hz);
+      ind.pose(ind, ind.u, t);
+      ind.fx.update(dt);
+    },
+  });
+  ind.group.visible = false;
+  ind.fx = makeFx(ind.group);   // added after register so the spray casts no shadows
+  if (ind.sideName === 'ice') ind.activeFn = () => ind.present;
+  RARE.push(ind);
+  return ind;
+}
+const WHALE_DIVE = [[0, -1.9, 0.15, 0], [2.6, -0.22, 0, 0], [9, -0.22, 0, 0], [10.2, -0.36, -0.35, 0], [12.4, -0.95, -1.25, 0], [15, -3.2, -1.3, 0]];
+const WHALE_BREACH = [[0, -1.9, 0.15, 0], [2.6, -0.22, 0, 0], [7.6, -0.22, 0, 0], [8.8, -1.7, -0.25, 0], [10.1, 0.95, 1.05, 0.9], [10.9, -0.2, 0.35, 1.7], [12.2, -1.6, -0.2, 1.9], [15, -3.2, -0.3, 1.9]];
+function whalePose(ind, u) {
+  const k = keyed(ind.variant ? WHALE_BREACH : WHALE_DIVE, u);
+  ind.body.position.y = k[1] + 0.04 * Math.sin(u * 1.4);
+  ind.body.rotation.set(-k[2], 0, k[3]);
+  ind.flukes.rotation.x = 0.16 * Math.sin(u * 1.6);
+  for (const at of ind.variant ? [3.2, 5.9] : [3.2, 5.9, 8.2]) if (crossed(ind, at)) spout(ind.fx, 0, k[1] + 0.45, 0.85);
+  if (ind.variant) {
+    if (crossed(ind, 9.6)) splash(ind.fx, 0, 0.6, 0.7);
+    if (crossed(ind, 10.8)) splash(ind.fx, 0, 0, 1.3);
+  } else if (crossed(ind, 12.9)) splash(ind.fx, 0, -1.3, 0.35);
+}
+const whaleStatus = (ind) => {
+  const u = ind.u;
+  if (u < 2.6) return '深いところから、ゆっくり浮かんできました。';
+  if (u < (ind.variant ? 7.6 : 9)) return '「ブシュー」と潮を吹いて、息つぎをしています。';
+  if (ind.variant) return u < 10.9 ? '海から体ごと跳び上がりました！（ブリーチング）' : '大きな水しぶきを上げて、海にもどりました。';
+  return '尾びれを高く上げて、深く潜っていきます。';
+};
+const TURTLE = [[0, -1.3, 0.2, 0], [3.5, -0.45, 0, 0], [8, -0.4, 0.05, 0], [9.6, -0.1, 0.25, 0], [11.4, -0.12, 0.2, 0], [12.6, -0.5, -0.1, 0], [16.5, -0.5, 0, 0], [20, -1.7, -0.35, 0]];
+function turtlePose(ind, u, t) {
+  const k = keyed(TURTLE, u);
+  ind.body.position.y = k[1] + 0.03 * Math.sin(u * 1.2);
+  ind.body.rotation.set(-k[2], 0, 0.06 * Math.sin(u * 1.2));
+  for (const f of ind.flips) f.f.rotation.z = f.s * (f.front ? 0.5 * Math.sin(u * 2.2) : 0.15 * Math.sin(u * 2.2 + 1));
+  if (crossed(ind, 9.8)) ind.fx.foam(0, 0.5, 0.15, 0.9, 1.8);
+}
+const POD = [[0, -1.2], [1.8, 0], [11.8, 0], [15, -1.8]];
+function podPose(ind, u) {
+  const base = keyed(POD, u)[1];
+  ind.orcas.forEach((o, i) => {
+    const s = ((u + i * 0.55) % 3.2) / 3.2;
+    let y = -0.66 + 0.04 * Math.sin(u * 2 + i), p = 0.02;
+    if (s < 0.38) { const a = s / 0.38 * Math.PI; y = -0.62 + 0.52 * Math.sin(a); p = 0.45 * Math.cos(a); }
+    o.c.position.y = base + y;
+    o.body.rotation.x = -p;
+    const was = ((ind.prevU + i * 0.55) % 3.2) / 3.2;
+    if (base > -0.3 && was < 0.12 && s >= 0.12) spout(ind.fx, o.c.position.x, 0.05, o.c.position.z + 0.5 * o.len, 0.45);
+  });
+}
+{
+  const hb = makeHumpback();
+  rareVisitor({ species: 'zatou', sideName: 'shore', ...hb, speed: 0.42, dur: 15, need: 2.2, pick: 1.6, focus: 4.2, can: () => true, toast: 'が姿を見せました', pose: whalePose });
+  const tu = makeTurtle();
+  rareVisitor({ species: 'aoumigame', sideName: 'shore', ...tu, speed: 0.24, dur: 20, need: 1.4, pick: 0.7, focus: 2.6, can: () => true, toast: 'が息つぎに上がってきました', pose: turtlePose });
+  const hb2 = makeHumpback();
+  rareVisitor({ species: 'zatou', sideName: 'ice', ...hb2, speed: 0.42, dur: 15, need: 2.2, pick: 1.6, focus: 4.2, can: () => SEASON.ice < 0.3 && SEASON.m >= 4 && SEASON.m < 10.5, toast: 'が姿を見せました', pose: whalePose });
+  const pod = new THREE.Group(), orcas = [];
+  [[1.6, 0.5, 0, 0], [1.25, 0.24, -0.75, -1.15], [0.8, 0.18, 0.55, -0.95]].forEach(([len, fin, x, z]) => {
+    const o = makeOrca(len, fin); o.c.position.set(x, 0, z); o.len = len; pod.add(o.c); orcas.push(o);
+  });
+  rareVisitor({ species: 'shachi', sideName: 'ice', group: pod, orcas, speed: 0.45, dur: 15, need: 1.8, pick: 1.3, focus: 4, can: () => SEASON.ice < 0.5, toast: 'の群れがやってきました', pose: podPose });
+}
+Object.assign(SPECIES, {
+  zatou: {
+    name: 'ザトウクジラ', sci: 'Megaptera novaeangliae', kind: '哺乳類・クジラのなかま', noBooth: true,
+    desc: '長い胸びれを持つヒゲクジラ。冬は暖かい南の海で子育てをし、夏は北の冷たい海でエサを食べます。体ごと海から跳び上がる「ブリーチング」で知られます。',
+    size: '全長 約13〜15m', habitat: '外洋（冬は沖縄の海、夏は北の海）', status: whaleStatus,
+  },
+  aoumigame: {
+    name: 'アオウミガメ', sci: 'Chelonia mydas', kind: '爬虫類・ウミガメのなかま', noBooth: true,
+    desc: '海草や海藻を食べる、おだやかなウミガメ。ときどき海面に鼻先を出して息つぎをします。夏の夜、生まれた砂浜にもどって卵を産みます。',
+    size: '甲長 約1m', habitat: '暖かい海・サンゴ礁のまわり',
+    status: (ind) => ind.u < 3.5 ? '深いところから、ゆっくり上がってきました。' : ind.u > 8.6 && ind.u < 11.6 ? '海面に鼻先を出して、息つぎをしています。'
+      : ind.u > 16.5 ? '前びれをひとかきして、深いところへ潜っていきます。' : '前びれをはばたかせて、空を飛ぶように泳いでいます。',
+  },
+  shachi: {
+    name: 'シャチ', sci: 'Orcinus orca', kind: '哺乳類・イルカのなかま', side: 'ice', noBooth: true,
+    desc: '白と黒の体の、海でいちばん強いハンター。家族の群れで暮らし、知床の羅臼沖では春から夏にかけて群れが見られます。オスの背びれは2mほどの高さになります。',
+    size: '全長 約6〜9m', habitat: '世界中の海（知床・羅臼沖）',
+    status: (ind) => ind.u < 1.8 ? '沖のほうから、群れが近づいてきました。' : ind.u > 11.8 ? '群れそろって、深く潜っていきます。' : '家族の群れで、背びれを立てて泳いでいます。',
+  },
+});
+// start a visitor in deep water on the part of the side that faces the camera
+function spawnRare(r) {
+  const sg = r.sideName === 'ice' ? iceSide : shoreSide;
+  const cp = unbend(sg.worldToLocal(camera.position.clone()));
+  const camA = Math.atan2(cp.z, cp.x);
+  const depth = r.sideName === 'ice' ? (x, z) => tideY - iceHeight(x, z) : depthAt;
+  const len = r.speed * r.dur;
+  for (let k = 0; k < 40; k++) {
+    const a = camA + rr(-1, 1), rad = rr(8.2, 10.4), dir = Math.random() < 0.5 ? 1 : -1;
+    const x0 = Math.cos(a) * rad, z0 = Math.sin(a) * rad, hx = -Math.sin(a) * dir, hz = Math.cos(a) * dir;
+    let ok = true;
+    for (let s = 0; s <= 8 && ok; s++) {
+      const x = x0 + hx * len * s / 8, z = z0 + hz * len * s / 8;
+      if (Math.hypot(x, z) > 11 || depth(x, z) < r.need) ok = false;
+    }
+    if (!ok) continue;
+    Object.assign(r, { x0, z0, hx, hz, s: 0, u: 0, prevU: 0, present: true, hidden: false, variant: Math.random() < 0.45 ? 1 : 0 });
+    r.fx.clear();
+    r.update(r, 0, 0);
+    r.group.visible = true;
+    rareNow = r;
+    $('rareText').textContent = SPECIES[r.species].name + r.toast;
+    $('rare').hidden = sel === r;
+    return true;
+  }
+  return false;
+}
+function endRare() {
+  const r = rareNow;
+  rareNow = null;
+  rareWait = rr(50, 100);
+  $('rare').hidden = true;
+  if (pov === r) exitPov(false);
+  if (sel === r) deselect(true);
+  r.present = false; r.hidden = true; r.group.visible = false;
+}
+function updateRare(dt) {
+  if (rareNow) {
+    const live = rareNow.sideName === 'ice' ? flipF > 0.001 : flipF < 0.999;
+    if (!live || rareNow.u >= rareNow.dur) endRare();
+    return;
+  }
+  if (flipAnim || pov) return;
+  rareWait -= dt;
+  if (rareWait > 0) return;
+  const pool = RARE.filter(r => r.sideName === side && r.can());
+  const r = pool[Math.floor(Math.random() * pool.length)];
+  if (!r || !spawnRare(r)) rareWait = 6;
+}
+
+/* ------------------------------------------------------------------ the sky above */
+// Layers of sky around the planet, low to high: a flock of birds over each side, an
+// airliner, the space station, and a weather satellite hanging still over the equator.
+// skyGroup is centred on the planet, so they all turn over with it.
+const skyGroup = new THREE.Group();
+flipGroup.add(skyGroup);
+scene.updateMatrixWorld(true);
+const _sx = new THREE.Vector3(), _sy = new THREE.Vector3(), _sz = new THREE.Vector3(), _sm = new THREE.Matrix4();
+const _p = new THREE.Vector3(), _q = new THREE.Vector3(), AX_X = new THREE.Vector3(1, 0, 0);
+// put obj at p with its nose along the way to q and its belly to the planet
+function flyAlong(obj, p, q, bank = 0) {
+  obj.position.copy(p);
+  _sy.copy(p).normalize();
+  _sz.copy(q).sub(p); _sz.addScaledVector(_sy, -_sz.dot(_sy)).normalize();
+  _sx.crossVectors(_sy, _sz);
+  obj.quaternion.setFromRotationMatrix(_sm.makeBasis(_sx, _sy, _sz));
+  if (bank) obj.rotateZ(bank);
+}
+// direction from the planet's centre to a flat map point of one side
+function sideDir(name, x, z) {
+  const v = bendVec(x, 0, z);
+  (name === 'ice' ? iceSide : shoreSide).localToWorld(v);
+  return skyGroup.worldToLocal(v).normalize();
+}
+function basisFor(n) {
+  const e1 = new THREE.Vector3(0, 1, 0).cross(n);
+  if (e1.lengthSq() < 1e-4) e1.set(1, 0, 0);
+  e1.normalize();
+  return { n, e1, e2: n.clone().cross(e1).normalize() };
+}
+// a small circle of angular radius rho around b.n
+function circleAround(b, rho, R, a, out) {
+  const s = Math.sin(rho);
+  return out.copy(b.n).multiplyScalar(Math.cos(rho)).addScaledVector(b.e1, s * Math.cos(a)).addScaledVector(b.e2, s * Math.sin(a)).multiplyScalar(R);
+}
+// a great circle tilted by incl, its node turned by node
+function orbitAt(R, incl, node, a, out) {
+  return out.set(Math.cos(a), 0, Math.sin(a)).applyAxisAngle(AX_X, incl).applyAxisAngle(UP, node).multiplyScalar(R);
+}
+const boxMesh = (w, h, d, mat) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+
+function makeTern() {
+  const g = new THREE.Group(), white = M('#f6f6f2', { roughness: 0.6 }), pale = M('#dfe4e6', { roughness: 0.6 }), black = M('#1b1d1f');
+  blob(g, white, 0, 0, 0, 0.045, 0.04, 0.14);
+  blob(g, white, 0, 0.015, 0.13, 0.036);
+  blob(g, black, 0, 0.024, 0.11, 0.038, 0.016, 0.024);
+  const bk = new THREE.Mesh(new THREE.ConeGeometry(0.008, 0.06, 4), black); bk.rotation.x = Math.PI / 2; bk.position.set(0, 0.012, 0.19); g.add(bk);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const tl = blob(g, white, s * 0.02, 0, -0.18, 0.012, 0.006, 0.07); tl.rotation.y = s * 0.25;
+    const w = new THREE.Group(); w.position.set(s * 0.035, 0.01, 0.01); g.add(w);
+    const m = blob(w, white, s * 0.16, 0, 0, 0.16, 0.006, 0.034); m.rotation.y = s * -0.12;
+    const tip = blob(w, pale, s * 0.33, 0, -0.035, 0.08, 0.005, 0.02); tip.rotation.y = s * -0.35;
+    wings.push(w);
+  }
+  return { g, wings };
+}
+function makeSwan() {
+  const g = new THREE.Group(), white = M('#f8f8f5', { roughness: 0.6 }), black = M('#1b1d1f');
+  blob(g, white, 0, 0, 0, 0.1, 0.09, 0.26);
+  blob(g, white, 0, 0.02, 0.36, 0.035, 0.035, 0.17);
+  blob(g, white, 0, 0.03, 0.54, 0.045, 0.04, 0.06);
+  const bk = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.08, 6), M('#e9c33a', { roughness: 0.5 })); bk.rotation.x = Math.PI / 2; bk.position.set(0, 0.02, 0.62); g.add(bk);
+  blob(g, black, 0, 0.02, 0.66, 0.012);
+  blob(g, black, 0, -0.03, -0.3, 0.03, 0.015, 0.05);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const w = new THREE.Group(); w.position.set(s * 0.08, 0.03, 0.02); g.add(w);
+    blob(w, white, s * 0.3, 0, 0, 0.3, 0.018, 0.11);
+    blob(w, white, s * 0.62, 0, -0.03, 0.14, 0.014, 0.08);
+    wings.push(w);
+  }
+  return { g, wings };
+}
+function makePlane() {
+  const g = new THREE.Group(), white = M('#f4f6f7', { roughness: 0.4 }), teal = M('#2b6866', { roughness: 0.5 }), grey = M('#aab4ba', { roughness: 0.5 });
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.62, 12).rotateX(Math.PI / 2), white));
+  blob(g, white, 0, 0, 0.31, 0.05, 0.05, 0.1);
+  blob(g, M('#23313a', { roughness: 0.3 }), 0, 0.022, 0.35, 0.03, 0.018, 0.04);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 12).rotateX(-Math.PI / 2), white); tail.position.z = -0.41; g.add(tail);
+  for (const s of [-1, 1]) {
+    const w = boxMesh(0.42, 0.012, 0.11, white); w.position.set(s * 0.22, -0.015, 0); w.rotation.y = s * 0.35; g.add(w);
+    const e = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.09, 10).rotateX(Math.PI / 2), grey); e.position.set(s * 0.15, -0.045, 0.07); g.add(e);
+    const h = boxMesh(0.14, 0.008, 0.06, white); h.position.set(s * 0.07, 0.01, -0.45); h.rotation.y = s * 0.4; g.add(h);
+  }
+  const fin = boxMesh(0.008, 0.13, 0.1, teal); fin.position.set(0, 0.08, -0.45); fin.rotation.x = -0.35; g.add(fin);
+  const lamp = (c, x, y, z) => { const m = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: c })); m.scale.setScalar(0.016); m.position.set(x, y, z); g.add(m); return m; };
+  lamp('#ff4a4a', 0.41, -0.015, -0.07); lamp('#4dff7a', -0.41, -0.015, -0.07);
+  const strobe = lamp('#ffffff', 0, 0, -0.52), beacon = lamp('#ff3030', 0, 0.055, 0.02);
+  return { group: g, strobe, beacon };
+}
+function makeISS() {
+  const g = new THREE.Group(), truss = M('#b9bec4', { roughness: 0.5, metalness: 0.3 }), mod = M('#eceff1', { roughness: 0.45 });
+  const panel = new THREE.MeshStandardMaterial({ color: '#b98a3e', roughness: 0.35, metalness: 0.55, emissive: '#ffd89a', emissiveIntensity: 0 });
+  g.add(boxMesh(1.3, 0.035, 0.035, truss));
+  const m1 = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.62, 10).rotateX(Math.PI / 2), mod); m1.position.set(0, -0.05, 0.02); g.add(m1);
+  const m2 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.28, 10).rotateZ(Math.PI / 2), mod); m2.position.set(0, -0.05, 0.2); g.add(m2);
+  for (const s of [-1, 1]) { const r = boxMesh(0.08, 0.004, 0.16, mod); r.position.set(s * 0.22, 0, -0.1); g.add(r); }
+  const wings = [];
+  for (const x of [-0.62, -0.46, 0.46, 0.62]) {
+    const w = new THREE.Group(); w.position.x = x; g.add(w); wings.push(w);
+    for (const s of [-1, 1]) { const p = boxMesh(0.1, 0.004, 0.36, panel); p.position.z = s * 0.21; w.add(p); }
+  }
+  g.scale.setScalar(0.85);
+  return { group: g, wings, panel };
+}
+function makeHimawari() {
+  const g = new THREE.Group(), gold = M('#d6a94a', { roughness: 0.35, metalness: 0.6 }), white = M('#eceff1', { roughness: 0.45 });
+  g.add(boxMesh(0.22, 0.22, 0.22, gold));
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.02, 0.05, 16).rotateX(Math.PI / 2), white); dish.position.z = 0.14; g.add(dish);
+  const eye = boxMesh(0.07, 0.07, 0.08, white); eye.position.set(0.06, 0.06, 0.13); g.add(eye);
+  const boom = boxMesh(0.015, 0.25, 0.015, white); boom.position.y = -0.22; g.add(boom);
+  const wing = new THREE.Group(); wing.position.y = -0.34; g.add(wing);
+  const p = boxMesh(0.22, 0.62, 0.006, new THREE.MeshStandardMaterial({ color: '#2d3f6b', roughness: 0.3, metalness: 0.5 })); p.position.y = -0.31; wing.add(p);
+  g.scale.setScalar(1.3);
+  return { group: g, wing };
+}
+function makeTrail(n = 70) {
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) { col.set([1, 1, 1, 0.5 * Math.pow(1 - i / n, 1.3)], i * 4); }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }));
+  line.frustumCulled = false;
+  skyGroup.add(line);
+  let filled = false;
+  return {
+    line,
+    push(p, shift) {
+      if (!filled) { for (let i = 0; i < n; i++) pos.set([p.x, p.y, p.z], i * 3); filled = true; }
+      if (shift) pos.copyWithin(3, 0, (n - 1) * 3);
+      pos[0] = p.x; pos[1] = p.y; pos[2] = p.z;
+      geo.attributes.position.needsUpdate = true;
+    },
+  };
+}
+// a flock that circles over one side's sea; the lead bird is the flock's origin
+function flock(o) {
+  const grp = new THREE.Group(), birds = [];
+  o.slots.forEach(([x, y, z], i) => {
+    const b = o.make(); b.g.position.set(x, y, z); b.base = b.g.position.clone(); b.ph = i * 1.3 + sr(0, 1); grp.add(b.g); birds.push(b);
+  });
+  grp.scale.setScalar(o.scale);
+  const orb = basisFor(sideDir(o.over, o.cx, o.cz));
+  register({
+    species: o.species, sideName: 'sky', parent: skyGroup, group: grp, birds, fixed: true, noRing: true, pick: o.pick, pickY: 0, focus: o.focus, a: sr(0, TAU),
+    update(ind, dt, t) {
+      ind.hidden = !o.shown(); ind.group.visible = !ind.hidden;
+      if (ind.hidden) return;
+      ind.a += dt * o.speed * (ind.react > 0 ? 1.6 : 1);
+      const rho = o.rho + 0.06 * Math.sin(t * 0.19), R = PR + o.alt + 0.3 * Math.sin(t * 0.27);
+      flyAlong(ind.group, circleAround(orb, rho, R, ind.a, _p), circleAround(orb, rho, R, ind.a + 0.02, _q), -0.28);
+      for (const b of ind.birds) {
+        b.g.position.set(b.base.x + Math.sin(t * 0.6 + b.ph) * o.wander, b.base.y + Math.sin(t * 1.1 + b.ph) * 0.05, b.base.z);
+        const f = Math.sin(t * o.flap + b.ph) * 0.55;
+        b.wings[0].rotation.z = f; b.wings[1].rotation.z = -f;
+      }
+    },
+  });
+}
+flock({
+  species: 'ajisashi', over: 'shore', cx: -5.6, cz: 5.4, rho: 0.34, alt: 2.9, speed: 0.12, flap: 9, wander: 0.15, scale: 1.3, pick: 0.9, focus: 2.4,
+  make: makeTern, shown: () => nightF < 0.55,
+  slots: [[0, 0, 0], ...Array.from({ length: 7 }, () => [sr(-0.9, 0.9), sr(-0.25, 0.25), sr(-1.3, -0.2)])],
+});
+flock({
+  species: 'ohakucho', over: 'ice', cx: 0, cz: 1.8, rho: 0.42, alt: 3.6, speed: 0.075, flap: 3, wander: 0.03, scale: 1, pick: 1.1, focus: 3.2,
+  make: makeSwan, shown: () => SEASON.m >= 8.6 || SEASON.m < 3.8,
+  slots: [[0, 0, 0], ...Array.from({ length: 6 }, (_, i) => { const k = Math.ceil((i + 1) / 2), s = i % 2 ? 1 : -1; return [s * 0.62 * k, 0.03 * k, -0.62 * k]; })],
+});
+{
+  const pl = makePlane();
+  pl.group.scale.setScalar(1.15);
+  const trails = [makeTrail(), makeTrail()];
+  register({
+    species: 'ryokakuki', sideName: 'sky', parent: skyGroup, ...pl, trails, fixed: true, noRing: true, pick: 0.6, pickY: 0, focus: 1.8, a: 0.6, node: 0.4, tick: 0,
+    update(ind, dt, t) {
+      ind.a += dt * TAU / 64; ind.node += dt * 0.012;
+      flyAlong(ind.group, orbitAt(PR + 4.4, 1.25, ind.node, ind.a, _p), orbitAt(PR + 4.4, 1.25, ind.node, ind.a + 0.01, _q));
+      ind.strobe.visible = t % 1.3 < 0.08;
+      ind.beacon.visible = (t + 0.6) % 1.5 < 0.12;
+      ind.tick += dt;
+      const shift = ind.tick > 0.06;
+      if (shift) ind.tick = 0;
+      ind.trails.forEach((tr, i) => {
+        tr.push(_q.copy(ind.group.position).addScaledVector(_sz, -0.5).addScaledVector(_sx, (i ? 1 : -1) * 0.17), shift);
+        tr.line.material.opacity = 1 - nightF * 0.6;
+      });
+      ind.vy = _sz.y;   // heading toward the shore pole (+) or the ice pole (-)
+    },
+  });
+}
+{
+  const st = makeISS();
+  register({
+    species: 'iss', sideName: 'sky', parent: skyGroup, ...st, fixed: true, noRing: true, pick: 0.75, pickY: 0, focus: 1.9, a: 2.2, node: 1.1,
+    update(ind, dt, t) {
+      ind.a += dt * TAU / 92; ind.node -= dt * 0.008;
+      flyAlong(ind.group, orbitAt(PR + 6, 0.9, ind.node, ind.a, _p), orbitAt(PR + 6, 0.9, ind.node, ind.a + 0.01, _q));
+      for (const w of ind.wings) w.rotation.x = Math.sin(t * 0.07) * 0.6;
+      ind.panel.emissiveIntensity = nightF * 0.8;
+    },
+  });
+}
+{
+  const hm = makeHimawari();
+  const ind = register({
+    species: 'himawari', sideName: 'sky', parent: skyGroup, ...hm, fixed: true, staticPos: true, noRing: true, pick: 0.7, pickY: 0, focus: 2.2,
+    update(ind, dt, t) { ind.wing.rotation.y = t * 0.05; },
+  });
+  // over the equator, just beside the planet as the overview sees it
+  ind.group.position.set(-0.814, 0, -0.581).multiplyScalar(PR + 10);
+  ind.group.updateMatrixWorld(true);
+  ind.group.lookAt(skyGroup.getWorldPosition(new THREE.Vector3()));
+}
+Object.assign(SPECIES, {
+  ajisashi: {
+    name: 'エリグロアジサシ', sci: 'Sterna sumatrana', kind: '鳥類・カモメのなかま', side: 'sky', noBooth: true,
+    desc: '夏に南の島へやってくる、白くてほっそりしたアジサシ。頭のうしろの黒い帯が目印。群れで海の上をめぐり、魚を見つけると真っ逆さまに飛びこみます。',
+    size: '全長 約30cm', habitat: '南の島の海の上・岩の小島',
+    status: (ind) => ind.react > 0 ? 'くるりと向きを変えて、群れが少しばらけました。' : hour < 8 ? '朝の海へ、群れで魚をとりに出かけます。' : hour > 17 ? '日が傾いて、ねぐらの小島へ帰るところです。' : '群れで海の上を回って、魚の群れを探しています。',
+  },
+  ohakucho: {
+    name: 'オオハクチョウ', sci: 'Cygnus cygnus', kind: '鳥類・カモのなかま', side: 'sky', noBooth: true,
+    desc: 'シベリアから北海道へ冬を越しにやってくる大きな白鳥。「コォー、コォー」と鳴きかわしながら、V字の列になって渡っていきます。',
+    size: '全長 約1.4m・翼を広げると約2.4m', habitat: '冬の湖・沼・海辺（9月下旬〜4月）',
+    status: () => SEASON.m >= 8.6 && SEASON.m < 11 ? 'シベリアから、冬を過ごす湖へ渡ってきたところです。' : SEASON.m < 2.5 || SEASON.m >= 11 ? '凍らない湖と海のあいだを、行き来しています。' : '春になり、北の国へ帰る旅に出ました。',
+  },
+  ryokakuki: {
+    name: '旅客機', sci: 'Airliner', kind: '空をゆくもの', side: 'sky', noBooth: true,
+    desc: '南の島と北の海を結んで飛ぶ旅客機。雲より高い空を、白い飛行機雲を引いて飛んでいきます。夜は翼の先の赤と緑のランプが点滅します。',
+    size: '全長 約60m', habitat: '高度 約1万m（高さは実際の縮尺ではありません）',
+    status: (ind) => {
+      const up = ind.group.position.y > 0, toShore = ind.vy > 0, night = nightF > 0.5 ? '夜間飛行。' : '';
+      return night + (up ? (toShore ? '南の島の空が近づいてきました。' : '南の島を飛び立って、北の海へ向かっています。') : (toShore ? '北の海をあとにして、南の島へ向かっています。' : 'オホーツク海の上空を飛んでいます。'));
+    },
+  },
+  iss: {
+    name: '国際宇宙ステーション', sci: 'International Space Station', kind: '宇宙・人工衛星', side: 'sky', noBooth: true,
+    desc: '地上約400kmを、約90分で地球を1周している実験施設。宇宙飛行士が暮らしていて、1日に16回ずつ日の出と日の入りを見ています。',
+    size: '幅 約109m（サッカー場ほど）', habitat: '高度 約400km（高さは実際の縮尺ではありません）',
+    status: () => nightF > 0.5 ? '太陽の光を受けて、夜空を明るい星のように横切っています。' : '時速 約28,000kmで、地球を回っています。',
+  },
+  himawari: {
+    name: '気象衛星ひまわり', sci: 'Himawari', kind: '宇宙・人工衛星', side: 'sky', noBooth: true,
+    desc: '赤道の上空で、地球の自転と同じ速さで回っている静止衛星。いつも同じ場所から地球を見下ろし、雲のようすを撮り続けています。',
+    size: '本体 約3m・パネルを広げると約8m', habitat: '赤道の上空 約36,000km（静止軌道）',
+    status: () => '10分ごとに、地球全体の写真を撮っています。',
+  },
+});
+
 const ring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 64).rotateX(-Math.PI / 2),
   new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false }));
 ring.renderOrder = 5;
@@ -2727,7 +3278,8 @@ const EYES = {
   mejina: [0.04, 0.2], momo: [0.6, 0.2], tsumabeni: [0.04, 0.06], gomafu: [0.42, 0.75], clione: [0.22, 0.04], oowashi: [0.72, 0.18],
   kitsune: [0.48, 0.45], umineko: [0.08, 0.38], sake: [0.05, 0.42], higuma: [0.82, 0.95], usagi: [0.3, 0.26], shimarisu: [0.17, 0.16],
 };
-const NO_POV = new Set(['ryuhyo', 'sakura', 'nanakamado', 'hamanasu']);   // plants and ice have no eyes
+Object.assign(EYES, { zatou: [0.3, 1.7], aoumigame: [0.1, 0.75], shachi: [0.25, 1.1], ajisashi: [0.06, 0.3], ohakucho: [0.12, 0.8] });
+const NO_POV = new Set(['ryuhyo', 'sakura', 'nanakamado', 'hamanasu', 'ryokakuki', 'iss', 'himawari']);   // plants, ice and machines have no eyes
 let pov = null, povYaw = 0, povPitch = 0, povDrag = null, povSnap = false;
 const povP = new THREE.Vector3(), povF = new THREE.Vector3(), povU = new THREE.Vector3(), povR = new THREE.Vector3(), povEye = new THREE.Vector3(), povLook = new THREE.Vector3(), povQ = new THREE.Quaternion();
 function enterPov(ind) {
@@ -2741,6 +3293,7 @@ function enterPov(ind) {
   ui.tip.hidden = true;
   $('povName').textContent = `${SPECIES[ind.species].name}の目線`;
   $('povbar').hidden = false;
+  document.body.classList.add('pov-on');
 }
 function exitPov(reselect = true) {
   if (!pov) return;
@@ -2749,6 +3302,7 @@ function exitPov(reselect = true) {
   controls.enabled = true;
   camera.near = 0.1; fitFov();
   $('povbar').hidden = true;
+  document.body.classList.remove('pov-on');
   if (reselect && !ind.hidden) { ind.group.getWorldPosition(controls.target); select(ind, true); }
 }
 function updatePov(dt) {
@@ -2769,9 +3323,12 @@ function updatePov(dt) {
   fwd.normalize();
   // on a small planet the horizon sits below eye level; start the gaze just under it,
   // measured from the real ground (or sea) beneath, so flying birds look down
-  const flat = unbend(sideGroup(pov.sideName).worldToLocal(povEye.clone()));
-  const ground = heightOnSide(pov.sideName)(flat.x, flat.z), wl = pov.sideName === 'ice' ? tideY : waterLevelAt(flat.x, flat.z);
-  const surface = PR + (flat.y > wl ? Math.max(ground, wl) : ground);
+  let surface = PR + tideY;   // birds in the high sky look down on the sea
+  if (pov.sideName !== 'sky') {
+    const flat = unbend(sideGroup(pov.sideName).worldToLocal(povEye.clone()));
+    const ground = heightOnSide(pov.sideName)(flat.x, flat.z), wl = pov.sideName === 'ice' ? tideY : waterLevelAt(flat.x, flat.z);
+    surface = PR + (flat.y > wl ? Math.max(ground, wl) : ground);
+  }
   const eyeR = povEye.distanceTo(centre);
   const dip = eyeR > surface ? Math.acos(clamp(surface / eyeR, -1, 1)) : 0;
   const dir = fwd.clone().applyAxisAngle(up, povYaw);
@@ -2788,6 +3345,7 @@ function updatePov(dt) {
 }
 $('cardPov').addEventListener('click', () => { if (sel) enterPov(sel); });
 $('povExit').addEventListener('click', () => exitPov(true));
+$('rareGo').addEventListener('click', () => { if (rareNow) select(rareNow, true); });
 let sel = null, statusTimer = 0;
 let homePose = null;   // where the camera was before the first creature was picked
 function select(ind, fly) {
@@ -2809,7 +3367,8 @@ function select(ind, fly) {
   ui.card.hidden = false;
   document.body.classList.add('has-card');
   Object.entries(chipBtns).forEach(([k, b]) => b.setAttribute('aria-pressed', String(k === ind.species)));
-  ring.visible = true;
+  ring.visible = !ind.noRing;
+  if (ind === rareNow) $('rare').hidden = true;
   if (fly) {
     const target = ind.group.getWorldPosition(new THREE.Vector3());
     target.y += 0.15;
@@ -3048,7 +3607,7 @@ function frame() {
   streaks.visible = iceLive;
   if (iceLive) updateStreaks(dt);
   for (const ind of inds) {
-    if (!(ind.sideName === 'ice' ? iceLive : shoreLive)) continue;
+    if (!(ind.sideName === 'sky' || (ind.sideName === 'ice' ? iceLive : shoreLive))) continue;
     if (ind.react > 0) ind.react -= dt;
     if (ind.school) continue;
     if (ind.fixed) { ind.update(ind, dt, t); continue; }
@@ -3058,17 +3617,20 @@ function frame() {
     ind.anim(ind, dt, t);
   }
   if (shoreLive) updateSchool(dt, t);
+  updateRare(dt);
   for (const e of bendRoots) if (e.dynamic && e.obj !== ring && (e.side === 'ice' ? iceLive : shoreLive)) applyBend(e);
 
   // selection
   if (pov && (pov.hidden || !pov.group.visible)) { exitPov(false); goView('shore'); }
   if (sel && !pov) {
     const p = sel.group.getWorldPosition(selWorld);
-    const lp = unbend(sideGroup(sel.sideName).worldToLocal(selLocal.copy(p)));
-    ring.position.set(lp.x, sel.ringY ? sel.ringY(lp) : heightOnSide(sel.sideName)(lp.x, lp.z) + 0.03, lp.z);
-    applyBend(bendRoots.find(e => e.obj === ring));
-    ring.scale.setScalar(sel.pick * 1.25 * (1 + Math.sin(t * 3) * 0.05));
-    ring.material.opacity = 0.55 + Math.sin(t * 3) * 0.25;
+    if (!sel.noRing) {
+      const lp = unbend(sideGroup(sel.sideName).worldToLocal(selLocal.copy(p)));
+      ring.position.set(lp.x, sel.ringY ? sel.ringY(lp) : heightOnSide(sel.sideName)(lp.x, lp.z) + 0.03, lp.z);
+      applyBend(bendRoots.find(e => e.obj === ring));
+      ring.scale.setScalar(sel.pick * 1.25 * (1 + Math.sin(t * 3) * 0.05));
+      ring.material.opacity = 0.55 + Math.sin(t * 3) * 0.25;
+    }
     if (!camAnim) {
       followDelta.set(p.x, p.y + 0.15, p.z).sub(controls.target).multiplyScalar(Math.min(1, dt * 2.5));
       controls.target.add(followDelta);
@@ -3135,9 +3697,12 @@ window.__tidal = {
   get tn() { return tn; }, set tn(v) { tn = v; },
   get hour() { return hour; }, set hour(v) { hour = v; dayUiTimer = 0; },
   select: (k) => select(inds.find(i => i.species === k), true),
+  rare(k, v) { if (rareNow) endRare(); const r = RARE.find(r => r.species === k && r.sideName === side); const ok = r && spawnRare(r); if (ok && v != null) r.variant = v; return !!ok; },
+  skip(sec) { for (const ind of inds) if (ind.present) { for (let i = 0; i < sec * 30; i++) ind.update(ind, 1 / 30, 0); } },
   goView, flip: flipWorld, pov: (k) => enterPov(inds.find(i => i.species === k && !i.hidden)), exitPov,
   season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
+  get rareNow() { return rareNow; },
   jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camera.up.copy(camAnim.u1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
 };
 </script>
