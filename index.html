@@ -2150,7 +2150,260 @@ for (let k = 0; k < 6; k++) {
     },
   });
 }
+
+// ぽかぽか島の どうぶつ, as the wild animals of Hokkaido: the bear as a brown bear, the rabbit
+// as a mountain hare, and こむぎ the hamster's cousin, the Ezo chipmunk
+function makeBear() {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const fur = M('#5b3c28', { roughness: 0.85 }), muzzle = M('#8a6a4c', { roughness: 0.8 }), dark = M('#1c1714');
+  blob(body, fur, 0, 0.55, 0, 0.36, 0.33, 0.62);
+  blob(body, fur, 0, 0.7, 0.18, 0.3, 0.2, 0.3);           // shoulder hump
+  const head = new THREE.Group(); head.position.set(0, 0.72, 0.62); body.add(head);
+  blob(head, fur, 0, 0, 0, 0.24, 0.22, 0.24);
+  blob(head, muzzle, 0, -0.05, 0.2, 0.12, 0.1, 0.13);
+  blob(head, dark, 0, -0.02, 0.32, 0.04, 0.03, 0.03);
+  for (const sd of [-1, 1]) { blob(head, fur, sd * 0.16, 0.18, -0.02, 0.07, 0.07, 0.04); blob(head, dark, sd * 0.1, 0.05, 0.19, 0.025); }
+  const legs = [];
+  for (const [x, z] of [[-0.2, 0.35], [0.2, 0.35], [-0.2, -0.38], [0.2, -0.38]]) {
+    const l = new THREE.Group(); l.position.set(x, 0.42, z); body.add(l);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.09, 0.42, 7), fur); m.position.y = -0.21; l.add(m);
+    legs.push(l);
+  }
+  return { group: g, body, head, legs };
+}
+function makeHare() {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const fur = new THREE.MeshStandardMaterial({ color: '#8b7358', roughness: 0.8 }), tip = M('#221c18'), white = M('#f6f6f2', { roughness: 0.8 });
+  blob(body, fur, 0, 0.17, 0, 0.12, 0.11, 0.18);
+  const head = new THREE.Group(); head.position.set(0, 0.26, 0.16); body.add(head);
+  blob(head, fur, 0, 0, 0, 0.08, 0.075, 0.09);
+  for (const sd of [-1, 1]) {
+    const ear = new THREE.Group(); ear.position.set(sd * 0.035, 0.06, -0.02); ear.rotation.set(-0.35, 0, sd * 0.15); head.add(ear);
+    blob(ear, fur, 0, 0.1, 0, 0.022, 0.1, 0.035);
+    blob(ear, tip, 0, 0.19, 0, 0.018, 0.02, 0.028);
+    blob(head, M('#1b1614'), sd * 0.05, 0.02, 0.06, 0.014);
+  }
+  blob(body, white, 0, 0.2, -0.18, 0.045);
+  return { group: g, body, head, fur };
+}
+function makeChipmunk() {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const fur = M('#c98b4f', { roughness: 0.75 }), dark = M('#3b2a1e'), cream = M('#f1e2c4'), eye = M('#15110e');
+  blob(body, fur, 0, 0.07, 0, 0.055, 0.055, 0.1);
+  for (const x of [-0.03, 0, 0.03]) blob(body, dark, x, 0.118, -0.005, 0.009, 0.006, 0.075);
+  for (const x of [-0.016, 0.016]) blob(body, cream, x, 0.116, -0.005, 0.008, 0.005, 0.07);
+  const head = new THREE.Group(); head.position.set(0, 0.1, 0.09); body.add(head);
+  blob(head, fur, 0, 0, 0, 0.045, 0.042, 0.048);
+  for (const sd of [-1, 1]) { blob(head, cream, sd * 0.03, -0.012, 0.018, 0.02); blob(head, eye, sd * 0.024, 0.012, 0.032, 0.009); blob(head, fur, sd * 0.022, 0.04, -0.005, 0.012, 0.014, 0.006); }
+  const tail = new THREE.Group(); tail.position.set(0, 0.08, -0.1); tail.rotation.x = 0.9; body.add(tail);
+  blob(tail, fur, 0, 0, -0.07, 0.022, 0.012, 0.08);
+  blob(tail, dark, 0, 0.004, -0.07, 0.01, 0.01, 0.07);
+  return { group: g, body, head, tail };
+}
+{
+  const b = makeBear();
+  register(walker({
+    species: 'higuma', sideName: 'ice', ...b, fixed: true, x: -3, z: -6.2, speed: 0.35, pauseMin: 3, pauseMax: 7, turnRate: 1.5, pick: 0.8, pickY: 0.5, focus: 4.5, freeze: true,
+    // in the salmon season it comes down to the water's edge
+    zone: () => (SEASON.m >= 8.3 ? { x: -1, z: -3.6, r: 4.5 } : { x: -1, z: -6.4, r: 4.5 }),
+    valid: (x, z) => seF(x, z) < 0.78 && iceHeight(x, z) > tideY + 0.1 && iceHeight(x, z) < 2.6,
+    update(ind, dt, t) {
+      stepWalker(ind, dt);
+      ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02, ind.z);
+      ind.group.rotation.y = ind.yaw;
+      const mv = ind.moving ? 1 : 0;
+      ind.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 4 + (i % 2 ? Math.PI : 0) + (i > 1 ? Math.PI / 2 : 0)) * 0.35 * mv; });
+      ind.head.rotation.x = ind.react > 0 ? -0.4 : mv ? 0.1 : 0.35 + Math.sin(t * 0.7) * 0.1;
+      ind.head.rotation.y = mv ? 0 : Math.sin(t * 0.4) * 0.5;
+    },
+  }));
+}
+for (let k = 0; k < 2; k++) {
+  const h = makeHare();
+  const brown = new THREE.Color('#8b7358'), white = new THREE.Color('#f4f4f0');
+  register(walker({
+    species: 'usagi', sideName: 'ice', ...h, fixed: true, x: 2 + k * 2, z: -6.8, speed: 0.9, pauseMin: 1, pauseMax: 4, turnRate: 4, pick: 0.3, pickY: 0.2, focus: 2.4, freeze: true, ph: rr(0, TAU),
+    zone: () => ({ x: 1.5, z: -6.5, r: 4 }),
+    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > 1.4,
+    update(ind, dt, t) {
+      stepWalker(ind, dt);
+      const hop = ind.moving ? Math.abs(Math.sin(t * 9 + ind.ph)) * 0.12 : 0;
+      ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.02 + hop, ind.z);
+      ind.group.rotation.y = ind.yaw;
+      ind.fur.color.copy(brown).lerp(white, SEASON.snow);
+      ind.head.rotation.x = ind.react > 0 ? -0.35 : 0;
+    },
+  }));
+}
+for (let k = 0; k < 2; k++) {
+  const c = makeChipmunk();
+  c.group.scale.setScalar(1.4);
+  register(walker({
+    species: 'shimarisu', sideName: 'ice', ...c, fixed: true, x: -5 + k * 3, z: -5.5, speed: 1.3, pauseMin: 0.6, pauseMax: 3, turnRate: 6, pick: 0.25, pickY: 0.12, focus: 1.8, freeze: true, ph: rr(0, TAU),
+    zone: () => ({ x: -2, z: -6, r: 4.5 }),
+    valid: (x, z) => seF(x, z) < 0.8 && iceHeight(x, z) > 1.5,
+    update(ind, dt, t) {
+      stepWalker(ind, dt);
+      ind.group.position.set(ind.x, iceHeight(ind.x, ind.z) - 0.01, ind.z);
+      ind.group.rotation.y = ind.yaw;
+      // sits up to look around between dashes
+      const up = !ind.moving && Math.sin(t * 0.8 + ind.ph) > 0.2 ? -0.9 : 0;
+      ind.body.rotation.x = lerp(ind.body.rotation.x, up, Math.min(1, dt * 6));
+      ind.tail.rotation.x = 0.9 + Math.sin(t * 6 + ind.ph) * 0.15;
+    },
+  }));
+}
+Object.assign(SPECIES, {
+  higuma: {
+    name: 'エゾヒグマ', sci: 'Ursus arctos yesoensis', kind: '哺乳類・クマのなかま', side: 'ice', active: () => SEASON.m >= 3.6 && SEASON.m < 11.2,
+    desc: '北海道にすむ、日本でいちばん大きな陸の動物。冬は巣穴で冬眠し、秋は川をのぼるサケをとって冬に備えます。',
+    size: '体長 約2m（オス）', habitat: '北海道の森・川・海岸',
+    status: (ind) => ind.react > 0 ? '鼻を上げて、においをかいでいます。'
+      : SEASON.m >= 8.3 ? '岸辺に来て、川をのぼるサケをねらっています。' : SEASON.m < 5.5 ? '冬眠から目覚めて、若草や木の芽を食べています。' : '森のまわりを、ゆっくり歩き回っています。',
+  },
+  usagi: {
+    name: 'エゾユキウサギ', sci: 'Lepus timidus ainu', kind: '哺乳類・ウサギのなかま', side: 'ice',
+    desc: '北海道の野生のウサギ。夏は茶色、冬は耳の先だけを残して真っ白な毛に生えかわり、雪にまぎれます。',
+    size: '体長 約50cm', habitat: '北海道の森・草原',
+    status: (ind) => ind.react > 0 ? '耳をぴんと立てて、じっとしています。' : SEASON.snow > 0.5 ? '真っ白な冬毛で、雪にまぎれています。' : SEASON.snow > 0.1 ? '毛が生えかわっているところです。' : '茶色の夏毛で、草を食べています。',
+  },
+  shimarisu: {
+    name: 'エゾシマリス', sci: 'Tamias sibiricus lineatus', kind: '哺乳類・リスのなかま', side: 'ice', active: () => SEASON.m >= 3.8 && SEASON.m < 10.2,
+    desc: '背中の黒いしま模様が目印の小さなリス。ぽかぽか島のハムスター・こむぎと同じように、ほおぶくろに木の実をつめて運びます。冬は土の中で冬眠します。',
+    size: '体長 約14cm', habitat: '北海道の森',
+    status: (ind) => ind.react > 0 ? '驚いて、しっぽを立てました。' : SEASON.m >= 8.5 ? 'ほおぶくろいっぱいに木の実をつめて、冬ごもりの準備中です。' : ind.moving ? 'ちょこちょこと走り回っています。' : '後ろ足で立って、まわりを見ています。',
+  },
+});
+ORDER_ICE.push('higuma', 'usagi', 'shimarisu');
 const heightOnSide = (name) => name === 'ice' ? iceHeight : heightAt;
+
+
+/* ------------------------------------------------------------------ visitors from ぽかぽか島 */
+// MOMO, the TV-headed robot from ぽかぽか島, walks the shore as an observer. Its build copies
+// village/public/villager.js (buildMomo), with this page's materials.
+function makeMomo() {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body);
+  const accent = M('#8fcfbd', { roughness: 0.5 }), shell = M('#e8ebe8', { roughness: 0.45 }), joint = M('#4a5058'), sole = M('#f0a58f'), screen = M('#1f2a2e', { roughness: 0.3 });
+  const glow = new THREE.MeshBasicMaterial({ color: '#9ff0da' }), blush = new THREE.MeshBasicMaterial({ color: '#f59aa9' });
+  const cyl = new THREE.CylinderGeometry(1, 1, 1, 16), rb = (w, h, d, r) => new RoundedBoxGeometry(w, h, d, 3, r);
+  const put = (parent, geo, mat, x, y, z, sx = 1, sy = sx, sz = sx) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); parent.add(m); return m; };
+  const legs = [-1, 1].map((sd) => {
+    const pv = new THREE.Group(); pv.position.set(0.13 * sd, 0.37, 0); body.add(pv);
+    put(pv, sphereGeo, joint, 0, 0, 0, 0.075);
+    put(pv, sphereGeo, accent, 0, -0.1, 0, 0.085, 0.1, 0.085);
+    put(pv, rb(0.17, 0.13, 0.17, 0.05), shell, 0, -0.22, 0.005);
+    put(pv, rb(0.19, 0.08, 0.26, 0.035), shell, 0, -0.315, 0.04);
+    put(pv, rb(0.2, 0.035, 0.27, 0.015), sole, 0, -0.355, 0.04);
+    return pv;
+  });
+  put(body, rb(0.48, 0.36, 0.36, 0.08), shell, 0, 0.6, 0);
+  put(body, rb(0.5, 0.11, 0.38, 0.05), accent, 0, 0.44, 0);
+  const panel = put(body, rb(0.22, 0.1, 0.03, 0.02), screen, 0.04, 0.63, 0.18);
+  put(body, cyl, joint, 0, 0.82, 0, 0.09, 0.08, 0.09);
+  const arms = [-1, 1].map((sd) => {
+    const pv = new THREE.Group(); pv.position.set(0.3 * sd, 0.7, 0); pv.rotation.z = 0.35 * sd; body.add(pv);
+    put(pv, sphereGeo, joint, 0, 0, 0, 0.07);
+    put(pv, sphereGeo, accent, 0, -0.09, 0, 0.065, 0.085, 0.065);
+    put(pv, sphereGeo, shell, 0, -0.19, 0, 0.07, 0.065, 0.07);
+    put(pv, sphereGeo, shell, 0, -0.28, 0.01, 0.065, 0.06, 0.06);
+    return pv;
+  });
+  const head = new THREE.Group(); head.position.y = 1.14; body.add(head);
+  put(head, rb(0.82, 0.6, 0.58, 0.14), shell, 0, 0, 0);
+  put(head, rb(0.64, 0.42, 0.04, 0.08), screen, 0, -0.01, 0.285);
+  const arc = new THREE.TorusGeometry(0.055, 0.017, 6, 16, Math.PI);
+  const eyes = [-1, 1].map((sd) => { const e = new THREE.Mesh(arc, glow); e.position.set(0.14 * sd, 0.03, 0.31); head.add(e); return e; });
+  for (const sd of [-1, 1]) put(head, rb(0.07, 0.035, 0.01, 0.012), blush, 0.23 * sd, -0.04, 0.308);
+  const smile = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.019, 6, 18, Math.PI), glow);
+  smile.rotation.z = Math.PI; smile.position.set(0, -0.06, 0.31); head.add(smile);
+  for (const sd of [-1, 1]) {
+    const rim = put(head, cyl, joint, 0.41 * sd, 0.02, 0, 0.12, 0.04, 0.12); rim.rotation.z = Math.PI / 2;
+    const ear = put(head, cyl, accent, 0.44 * sd, 0.02, 0, 0.1, 0.06, 0.1); ear.rotation.z = Math.PI / 2;
+  }
+  put(head, cyl, joint, 0, 0.4, 0, 0.012, 0.22, 0.012);
+  put(head, sphereGeo, sole, 0, 0.53, 0, 0.05);
+  g.scale.setScalar(0.5);
+  return { group: g, body, legs, arms, head, eyes, panel, panelMat: panel.material };
+}
+{
+  const mo = makeMomo();
+  const lampOff = mo.panelMat, lampOn = new THREE.MeshBasicMaterial({ color: '#9ff0da' });
+  register(walker({
+    species: 'momo', ...mo, x: -1.2, z: -2.6, speed: 0.55, pauseMin: 2, pauseMax: 5, turnRate: 3, pick: 0.55, pickY: 0.35, focus: 3.2, freeze: true, ph: rr(0, TAU),
+    zone: () => ({ x: -1, z: 0, r: 6.5 }),
+    // stays on dry ground: out of the sea, out of the pools, off the big rock
+    valid: (x, z) => inside(x, z, 0.75) && !nearBigRock(x, z) && depthAt(x, z) < -0.05 && heightAt(x, z) < 2.3,
+    anim(ind, dt, t) {
+      const mv = ind.moving ? 1 : 0, sw = Math.sin(t * 8);
+      ind.legs[0].rotation.x = sw * 0.55 * mv; ind.legs[1].rotation.x = -sw * 0.55 * mv;
+      ind.arms[0].rotation.x = -sw * 0.45 * mv; ind.arms[1].rotation.x = sw * 0.45 * mv;
+      ind.arms[1].rotation.z = ind.react > 0 ? -2.3 + Math.sin(t * 12) * 0.3 : -0.35;
+      // stops to look down at the pools and the sand
+      ind.head.rotation.x = lerp(ind.head.rotation.x, mv ? 0 : 0.35, Math.min(1, dt * 3));
+      const blink = (t + ind.ph) % 3.4 < 0.12 ? 0.2 : 1;
+      ind.eyes.forEach(e => { e.scale.y = blink; });
+      ind.body.position.y = ind.react > 0 ? Math.abs(Math.sin(t * 9)) * 0.25 : mv * Math.abs(sw) * 0.03;
+      ind.panel.material = nightF > 0.5 ? lampOn : lampOff;
+    },
+  }));
+}
+// Tsumabeni butterflies over the flowers of the southern shore, by day only
+{
+  const wingGeo = new THREE.CircleGeometry(0.16, 10).translate(0.15, 0, 0);
+  const tipGeo = new THREE.CircleGeometry(0.07, 8).translate(0.24, 0.03, 0.001);
+  const wingM = new THREE.MeshStandardMaterial({ color: '#fbf6ea', roughness: 0.6, side: THREE.DoubleSide });
+  const tipM = new THREE.MeshStandardMaterial({ color: '#f08a2c', roughness: 0.6, side: THREE.DoubleSide });
+  const spots = [];
+  for (let i = 0; i < 400 && spots.length < 5; i++) {
+    const x = sr(-9, 6), z = sr(-7.5, -3.5);
+    if (heightAt(x, z) > 2.0 && seF(x, z) < 0.8) spots.push([x, z]);
+  }
+  spots.forEach(([cx, cz], k) => {
+    const g = new THREE.Group(), wl = new THREE.Group(), wr = new THREE.Group();
+    const l = new THREE.Mesh(wingGeo, wingM), r = new THREE.Mesh(wingGeo, wingM);
+    const lt = new THREE.Mesh(tipGeo, tipM), rt = new THREE.Mesh(tipGeo, tipM);
+    wl.add(l, lt); wr.add(r, rt); wr.scale.x = -1;
+    g.add(wl, wr);
+    blob(g, M('#2d2a27'), 0, 0, 0, 0.018, 0.018, 0.09);
+    g.scale.setScalar(0.7);
+    register({
+      species: 'tsumabeni', ...{ group: g }, wl, wr, fixed: true, pick: 0.25, pickY: 0, focus: 2, cx, cz, ph: k * 1.7, sp: 0.5 + k * 0.08,
+      ringY: (p) => heightAt(p.x, p.z) + 0.03,
+      update(ind, dt, t) {
+        ind.hidden = nightF > 0.5;
+        ind.group.visible = !ind.hidden;
+        if (ind.hidden) return;
+        const u = t * ind.sp + ind.ph;
+        const x = ind.cx + Math.sin(u * 0.9) * 1.6 + Math.sin(u * 2.3) * 0.3, z = ind.cz + Math.cos(u * 0.7) * 1.2;
+        ind.group.position.set(x, heightAt(ind.cx, ind.cz) + 0.7 + Math.sin(u * 3.1) * 0.2, z);
+        ind.group.rotation.set(0, Math.atan2(Math.cos(u * 0.9), -Math.sin(u * 0.7)), 0);
+        const flap = Math.sin(t * 20 + ind.ph) * 0.9;
+        ind.wl.rotation.z = flap; ind.wr.rotation.z = -flap;
+      },
+    });
+  });
+}
+Object.assign(SPECIES, {
+  momo: {
+    name: 'MOMO', sci: 'ぽかぽか島からの訪問ロボット', kind: 'ロボット・観察係', noBooth: true,
+    desc: 'ぽかぽか島からやってきた、テレビ頭のロボット。磯を歩きまわって、潮だまりの生き物を観察しています。',
+    size: '背の高さ 約1m', habitat: 'ぽかぽか島（いまは磯を観察中）',
+    status: (ind) => ind.react > 0 ? '手をふって、こちらにあいさつしています。'
+      : nightF > 0.5 ? '胸のパネルを光らせて、夜の磯を見回っています。'
+      : ind.moving ? '砂浜をてくてく歩いています。' : '立ち止まって、足もとの生き物をのぞきこんでいます。',
+  },
+  tsumabeni: {
+    name: 'ツマベニチョウ', sci: 'Hebomoia glaucippe', kind: '昆虫・チョウのなかま', noBooth: true,
+    desc: '日本でいちばん大きなシロチョウのなかま。白いはねの先が、あざやかなだいだい色をしています。南の島の花畑を力強く飛びます。',
+    size: 'はねを広げて 約9cm', habitat: '南の島の海辺・花畑',
+    status: () => '花から花へ、ひらひらと飛んでいます。',
+  },
+});
+ORDER.push('momo', 'tsumabeni');
 
 /* ------------------------------------------------------------------ selection ring */
 const ring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 64).rotateX(-Math.PI / 2),
@@ -2236,9 +2489,9 @@ function viewPose(name) {
   return { pos, target };
 }
 let camAnim = null;
-function flyTo(pos, target, dur = 1.6) {
+function flyTo(pos, target, dur = 1.6, up = UP) {
   if (reduceMotion) dur = 0.01;
-  camAnim = { p0: camera.position.clone(), p1: pos, t0: controls.target.clone(), t1: target, u0: camera.up.clone(), t: 0, dur };
+  camAnim = { p0: camera.position.clone(), p1: pos, t0: controls.target.clone(), t1: target, u0: camera.up.clone(), u1: up.clone(), t: 0, dur };
 }
 controls.addEventListener('start', () => { camAnim = null; });
 
@@ -2465,7 +2718,7 @@ function select(ind, fly) {
   $('cardSize').textContent = sp.size;
   $('cardHabitat').textContent = sp.habitat;
   $('cardBuy').href = BOOTH.set || BOOTH.shop;
-  $('cardBuy').hidden = sp.side === 'ice';
+  $('cardBuy').hidden = sp.side === 'ice' || !!sp.noBooth;
   sideGroup(ind.sideName).add(ring.parent);
   $('cardNow').textContent = sp.status(ind);
   ui.card.hidden = false;
@@ -2475,10 +2728,14 @@ function select(ind, fly) {
   if (fly) {
     const target = ind.group.getWorldPosition(new THREE.Vector3());
     target.y += 0.15;
+    // look from above the creature's own patch of ground: the planet's "up" there is
+    // the direction from the planet's centre, not the screen's up
+    const up = target.clone().sub(flipGroup.getWorldPosition(new THREE.Vector3())).normalize();
     const dir = camera.position.clone().sub(controls.target).normalize();
-    if (!camUnder && dir.y < 0.45) { dir.y = 0.45; dir.normalize(); }
+    const lift = dir.dot(up);
+    if (!camUnder && lift < 0.5) { dir.addScaledVector(up, 0.5 - lift).normalize(); }
     const dist = ind.focus * (camera.aspect < 1 ? 1.5 : 1);
-    flyTo(target.clone().addScaledVector(dir, dist), target, 1.4);
+    flyTo(target.clone().addScaledVector(dir, dist), target, 1.4, up);
     setViewButtons('');
   }
 }
@@ -2723,7 +2980,7 @@ function frame() {
     camAnim.t += dt / camAnim.dur;
     const e = easeInOut(Math.min(1, camAnim.t));
     camera.position.lerpVectors(camAnim.p0, camAnim.p1, e);
-    camera.up.lerpVectors(camAnim.u0, UP, e).normalize();
+    camera.up.lerpVectors(camAnim.u0, camAnim.u1, e).normalize();
     controls.target.lerpVectors(camAnim.t0, camAnim.t1, e);
     if (camAnim.t >= 1) camAnim = null;
   }
@@ -2776,7 +3033,7 @@ window.__tidal = {
   goView, flip: flipWorld,
   season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
-  jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
+  jump() { if (flipAnim) { flipGroup.rotation.z = flipAnim.to; flipAnim = null; $('flip').disabled = false; } if (camAnim) { camera.position.copy(camAnim.p1); controls.target.copy(camAnim.t1); camera.up.copy(camAnim.u1); camAnim = null; } if (tideAnim) { tn = tideAnim.to; tideAnim = null; } },
 };
 </script>
 </body>
