@@ -126,6 +126,21 @@ export const HOUSES = [
   { x: -33, z: 12, roof: '#f08a3c', wall: '#fff4dc', name: 'オレンジ屋根の家' },
 ].map((h) => ({ ...h, w: 5.2, d: 4.4 }));
 
+// ---------- 売り地（プレイヤーが買える土地） ----------
+// 区画の中心。家は区画の少し奥（北）に建ち、ドアは手前（南）を向く。
+export const PLOT_SIZE = 6.4;
+export const PLOT_PRICE = 30000;   // 土地の値段（ポカ）
+export const PLOT_REFUND = 0.5;    // 手放したときに もどる割合
+export const PLOTS = [
+  [-9, -29], [15, -23], [-2, -22], [27, -15], [-31, -13], [19, -8],
+  [15, 3], [30, 6], [1, 12], [-32, 25], [14, 26], [-6, 28],
+].map(([x, z], i) => ({ i, x, z, house: { x, z: z - 0.5, w: 4.6, d: 4.0 }, sign: { x: x - 2.3, z: z + 2.4 } }));
+export const inPlot = (x, z, m = 0) => PLOTS.some((p) => Math.abs(x - p.x) < PLOT_SIZE / 2 + m && Math.abs(z - p.z) < PLOT_SIZE / 2 + m);
+// 持ち主のいる区画（家が建っている区画）
+const ownedPlots = new Set();
+export function setPlotOwned(i, owned) { if (owned) ownedPlots.add(i); else ownedPlots.delete(i); }
+export const plotOwned = (i) => ownedPlots.has(i);
+
 // ---------- 家の中 ----------
 // 部屋は島から遠く離れた場所に並べてある。座標がそのまま同期されるので、同じ家に入った人どうしは中で会える。
 export const INDOOR_X = 900;
@@ -138,7 +153,14 @@ export const ROOM_THEMES = [
   { wall: '#ece3f5', trim: '#a88fd0', floor: ['#bf9a73', '#ae8a64'], rug: '#b89ee6', bed: '#d3c2f2', accent: '#9a6dd0' },
   { wall: '#fde7d6', trim: '#e9a070', floor: ['#c79363', '#b88355'], rug: '#f5a66b', bed: '#ffc9a3', accent: '#f08a3c' },
 ];
-export const INTERIORS = HOUSES.map((h, i) => ({ i, x: INDOOR_X + 100 + i * 40, z: 0, house: h, theme: ROOM_THEMES[i % ROOM_THEMES.length] }));
+export const INTERIORS = [
+  ...HOUSES.map((h, i) => ({ i, x: INDOOR_X + 100 + i * 40, z: 0, house: h, theme: ROOM_THEMES[i % ROOM_THEMES.length] })),
+  // 売り地に建つ家の部屋
+  ...PLOTS.map((p, k) => ({
+    i: HOUSES.length + k, plot: p.i, x: INDOOR_X + 600 + k * 40, z: 0,
+    house: { ...p.house, name: 'だれかの家' }, theme: ROOM_THEMES[(k + 2) % ROOM_THEMES.length],
+  })),
+];
 export function interiorAt(x) {
   if (x <= INDOOR_X) return null;
   let best = null, bd = 1e9;
@@ -250,7 +272,7 @@ function buildPlacements() {
     const x = (rnd() * 2 - 1) * 44, z = (rnd() * 2 - 1) * 42;
     if (!inland(x, z, 8.5) && !(islandSDF(x, z) < -8.5 && riverDist(x, z) > RIVER_W + 2.2 && pondDist(x, z) > 2.2)) continue;
     if (plazaD(x, z) < 3 || nearHouse(x, z, 2.2) || nearBridge(x, z, 2) || pathDist(x, z) < 1.8) continue;
-    if (!clearOf(x, z, trees, 4.2)) continue;
+    if (inPlot(x, z, 1.5) || !clearOf(x, z, trees, 4.2)) continue;
     const north = z < -22;
     const kind = north && rnd() < 0.65 ? 'cedar' : 'round';
     const t = { x, z, kind, s: 0.82 + rnd() * 0.2 };
@@ -269,7 +291,7 @@ function buildPlacements() {
     const x = (rnd() * 2 - 1) * 44, z = (rnd() * 2 - 1) * 42;
     const d = islandSDF(x, z);
     if (d > -2.5 || riverDist(x, z) < RIVER_W + 1.5 || pondDist(x, z) < 1 || plazaD(x, z) < 2) continue;
-    if (nearHouse(x, z, 2) || nearBridge(x, z, 2) || pathDist(x, z) < 1.8 || !clearOf(x, z, trees, 3) || !clearOf(x, z, rocks, 8)) continue;
+    if (nearHouse(x, z, 2) || nearBridge(x, z, 2) || pathDist(x, z) < 1.8 || inPlot(x, z, 1) || !clearOf(x, z, trees, 3) || !clearOf(x, z, rocks, 8)) continue;
     rocks.push({ x, z, s: 0.7 + rnd() * 0.5, r: rnd() * 6 });
   }
   // 花のかたまり
@@ -277,7 +299,7 @@ function buildPlacements() {
   let clumps = 0;
   for (let tries = 0; tries < 3000 && clumps < 34; tries++) {
     const cx = (rnd() * 2 - 1) * 42, cz = (rnd() * 2 - 1) * 40;
-    if (!inland(cx, cz, 8) || plazaD(cx, cz) < 0.5 || nearHouse(cx, cz, 0.6) || pathDist(cx, cz) < 1.6) continue;
+    if (!inland(cx, cz, 8) || plazaD(cx, cz) < 0.5 || nearHouse(cx, cz, 0.6) || pathDist(cx, cz) < 1.6 || inPlot(cx, cz, 1)) continue;
     if (!clearOf(cx, cz, trees, 1.8) || !clearOf(cx, cz, rocks, 1.8)) continue;
     const color = palette[Math.floor(rnd() * palette.length)];
     const kind = rnd() < 0.5 ? 'tulip' : 'daisy';
@@ -292,7 +314,7 @@ function buildPlacements() {
   // 草むら
   for (let tries = 0; tries < 4000 && tufts.length < 340; tries++) {
     const x = (rnd() * 2 - 1) * 46, z = (rnd() * 2 - 1) * 44;
-    if (!inland(x, z, 7.5) || plazaD(x, z) < 0.8 || pathDist(x, z) < 1.2 || nearHouse(x, z, 0.3)) continue;
+    if (!inland(x, z, 7.5) || plazaD(x, z) < 0.8 || pathDist(x, z) < 1.2 || nearHouse(x, z, 0.3) || inPlot(x, z, 0.3)) continue;
     tufts.push({ x, z, s: 0.6 + rnd() * 0.6, r: rnd() * 6 });
   }
   return { trees, rocks, flowers, tufts };
@@ -305,6 +327,7 @@ export const TOWN_TREE = { x: PLAZA.x, z: PLAZA.z };
 export const BOARD = { x: PLAZA.x + 4.5, z: PLAZA.z - 6.2 };
 export const LAMPS = [0.6, 2.2, 3.9, 5.4].map((a) => ({ x: PLAZA.x + Math.cos(a) * 8.6, z: PLAZA.z + Math.sin(a) * 8.6 }));
 export const SPAWN = { x: PLAZA.x, z: PLAZA.z + 5 };
+export const SHOP = { x: -4, z: -3 }; // よろず屋（果物や宝石を買い取ってくれる）
 
 // ---------- 地下通路 ----------
 // 地下は x = UNDER_X だけずらした場所にある。地上と同じ向き・同じ縮尺なので、地下で歩いた先は地上のその場所の真下。
@@ -338,6 +361,11 @@ export const GEM_KINDS = [
   { key: 'diamond', name: 'ダイヤモンド', color: '#e8fbff', w: 3 },
 ];
 export const GEM_HITS = 3; // 何回たたくと取れるか
+// よろず屋の買い取り値段（ポカ）
+export const SELL_PRICES = {
+  fruit: { peach: 100, apple: 150, orange: 150, pear: 150, cherry: 200 },
+  gem: { amethyst: 300, topaz: 400, emerald: 600, sapphire: 800, ruby: 1500, diamond: 5000 },
+};
 export const gemDay = (ms = Date.now()) => Math.floor(ms / 86400000);
 export function gemPlan(i, day) {
   const h = hashStr(`gem:${day}:${i}`);
@@ -408,6 +436,7 @@ const CIRCLES = [
   ...PLACE.rocks.map((r) => ({ x: r.x, z: r.z, r: 0.85 * r.s + 0.1 })),
   { x: TOWN_TREE.x, z: TOWN_TREE.z, r: 1.6 },
   { x: BOARD.x, z: BOARD.z, r: 0.8 },
+  { x: SHOP.x, z: SHOP.z - 0.2, r: 1.35 },
   ...UNDER_SPOTS.filter((s) => s.kind !== 'hatch').map((s) => ({ x: s.x, z: s.z - (s.kind === 'cave' ? 0.4 : 0), r: s.kind === 'cave' ? 1.5 : 1.1 })),
   ...LAMPS.map((l) => ({ x: l.x, z: l.z, r: 0.25 })),
 ];
@@ -429,6 +458,11 @@ export function walkable(x, z, rad = 0.32) {
   }
   for (const h of HOUSES) {
     if (Math.abs(x - h.x) < h.w / 2 + rad && Math.abs(z - h.z) < h.d / 2 + rad) return false;
+  }
+  for (const p of PLOTS) {
+    const h = p.house;
+    if (ownedPlots.has(p.i) && Math.abs(x - h.x) < h.w / 2 + rad && Math.abs(z - h.z) < h.d / 2 + rad) return false;
+    if (Math.hypot(x - p.sign.x, z - p.sign.z) < 0.3 + rad) return false;
   }
   return true;
 }

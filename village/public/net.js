@@ -71,9 +71,11 @@ function connectServer(onMessage, onStatus) {
   const url = serverUrl();
   if (!url) return Promise.resolve(null);
   return new Promise((resolve) => {
-    let ws, joinMsg = null, opened = false;
+    let ws, joinMsg = null, opened = false, stopped = false;
     const api = {
       mode: 'server',
+      // 同じアカウントで ほかの画面から入られたときは、つなぎなおさない
+      stop() { stopped = true; if (ws) ws.close(); },
       send(msg) {
         if (msg.t === 'join') joinMsg = msg;
         if (msg.t === 'move' && joinMsg) joinMsg = { ...joinMsg, x: msg.x, z: msg.z, r: msg.r };
@@ -89,6 +91,7 @@ function connectServer(onMessage, onStatus) {
       ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch (err) { console.error(err); } };
       ws.onclose = () => {
         if (!opened) { resolve(null); return; }
+        if (stopped) return;
         onStatus('offline');
         setTimeout(open, 2500);
       };
@@ -270,6 +273,7 @@ export async function connect(onMessage, onStatus = () => {}) {
   const net = {
     mode: 'solo', inner: solo, joinMsg: null,
     send(msg) { if (msg.t === 'join') this.joinMsg = msg; this.inner.send(msg); },
+    stop() { this.inner.stop?.(); },
   };
   return new Promise((resolve) => {
     const giveUp = setTimeout(() => resolve(net), 6000);

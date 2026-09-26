@@ -6,6 +6,11 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const payments = require('./payments');
+const { createStore } = require('./store');
+const { Economy, formatCode } = require('./economy');
+
+let W = null;        // public/world.js（島の形・宝石・土地。画面と同じものを使う）
+let economy = null;  // アカウント・ポケット・土地
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -16,22 +21,7 @@ const FRUIT_REGROW_MS = 3 * 60 * 1000;
 const DROP_TTL_MS = 5 * 60 * 1000;
 
 const MAX_X = 3200;                // 家の中の部屋は x=1000 から、地下通路は x=3000 あたりにある
-// 地下の宝石（public/world.js の GEM_KINDS・gemPlan と同じ計算。変えるときは両方そろえる）
-const GEM_KINDS = [['amethyst', 30], ['topaz', 25], ['emerald', 18], ['sapphire', 15], ['ruby', 9], ['diamond', 3]];
-const GEM_SPOT_COUNT = 19;
-const GEM_HITS = 3;
 const GEM_REGROW_MS = 10 * 60 * 1000;
-function hashStr(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
-}
-function gemPlan(i, day) {
-  const h = hashStr(`gem:${day}:${i}`);
-  let r = (h >>> 8) % 100, kind = GEM_KINDS[0][0];
-  for (const [k, w] of GEM_KINDS) { if (r < w) { kind = k; break; } r -= w; }
-  return { active: h % 100 < 60, kind };
-}
 const EMOTES = ['wave', 'happy', 'sad', 'angry', 'wow', 'sleepy', 'love', 'music'];
 
 const MIME = {
@@ -63,19 +53,25 @@ function readBody(req, max = 4096) {
     req.on('error', () => resolve({}));
   });
 }
-const checkoutHits = new Map(); // IP ごとの回数（支払いページの作りすぎを防ぐ）
-function tooMany(req) {
-  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+const hits = new Map(); // IP ごとの回数（支払いページやアカウントの作りすぎを防ぐ）
+const ipOf = (req) => (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+function tooMany(req, what = 'checkout', max = 10) {
+  const key = what + ':' + ipOf(req);
   const now = Date.now();
-  const list = (checkoutHits.get(ip) || []).filter((t) => now - t < 10 * 60e3);
+  const list = (hits.get(key) || []).filter((t) => now - t < 10 * 60e3);
   list.push(now);
-  checkoutHits.set(ip, list);
-  return list.length > 10;
+  hits.set(key, list);
+  return list.length > max;
 }
 async function handleApi(req, res, url) {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET, POST' });
     return res.end();
+  }
+  if (url.pathname === '/api/account') {
+    // 引き継ぎコードが本物かどうかだけ答える（入力を試しすぎないよう回数をしぼる）
+    if (tooMany(req, 'acct', 30)) return json(res, 429, { error: 'too_many' });
+    return json(res, 200, { ok: !!economy.find(url.searchParams.get('code')) });
   }
   if (url.pathname === '/api/config') {
     return json(res, 200, { payments: payments.enabled(), price: payments.PRICE });
@@ -169,8 +165,11 @@ const cleanText = (s, max) => String(s ?? '')
 const num = (v, lo, hi, d = 0) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : 0);
 
-// 有料プラン（カラーパスを買った人）かどうか。join のときに送られてくる購入の番号を Stripe で確かめる
-const isPremium = (msg) => payments.verify(msg && msg.pass);
+// 有料プラン（カラーパスを買った人）かどうか。送られてきた購入の番号か、アカウントに覚えてある番号を Stripe で確かめる
+async function isPremium(msg, account) {
+  if (msg && msg.pass && await payments.verify(msg.pass)) { account.pass = msg.pass; economy.save(account); return true; }
+  return !!(account.pass && await payments.verify(account.pass));
+}
 
 // 島にくる人は みんなロボットの MOMO。アクセントの色を選べるのは有料プランの人だけ（無料はミント = 0）
 function cleanLook(l, premium) {
@@ -192,7 +191,8 @@ function broadcast(msg, exceptId) {
 // ---------- WebSocket ----------
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096 });
 
-wss.on('connection', (ws) => {
+const sockets = new Map(); // accountId -> ws（同じアカウントで2か所から入ったら古いほうを切る）
+wss.on('connection', (ws, req) => {
   let me = null;
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
@@ -208,24 +208,42 @@ wss.on('connection', (ws) => {
       if (me || joining) return;
       if (players.size >= MAX_PLAYERS) { send(ws, { t: 'full' }); ws.close(); return; }
       joining = true;
-      const premium = await isPremium(msg);
+      const name = cleanText(msg.name, 12) || 'たびびと';
+      // アカウント：引き継ぎコード（token）があればそれで、なければ新しく作る
+      let account = economy.find(msg.token), newToken = null;
+      if (!account) {
+        if (tooMany(req, 'newacct', 20)) { joining = false; send(ws, { t: 'full' }); ws.close(); return; }
+        const made = economy.create(name);
+        account = made.account; newToken = made.token;
+      }
+      const premium = await isPremium(msg, account);
       joining = false;
       if (ws.readyState !== 1) return;
+      const old = sockets.get(account.id);
+      if (old && old !== ws) { send(old, { t: 'dup' }); old.close(); }
+      sockets.set(account.id, ws);
+      const look = cleanLook(msg.look, premium);
+      economy.touch(account, name, look.f);
       me = {
         id: String(nextId++),
         ws,
-        name: cleanText(msg.name, 12) || 'たびびと',
-        look: cleanLook(msg.look, premium),
+        account,
+        name,
+        look,
         premium,
         x: num(msg.x, -70, MAX_X), z: num(msg.z, -70, 70), r: num(msg.r, -10, 10), m: 0,
         dirty: false, lastChat: 0, lastEmote: 0, lastShake: 0,
       };
       players.set(me.id, me);
       send(ws, {
-        t: 'welcome', id: me.id, premium,
+        t: 'welcome', id: me.id, premium, pass: account.pass || undefined,
+        token: newToken || undefined,
+        me: economy.view(account),
+        plots: economy.plotsView(),
         players: [...players.values()].filter((p) => p !== me).map(publicPlayer),
         world: worldSnapshot(),
       });
+      broadcast({ t: 'plots', plots: economy.plotsView() }, me.id); // 看板の名前が変わったかもしれない
       broadcast({ t: 'join', p: publicPlayer(me) }, me.id);
       console.log(`[join] ${me.name} (${players.size}人)`);
       return;
@@ -272,26 +290,60 @@ wss.on('connection', (ws) => {
       case 'hit': {
         // ピッケルで宝石の岩をたたく。GEM_HITS 回目で掘れる
         const i = msg.i;
-        if (!Number.isInteger(i) || i < 0 || i >= GEM_SPOT_COUNT || now - (me.lastHit || 0) < 350) return;
+        if (!Number.isInteger(i) || i < 0 || i >= W.GEM_SPOTS.length || now - (me.lastHit || 0) < 350) return;
         me.lastHit = now;
-        const plan = gemPlan(i, Math.floor(now / 86400000));
+        const plan = W.gemPlan(i, W.gemDay(now));
         let g = gems.get(i);
         if (!g) { g = { minedUntil: 0, hits: 0, lastHit: 0 }; gems.set(i, g); }
         if (!plan.active || g.minedUntil > now) { broadcast({ t: 'hit', id: me.id, i, n: 0 }); return; }
         if (now - g.lastHit > 20000) g.hits = 0;
         g.hits++; g.lastHit = now;
-        if (g.hits < GEM_HITS) { broadcast({ t: 'hit', id: me.id, i, n: g.hits }); return; }
+        if (g.hits < W.GEM_HITS) { broadcast({ t: 'hit', id: me.id, i, n: g.hits }); return; }
         g.hits = 0;
         g.minedUntil = now + GEM_REGROW_MS;
+        economy.gotGem(me.account, plan.kind);
         broadcast({ t: 'gem', id: me.id, i, kind: plan.kind, regrow: GEM_REGROW_MS });
+        send(ws, { t: 'me', me: economy.view(me.account) });
         break;
       }
       case 'pick': {
         const d = drops.get(String(msg.id));
         if (!d) return;
         drops.delete(d.id);
-        send(ws, { t: 'got', id: d.id, kind: d.kind, tree: d.tree });
+        if (d.kind === 'coin') {
+          const amount = economy.gotCoins(me.account);
+          send(ws, { t: 'got', id: d.id, kind: 'coin', tree: d.tree, amount });
+        } else {
+          economy.gotFruit(me.account, W.PLACE.trees[d.tree]?.fruit || 'peach');
+          send(ws, { t: 'got', id: d.id, kind: 'fruit', tree: d.tree });
+        }
+        send(ws, { t: 'me', me: economy.view(me.account) });
         broadcast({ t: 'picked', id: d.id, by: me.id });
+        break;
+      }
+      case 'chest': {
+        send(ws, { t: 'chest', amount: economy.chest(me.account) });
+        send(ws, { t: 'me', me: economy.view(me.account) });
+        break;
+      }
+      case 'sell': {
+        const gained = economy.sell(me.account, String(msg.what), String(msg.key));
+        send(ws, { t: 'sold', what: msg.what, key: msg.key, gained });
+        send(ws, { t: 'me', me: economy.view(me.account) });
+        break;
+      }
+      case 'buyPlot': {
+        const error = economy.buyPlot(me.account, msg.i);
+        send(ws, { t: 'plotResult', action: 'buy', i: msg.i, error });
+        send(ws, { t: 'me', me: economy.view(me.account) });
+        if (!error) { broadcast({ t: 'plots', plots: economy.plotsView() }); console.log(`[plot] ${me.name} が ${msg.i}番の土地を買いました`); }
+        break;
+      }
+      case 'releasePlot': {
+        const refund = economy.releasePlot(me.account);
+        send(ws, { t: 'plotResult', action: 'release', refund });
+        send(ws, { t: 'me', me: economy.view(me.account) });
+        if (refund) broadcast({ t: 'plots', plots: economy.plotsView() });
         break;
       }
     }
@@ -299,6 +351,8 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (!me) return;
+    if (sockets.get(me.account.id) === ws) sockets.delete(me.account.id);
+    economy.touch(me.account);
     players.delete(me.id);
     broadcast({ t: 'leave', id: me.id });
     console.log(`[leave] ${me.name} (${players.size}人)`);
@@ -327,6 +381,11 @@ setInterval(() => {
   }
 }, 30000);
 
-server.listen(PORT, () => {
-  console.log(`ぽかぽか島がひらきました → http://localhost:${PORT}/`);
-});
+(async () => {
+  W = await import('./public/world.js');
+  economy = new Economy(createStore(), W);
+  await economy.init();
+  server.listen(PORT, () => {
+    console.log(`ぽかぽか島がひらきました → http://localhost:${PORT}/`);
+  });
+})().catch((e) => { console.error('起動できませんでした:', e); process.exit(1); });

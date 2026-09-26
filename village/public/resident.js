@@ -1,5 +1,5 @@
 // 島の住民。どこにいるかは「いまの時刻」だけで決まるので、サーバーがなくても全員の画面で同じ場所を歩く。
-import { walkable, PLAZA, HOUSES, doorOf } from './world.js';
+import { walkable, PLAZA, HOUSES, doorOf, inPlot } from './world.js';
 
 export const RESIDENT = {
   id: '__resident',
@@ -32,7 +32,8 @@ function findPath(a, b) {
   const ok = new Map();
   const free = (i, j) => {
     const k = key(i, j);
-    if (!ok.has(k)) ok.set(k, i >= 0 && j >= 0 && i < N && j < N && walkable(i * S - R, j * S - R, 0.45));
+    // 売り地には あとから家が建つので、はじめから通らない
+    if (!ok.has(k)) ok.set(k, i >= 0 && j >= 0 && i < N && j < N && walkable(i * S - R, j * S - R, 0.45) && !inPlot(i * S - R, j * S - R, 0.6));
     return ok.get(k);
   };
   const si = toI(a[0]), sj = toI(a[1]), gi = toI(b[0]), gj = toI(b[1]);
@@ -55,7 +56,10 @@ function findPath(a, b) {
   cells.reverse();
   const clear = (p, q2) => {
     const n = Math.ceil(Math.hypot(q2[0] - p[0], q2[1] - p[1]) / 0.25);
-    for (let t = 1; t < n; t++) if (!walkable(p[0] + (q2[0] - p[0]) * t / n, p[1] + (q2[1] - p[1]) * t / n, 0.4)) return false;
+    for (let t = 1; t < n; t++) {
+      const x = p[0] + (q2[0] - p[0]) * t / n, z = p[1] + (q2[1] - p[1]) * t / n;
+      if (!walkable(x, z, 0.4) || inPlot(x, z, 0.6)) return false;
+    }
     return true;
   };
   const out = [a];
@@ -124,6 +128,9 @@ const TIPS = [
   () => '川は 橋をわたらないと むこうに行けないもち。およぐのは ちょっとこわいもち…',
   () => 'ひろばの大きな木は、島で いちばん古い木なんだもち',
   () => 'ほかの人に会ったら、リアクションで あいさつしてみるもち！',
+  () => 'ひろばの西の よろず屋で、くだものや宝石を ポカに かえてもらえるもち',
+  () => '島のあちこちに「売り地」の看板があるもち。ポカを ためたら、自分の家が たてられるもち！',
+  () => '土地は ひとり ひとつまでだもち。しばらく来ないと 空き地にもどっちゃうから 気をつけるもち',
 ];
 export function residentLines(playerName, hour, talkCount) {
   const n = playerName || 'あなた';

@@ -7,6 +7,7 @@ import {
   INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit, seatsNear, standSpot,
   UNDER_X, TUNNEL_W, UNDER_SPOTS, UNDER_NODES, UNDER_EDGES, UNDER_ROOMS, CHEST, tunnelDist, surfaceExit, underEntry,
   GEM_KINDS, GEM_SPOTS, gemPlan, gemDay, PICKAXE_SPOT,
+  PLOTS, PLOT_SIZE, PLOT_PRICE, PLOT_REFUND, setPlotOwned, plotOwned, inPlot, SHOP, SELL_PRICES,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
@@ -411,7 +412,10 @@ function makeRoof(w, h, d, color) {
 }
 
 function buildHouses() {
-  for (const h of HOUSES) {
+  for (const h of HOUSES) scene.add(makeHouse(h));
+}
+function makeHouse(h) {
+  {
     const g = new THREE.Group();
     g.position.set(h.x, 0, h.z);
     g.add(mesh(GEO.box, toon('#cfc3a6'), 0, 0.12, 0, h.w + 0.5, 0.24, h.d + 0.5));
@@ -448,7 +452,7 @@ function buildHouses() {
     mail.add(mesh(GEO.box, toon('#8a6040'), 0, 0.45, 0, 0.1, 0.9, 0.1));
     mail.add(mesh(GEO.box, toon(h.roof), 0, 1.0, 0, 0.36, 0.3, 0.5));
     g.add(mail);
-    scene.add(g);
+    return g;
   }
 }
 
@@ -1066,6 +1070,203 @@ function buildEntrances() {
 }
 
 // =====================================================================
+// 売り地と、よろず屋
+// =====================================================================
+function signTexture(lines, bg = '#f6ead0', ink = '#6b4f2a') {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0, 0, 256, 128);
+  g.strokeStyle = 'rgba(107,79,42,0.35)'; g.lineWidth = 6; g.strokeRect(3, 3, 250, 122);
+  g.fillStyle = ink; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const font = '"M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", sans-serif';
+  if (lines.length === 1) { g.font = `800 ${lines[0].length > 6 ? 30 : 40}px ${font}`; g.fillText(lines[0], 128, 66); }
+  else { g.font = `800 34px ${font}`; g.fillText(lines[0], 128, 46); g.font = `700 26px ${font}`; g.fillText(lines[1], 128, 90); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const plotObjs = []; // i -> { stakes, sign material, house, owner }
+const plotInfo = PLOTS.map(() => ({ owner: null, color: 0 }));
+function buildPlots() {
+  for (const p of PLOTS) {
+    const g = new THREE.Group();
+    g.position.set(p.x, 0, p.z);
+    // 空き地のしるし：四すみのくいと、なわ
+    const stakes = new THREE.Group();
+    const h = PLOT_SIZE / 2;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) stakes.add(mesh(GEO.box, toon('#a8743f'), sx * h, 0.3, sz * h, 0.12, 0.6, 0.12));
+    for (const [x, z, w, d] of [[0, -h, PLOT_SIZE, 0.04], [0, h, PLOT_SIZE, 0.04], [-h, 0, 0.04, PLOT_SIZE], [h, 0, 0.04, PLOT_SIZE]]) {
+      stakes.add(mesh(GEO.box, toon('#e7d3a0'), x, 0.48, z, w, 0.03, d));
+    }
+    g.add(stakes);
+    scene.add(g);
+    // 看板
+    const sign = new THREE.Group();
+    sign.position.set(p.sign.x, 0, p.sign.z);
+    sign.add(mesh(GEO.box, toon('#8a5a32'), 0, 0.55, 0, 0.1, 1.1, 0.1));
+    const mat = curvify(new THREE.MeshBasicMaterial({ map: signTexture(['売り地', `${PLOT_PRICE.toLocaleString('ja-JP')} ポカ`]) }));
+    sign.add(mesh(GEO.box, toon('#9c6b3e'), 0, 1.15, -0.02, 1.25, 0.66, 0.06));
+    sign.add(mesh(new THREE.PlaneGeometry(1.15, 0.575), mat, 0, 1.15, 0.015));
+    sign.add(blob(0.9));
+    scene.add(sign);
+    plotObjs.push({ stakes, mat, house: null, owner: undefined, color: undefined });
+  }
+}
+// サーバーから届いた持ち主の一覧を島に反映する：[番号, 持ち主の名前 or null, 色]
+function applyPlots(list) {
+  for (const [i, owner, color] of list || []) {
+    const o = plotObjs[i], p = PLOTS[i];
+    if (!o) continue;
+    plotInfo[i] = { owner, color };
+    setPlotOwned(i, !!owner);
+    const room = INTERIORS[HOUSES.length + i];
+    if (room) room.house.name = owner ? `${owner}の家` : 'だれかの家';
+    if (o.owner === owner && o.color === color) continue;
+    o.owner = owner; o.color = color;
+    o.stakes.visible = !owner;
+    o.mat.map.dispose();
+    o.mat.map = signTexture(owner ? [`${owner}`, 'の家'] : ['売り地', `${PLOT_PRICE.toLocaleString('ja-JP')} ポカ`]);
+    o.mat.needsUpdate = true;
+    if (o.house) { scene.remove(o.house); o.house = null; }
+    if (owner) {
+      o.house = makeHouse({ ...p.house, roof: MOMO_ACCENT[color] || MOMO_ACCENT[0], wall: '#fffaf0' });
+      scene.add(o.house);
+    }
+  }
+  // 自分がいる場所に家が建ったら、手前に出す
+  if (me && layerOf(me.x) === 'surface' && !walkable(me.x, me.z)) {
+    const p = PLOTS.find((q) => Math.abs(me.x - q.house.x) < q.house.w / 2 + 0.5 && Math.abs(me.z - q.house.z) < q.house.d / 2 + 0.5);
+    if (p) { me.x = p.x; me.z = p.z + PLOT_SIZE / 2 + 0.6; }
+  }
+}
+function applyMe(v) {
+  if (!v) return;
+  pocket = { coins: v.coins || 0, fruit: v.fruit || {}, gems: v.gems || {} };
+  myPlot = Number.isInteger(v.plot) ? v.plot : null;
+  renderPocket();
+  renderShop();
+  if (plotModalFor !== null) renderPlotModal(plotModalFor);
+}
+
+// 土地の看板を調べたとき
+let plotModalFor = null, releaseArmed = false;
+function openPlotModal(i) {
+  plotModalFor = i; releaseArmed = false;
+  renderPlotModal(i);
+  openModal('#plotModal');
+}
+function renderPlotModal(i) {
+  const info = plotInfo[i];
+  const mine = myPlot === i;
+  const btn = $('#plotAction');
+  btn.hidden = false; btn.disabled = false;
+  $('#plotTitle').textContent = info.owner ? (mine ? 'あなたの土地' : `${info.owner}さんの土地`) : `売り地 No.${i + 1}`;
+  if (mine) {
+    $('#plotText').textContent = 'あなたの家が建っています。しばらく（30日）島に来ないと、空き地にもどります。';
+    btn.textContent = releaseArmed ? '本当に手放す' : `土地を手放す（${Math.floor(PLOT_PRICE * PLOT_REFUND).toLocaleString('ja-JP')} ポカもどる）`;
+    btn.classList.toggle('danger', true);
+  } else if (info.owner) {
+    $('#plotText').textContent = `${info.owner}さんの家が建っています。ドアから遊びに行けます。`;
+    btn.hidden = true;
+  } else {
+    btn.classList.toggle('danger', false);
+    btn.textContent = `この土地を ${PLOT_PRICE.toLocaleString('ja-JP')} ポカで買う`;
+    let note = `買うと、ここに あなたの家が建ちます。土地は ひとり ひとつまでです。いまのポカ：${pocket.coins.toLocaleString('ja-JP')}`;
+    if (!serverMode()) { note = '土地は、みんなの島（公開中のサーバー）でだけ買えます。'; btn.disabled = true; }
+    else if (myPlot !== null) { note = `もう No.${myPlot + 1} の土地を持っています。土地は ひとり ひとつまでです。`; btn.disabled = true; }
+    else if (pocket.coins < PLOT_PRICE) { note += `（あと ${(PLOT_PRICE - pocket.coins).toLocaleString('ja-JP')} ポカ）`; btn.disabled = true; }
+    $('#plotText').textContent = note;
+  }
+}
+$('#plotAction').addEventListener('click', () => {
+  const i = plotModalFor;
+  if (i === null || !serverMode()) return;
+  if (myPlot === i) {
+    if (!releaseArmed) { releaseArmed = true; renderPlotModal(i); return; }
+    net.send({ t: 'releasePlot' });
+  } else {
+    net.send({ t: 'buyPlot', i });
+  }
+  $('#plotAction').disabled = true;
+});
+function onPlotResult(msg) {
+  closeModals();
+  plotModalFor = null;
+  if (msg.action === 'buy') {
+    if (!msg.error) { toast('土地を買いました！ あなたの家が建ちました'); sound.sparkle(); me.v.hop(); }
+    else toast({ taken: 'ほかの人が先に買いました', not_enough: 'ポカが足りません', already_own: '土地は ひとり ひとつまでです' }[msg.error] || '買えませんでした');
+  } else if (msg.refund) {
+    toast(`土地を手放しました（${msg.refund.toLocaleString('ja-JP')} ポカもどりました）`);
+  }
+}
+
+// よろず屋：果物や宝石を ぜんぶ売る
+function buildShop() {
+  const g = new THREE.Group();
+  g.position.set(SHOP.x, groundHeight(SHOP.x, SHOP.z), SHOP.z);
+  const wood = toon('#b98555'), woodDark = toon('#8f623b');
+  g.add(mesh(GEO.box, wood, 0, 0.55, 0.15, 2.5, 1.1, 0.9));
+  g.add(mesh(GEO.box, toon('#f6ead0'), 0, 1.13, 0.15, 2.6, 0.08, 1.0));
+  for (const sx of [-1, 1]) g.add(mesh(GEO.box, woodDark, sx * 1.2, 1.4, -0.35, 0.12, 2.8, 0.12));
+  // しましまの屋根
+  for (let k = 0; k < 6; k++) {
+    const m = mesh(GEO.box, toon(k % 2 ? '#fdfdf8' : '#e2574c'), -1.25 + 0.5 * k + 0.25, 2.75, 0.1, 0.5, 0.08, 1.5);
+    m.rotation.x = 0.28;
+    g.add(m);
+  }
+  const mat = curvify(new THREE.MeshBasicMaterial({ map: signTexture(['よろず屋', '買い取り']) }));
+  g.add(mesh(new THREE.PlaneGeometry(1.4, 0.7), mat, 0, 2.2, -0.28));
+  // 台の上の品もの
+  g.add(mesh(GEO.sphereLo, toon('#ffa7a0'), -0.7, 1.28, 0.2, 0.16));
+  g.add(mesh(GEO.sphereLo, toon('#e8423b'), -0.4, 1.28, 0.3, 0.15));
+  g.add(mesh(new THREE.OctahedronGeometry(0.15), toon('#4f8cff'), 0.5, 1.32, 0.25, 1, 1.5, 1));
+  g.add(mesh(new THREE.OctahedronGeometry(0.13), toon('#b77cf0'), 0.8, 1.3, 0.1, 1, 1.5, 1));
+  g.add(blob(3.2));
+  scene.add(g);
+}
+function renderShop() {
+  const list = $('#shopList');
+  if (!list) return;
+  list.textContent = '';
+  const rows = [];
+  for (const [key, n] of Object.entries(pocket.fruit || {})) if (n && SELL_PRICES.fruit[key]) rows.push({ what: 'fruit', key, n, name: FRUITS[key].name, color: FRUITS[key].color, price: SELL_PRICES.fruit[key] });
+  for (const k of GEM_KINDS) { const n = pocket.gems?.[k.key]; if (n) rows.push({ what: 'gem', key: k.key, n, name: k.name, color: k.color, price: SELL_PRICES.gem[k.key] }); }
+  $('#shopEmpty').hidden = rows.length > 0;
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'shoprow';
+    const dot = document.createElement('i');
+    dot.style.background = r.color;
+    if (r.what === 'gem') dot.className = 'gemdot';
+    const name = document.createElement('span');
+    name.className = 'nm';
+    name.textContent = `${r.name} ×${r.n}`;
+    const price = document.createElement('span');
+    price.className = 'pr';
+    price.textContent = `${(r.price * r.n).toLocaleString('ja-JP')} ポカ`;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'ぜんぶ売る';
+    b.addEventListener('click', () => sellItem(r.what, r.key));
+    row.append(dot, name, price, b);
+    list.appendChild(row);
+  }
+  $('#shopCoins').textContent = pocket.coins.toLocaleString('ja-JP');
+}
+function sellItem(what, key) {
+  if (serverMode()) { net.send({ t: 'sell', what, key }); return; }
+  const bag = what === 'fruit' ? pocket.fruit : pocket.gems;
+  const gained = (bag[key] || 0) * SELL_PRICES[what][key];
+  delete bag[key];
+  pocket.coins += gained;
+  savePocket();
+  renderPocket();
+  renderShop();
+  if (gained) { toast(`${gained.toLocaleString('ja-JP')} ポカで 売れました！`); sound.coins(); }
+}
+
+// =====================================================================
 // 落ちた果物・ポカぶくろ
 // =====================================================================
 const drops = new Map(); // id -> { obj, kind, tree, t0 }
@@ -1238,10 +1439,17 @@ function toast(text) {
 // =====================================================================
 // ポケット（果物とポカは、この端末に保存）
 // =====================================================================
-const pocket = store.get('pocket', { fruit: {}, coins: 0 });
+// サーバーにつながっているときは、ポケットの中身はサーバーが持っている（端末では書きかえられない）。
+// ひとりモード・claude.ai のページ版では、この端末に保存する。
+let pocket = store.get('pocket', { fruit: {}, coins: 0 });
 if (!Number.isFinite(pocket.coins)) pocket.coins = Number(pocket.bells) || 0;
 if (!pocket.gems || typeof pocket.gems !== 'object') pocket.gems = {};
 delete pocket.bells;
+const serverMode = () => !!net && net.mode === 'server';
+function savePocket() { if (!serverMode()) savePocket(); }
+let myPlot = null;           // 自分の土地の番号
+let accountToken = store.get('token', null);
+const formatCode = (t) => (t || '').match(/.{1,5}/g)?.join('-') || '';
 function renderPocket() {
   $('#coinCount').textContent = pocket.coins.toLocaleString('ja-JP');
   const box = $('#fruits');
@@ -1287,6 +1495,10 @@ function handle(msg) {
       gemMinedUntil.clear();
       for (const [i, left] of msg.world?.gems || []) gemMinedUntil.set(i, Date.now() + left);
       refreshGems();
+      if (msg.token) { accountToken = msg.token; store.set('token', accountToken); }
+      if (msg.pass && !pass) { pass = msg.pass; store.set('pass', pass); premium = true; }
+      if (msg.me) applyMe(msg.me);
+      if (msg.plots) applyPlots(msg.plots);
       updateOnline();
       break;
     }
@@ -1359,8 +1571,8 @@ function handle(msg) {
       const kind = GEM_KINDS.find((k) => k.key === msg.kind) || GEM_KINDS[0];
       spawnSparks(g.x, 0.7, g.z + 0.3, kind.color, 16, 4);
       if (msg.id === myId) {
-        pocket.gems[kind.key] = (pocket.gems[kind.key] || 0) + 1;
-        store.set('pocket', pocket);
+        if (!serverMode()) pocket.gems[kind.key] = (pocket.gems[kind.key] || 0) + 1;
+        savePocket();
         renderPocket();
         sound.sparkle();
         toast(`${kind.name}を ほりあてた！`);
@@ -1372,22 +1584,47 @@ function handle(msg) {
     }
     case 'got': {
       if (msg.kind === 'coin') {
-        const amt = [100, 200, 300, 500, 1000][Math.floor(Math.random() * 5)];
-        pocket.coins += amt;
+        const amt = msg.amount || [100, 200, 300, 500, 1000][Math.floor(Math.random() * 5)];
+        if (!serverMode()) pocket.coins += amt;
         toast(`${amt.toLocaleString('ja-JP')} ポカを手に入れた！`);
         sound.coins();
       } else {
         const key = PLACE.trees[msg.tree]?.fruit || 'peach';
-        pocket.fruit[key] = (pocket.fruit[key] || 0) + 1;
+        if (!serverMode()) pocket.fruit[key] = (pocket.fruit[key] || 0) + 1;
         toast(`${FRUITS[key].name}を手に入れた！`);
         sound.pop();
       }
-      store.set('pocket', pocket);
+      savePocket();
       renderPocket();
       break;
     }
     case 'full':
       toast('島がいっぱいです。少し待ってからまた来てね');
+      break;
+    case 'me':
+      applyMe(msg.me);
+      break;
+    case 'plots':
+      applyPlots(msg.plots);
+      break;
+    case 'chest':
+      if (msg.amount > 0) { toast(`宝箱に ${msg.amount.toLocaleString('ja-JP')} ポカ 入っていた！`); sound.coins(); }
+      else { toast('宝箱はからっぽ… また明日来てね'); sound.click(); }
+      break;
+    case 'sold':
+      if (msg.gained > 0) { toast(`${msg.gained.toLocaleString('ja-JP')} ポカで 売れました！`); sound.coins(); }
+      renderShop();
+      break;
+    case 'plotResult':
+      onPlotResult(msg);
+      break;
+    case 'dup':
+      // 同じアカウントで ほかの画面から入った
+      net.stop?.();
+      toast('ほかの画面で この島に入ったので、ここは切断しました');
+      addLog(null, 'ほかの画面で同じアカウントが使われたので、切断しました。この画面を使うときは、ページを開きなおしてください。');
+      $('#online').classList.add('offline');
+      $('#onlineText').textContent = '切断しました';
       break;
   }
 }
@@ -1575,10 +1812,30 @@ document.querySelectorAll('.modal').forEach((m) => {
 });
 $('#helpBtn').addEventListener('click', () => {
   $('#shareUrl').value = location.href.split('#')[0];
+  $('#accountBox').hidden = !(serverMode() && accountToken);
+  $('#myCode').value = formatCode(accountToken);
   $('#shareNote').textContent = net?.mode === 'solo'
     ? 'いまはひとりモードです。サーバー（server.js）で開くと、URLを送った友だちと同じ島で会えます。'
     : 'このページのURLを友だちに送ると、同じ島で会えます。';
   openModal('#helpModal');
+});
+$('#copyCode').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#myCode').value); toast('引き継ぎコードをコピーしました'); }
+  catch { $('#myCode').select(); }
+});
+// 引き継ぎコードで続きから：本物か確かめてから、この端末に保存する
+$('#joinCodeOpen').addEventListener('click', () => { $('#joinCodeForm').hidden = false; $('#joinCodeInput').focus(); });
+$('#joinCodeGo').addEventListener('click', async () => {
+  const code = $('#joinCodeInput').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length < 16) { $('#status').textContent = 'コードが短すぎます。もう一度確かめてください。'; return; }
+  const r = await api('/api/account?code=' + encodeURIComponent(code));
+  if (r && r.ok) {
+    accountToken = code; store.set('token', code);
+    $('#joinCodeForm').hidden = true;
+    $('#status').textContent = '✅ 引き継ぎコードを確認しました。「島へ行く」で続きから遊べます。';
+  } else {
+    $('#status').textContent = r ? 'そのコードは見つかりませんでした。' : 'いまはコードを確認できません（サーバーにつながっていません）。';
+  }
 });
 $('#copyBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('#shareUrl').value); toast('URLをコピーしました'); }
@@ -1623,6 +1880,14 @@ function findTarget() {
   for (const sp of UNDER_SPOTS) {
     if (sp.kind !== 'hatch' && Math.hypot(me.x - sp.x, me.z - sp.z) < 2.6) return { type: 'down', sp };
   }
+  if (Math.hypot(me.x - SHOP.x, me.z - SHOP.z) < 2.4) return { type: 'shop' };
+  for (const p of PLOTS) {
+    if (plotOwned(p.i)) {
+      const h = p.house;
+      if (Math.abs(me.x - h.x) < 1.0 && Math.abs(me.z - (h.z + h.d / 2 + 0.55)) < 1.1) return { type: 'door', i: HOUSES.length + p.i };
+    }
+    if (Math.hypot(me.x - p.sign.x, me.z - p.sign.z) < 1.6) return { type: 'plot', i: p.i };
+  }
   for (let i = 0; i < HOUSES.length; i++) {
     const d = doorOf(HOUSES[i]);
     if (Math.abs(me.x - d.x) < 1.0 && Math.abs(me.z - d.z) < 1.1) return { type: 'door', i };
@@ -1650,6 +1915,8 @@ function action() {
   if (t.type === 'down') { enterUnder(t.sp); return; }
   if (t.type === 'up') { exitUnder(t.sp); return; }
   if (t.type === 'chest') { openChest(); return; }
+  if (t.type === 'shop') { renderShop(); openModal('#shopModal'); return; }
+  if (t.type === 'plot') { openPlotModal(t.i); return; }
   if (t.type === 'mine') { mineGem(t.i); return; }
   if (t.type === 'pickaxe') {
     hasPickaxe = true;
@@ -1686,7 +1953,8 @@ function updatePrompt() {
   const t = findTarget();
   const label = !t ? '' : {
     pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
-    stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう',
+    stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう', shop: 'よろず屋で売る',
+    plot: t.i !== undefined && (plotInfo[t.i]?.owner ? '看板を読む' : '売り地を見る'),
     mine: hasPickaxe ? 'ピッケルで ほる' : 'ピッケルがあれば ほれそう…',
     down: t.sp && (t.sp.kind === 'well' ? '井戸をおりる' : t.sp.kind === 'hatch' ? '床の扉からおりる' : 'ほらあなに入る'),
     up: t.sp && `はしごをのぼる（${t.sp.name}へ）`, seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
@@ -1802,8 +2070,9 @@ function exitUnder(sp) {
   fadeThen(() => { const e = surfaceExit(sp); me.x = e.x; me.z = e.z; me.r = 0; });
 }
 function openChest() {
-  const today = new Date().toDateString();
   chestLid.target = 1;
+  if (serverMode()) { net.send({ t: 'chest' }); return; }
+  const today = new Date().toDateString();
   if (store.get('chestDay', '') === today) {
     toast('宝箱はからっぽ… また明日来てね');
     sound.click();
@@ -1811,7 +2080,7 @@ function openChest() {
   }
   const amt = [300, 500, 800, 1000][Math.floor(Math.random() * 4)];
   pocket.coins += amt;
-  store.set('pocket', pocket);
+  savePocket();
   store.set('chestDay', today);
   renderPocket();
   toast(`宝箱に ${amt.toLocaleString('ja-JP')} ポカ 入っていた！`);
@@ -1968,6 +2237,26 @@ function drawMap() {
   };
   const big = box.classList.contains('big');
   const R = (big ? 5 : 3.2) * dpr;
+  if (!under) {
+    // 土地：空き地は点線、家が建っている所は屋根の色
+    const k = W / (2 * MAP_E), P = (x, z) => [(x + MAP_E) * k, (z + MAP_E) * k];
+    for (const p of PLOTS) {
+      const [cx, cy] = P(p.x, p.z), hs = (PLOT_SIZE / 2) * k;
+      const info = plotInfo[p.i];
+      if (info.owner) {
+        g.fillStyle = '#ffffff'; g.fillRect(cx - hs * 0.8 - dpr, cy - hs * 0.8 - dpr, hs * 1.6 + 2 * dpr, hs * 1.6 + 2 * dpr);
+        g.fillStyle = MOMO_ACCENT[info.color] || MOMO_ACCENT[0]; g.fillRect(cx - hs * 0.8, cy - hs * 0.8, hs * 1.6, hs * 1.6);
+        if (p.i === myPlot) { g.strokeStyle = '#1fc3b3'; g.lineWidth = 2 * dpr; g.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2); }
+      } else {
+        g.setLineDash([2 * dpr, 2 * dpr]); g.strokeStyle = 'rgba(114,93,66,0.7)'; g.lineWidth = dpr;
+        g.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2); g.setLineDash([]);
+      }
+    }
+    // よろず屋
+    const [sx, sy] = P(SHOP.x, SHOP.z);
+    g.fillStyle = '#ffffff'; g.fillRect(sx - 4 * dpr, sy - 3 * dpr, 8 * dpr, 6 * dpr);
+    g.fillStyle = '#e2574c'; g.fillRect(sx - 3 * dpr, sy - 2 * dpr, 6 * dpr, 4 * dpr);
+  }
   // 同じ階（地上か地下か）にいる人だけ出す
   const same = (x) => (layerOf(x) === 'under') === !!under;
   for (const p of people.values()) if (!p.isMe && same(p.x)) dot(p.x, p.z, tagColor(p.name), R);
@@ -1999,6 +2288,9 @@ function whereName(x, z) {
   if (r) return `${r.house.name}の中`;
   if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.r + 1) return 'ひろば';
   if (onBridge(x, z)) return '橋の上';
+  if (Math.hypot(x - SHOP.x, z - SHOP.z) < 3) return 'よろず屋のまえ';
+  const plot = PLOTS.find((p) => Math.abs(x - p.x) < PLOT_SIZE / 2 + 0.8 && Math.abs(z - p.z) < PLOT_SIZE / 2 + 1.2);
+  if (plot) return plotInfo[plot.i].owner ? `${plotInfo[plot.i].owner}の土地` : `売り地 No.${plot.i + 1}`;
   for (const h of HOUSES) if (Math.abs(x - h.x) < h.w / 2 + 2.5 && Math.abs(z - h.z) < h.d / 2 + 3) return `${h.name}のまえ`;
   if (pondDist(x, z) < 3) return '池のほとり';
   if (riverDist(x, z) < RIVER_W + 3) return '川べり';
@@ -2163,9 +2455,9 @@ function moveMe(dt) {
   }
   // ドアに向かって歩くと家に入り、出口のマットで下へ歩くと外に出る
   if (speed > 0 && !room && iz < -0.5) {
-    for (let i = 0; i < HOUSES.length; i++) {
-      const h = HOUSES[i];
-      if (Math.abs(me.x - h.x) < 0.7 && me.z - (h.z + h.d / 2) < 0.45) { enterHouse(i); break; }
+    const all = [...HOUSES.map((h, i) => [h, i]), ...PLOTS.filter((p) => plotOwned(p.i)).map((p) => [p.house, HOUSES.length + p.i])];
+    for (const [h, i] of all) {
+      if (Math.abs(me.x - h.x) < 0.7 && me.z - (h.z + h.d / 2) < 0.45 && me.z > h.z) { enterHouse(i); break; }
     }
   }
   if (speed > 0 && room && iz > 0.5 && atRoomExit(me.x, me.z)) exitHouse();
@@ -2516,7 +2808,7 @@ function startConnecting() {
       $('#online').classList.toggle('offline', st === 'offline');
       if (st === 'offline') { $('#onlineText').textContent = 'つなぎなおし中…'; addLog(null, '通信が切れました。つなぎなおしています…'); }
       else if (st === 'upgraded') {
-        net.send({ t: 'join', name: me.name, look: me.look, x: me.x, z: me.z, r: me.r, pass: premium ? pass : undefined });
+        net.send({ t: 'join', name: me.name, look: me.look, x: me.x, z: me.z, r: me.r, pass: premium ? pass : undefined, token: accountToken || undefined });
         lastSent = '';
         toast('サーバーにつながりました！');
         addLog(null, 'みんなの島につながりました');
@@ -2544,7 +2836,7 @@ async function enterIsland() {
   me = createPerson('__me', name, look, sx, sz, 0, true);
   camPos.set(sx, 14, sz + 17);
   for (const m of pending.splice(0)) handle(m);
-  net.send({ t: 'join', name, look, x: sx, z: sz, r: 0, pass: premium ? pass : undefined });
+  net.send({ t: 'join', name, look, x: sx, z: sz, r: 0, pass: premium ? pass : undefined, token: accountToken || undefined });
   $('#join').classList.add('hide');
   updateEnvironment();
   updateOnline();
@@ -2570,6 +2862,8 @@ buildRocks();
 buildFlowers();
 buildButterflies();
 buildInteriors();
+buildPlots();
+buildShop();
 buildUnderground();
 refreshGems();
 buildEntrances();

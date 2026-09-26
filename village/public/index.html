@@ -206,6 +206,29 @@
   #fade { position: fixed; inset: 0; z-index: 14; background: #1f1712; opacity: 0; pointer-events: none; transition: opacity .25s; }
   #fade.on { opacity: 1; }
 
+  /* よろず屋・土地 */
+  .shoprow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 2px dashed var(--line); }
+  .shoprow i { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset -3px -3px 0 rgba(0,0,0,0.12); }
+  .shoprow i.gemdot { width: 12px; height: 12px; border-radius: 2px; transform: rotate(45deg); margin: 0 2px; }
+  .shoprow .nm { font-size: 14px; }
+  .shoprow .pr { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .shoprow button, .card .action {
+    height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--sun); color: #6b4f14; font-size: 13px; box-shadow: 0 3px 0 var(--sun-dark);
+  }
+  .card .action { display: block; width: 100%; height: 46px; margin-top: 12px; font-size: 15px; }
+  .card .action.danger { background: #f3c1b6; color: #7a2e22; box-shadow: 0 3px 0 #d99a8c; }
+  .card .action:disabled { opacity: .5; }
+  .coinline { font-size: 14px; margin: 4px 0 8px; }
+  .code { font-size: 17px; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+  #codeForm { display: flex; gap: 6px; margin-top: 8px; }
+  #codeInput, #joinCodeInput {
+    flex: 1; min-width: 0; height: 38px; border-radius: 12px; border: 2px solid var(--line); background: #fff; padding: 0 10px;
+    font-size: 13px; font-weight: 800; color: var(--ink); text-transform: uppercase; user-select: text; -webkit-user-select: text;
+  }
+  #codeGo, #joinCodeGo { height: 38px; padding: 0 14px; border-radius: 12px; border: 0; background: var(--teal); color: #fff; font-size: 13px; }
+  #joinCode { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  #joinCodeForm { display: flex; gap: 6px; width: 100%; }
+
   /* スマホ用 */
   #stick, #actBtn { display: none; }
   body.touch #stick {
@@ -228,13 +251,13 @@
 
   /* ---------- パネル（けいじばん・はじめに） ---------- */
   .modal {
-    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: safe center; padding: 32px 16px 16px; overflow-y: auto;
     background: rgba(60, 90, 70, 0.28); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
     opacity: 0; pointer-events: none; transition: opacity .25s;
   }
   .modal.on { opacity: 1; pointer-events: auto; }
   .card {
-    position: relative; width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--paper);
+    position: relative; width: min(460px, 100%); background: var(--paper);
     border-radius: 32px; padding: 30px 26px 24px; box-shadow: var(--shadow);
     transform: translateY(12px) scale(.97); transition: transform .3s cubic-bezier(.3,1.5,.5,1);
   }
@@ -315,6 +338,7 @@
     font-size: 11px; font-weight: 700; color: var(--ink); user-select: text; -webkit-user-select: text;
   }
   .passrow button { height: 32px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--teal); color: #fff; font-size: 12px; }
+  .linkbtn { border: 0; background: none; padding: 0; color: var(--ink-2); font-size: 12px; text-decoration: underline; }
   .passrow .linkbtn { height: auto; border: 0; background: none; padding: 0; color: var(--ink-2); font-size: 12px; text-decoration: underline; }
   #passBox a { color: var(--ink-2); font-size: 11px; }
   #go {
@@ -398,8 +422,32 @@
       <kbd>1〜8</kbd><span>リアクション</span>
       <kbd>ホイール</kbd><span>ズーム</span>
     </div>
+    <div id="accountBox" hidden>
+      <p><b>引き継ぎコード</b>：ほかのスマホやパソコンで続きから遊ぶときに使います。人には教えないでね。</p>
+      <div class="share"><input id="myCode" class="code" readonly><button id="copyCode" type="button">コピー</button></div>
+    </div>
     <p id="shareNote">このページのURLを友だちに送ると、同じ島で会えます。</p>
     <div class="share"><input id="shareUrl" readonly><button id="copyBtn" type="button">コピー</button></div>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div class="modal" id="shopModal">
+  <div class="card">
+    <h2>よろず屋（買い取り）</h2>
+    <p>果物や宝石を ポカに かえられます。</p>
+    <p class="coinline">🪙 いまのポカ：<b id="shopCoins">0</b></p>
+    <div id="shopList"></div>
+    <p id="shopEmpty">売れるものを持っていません。木をゆらしたり、地下で宝石を ほったりしてみてね。</p>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div class="modal" id="plotModal">
+  <div class="card">
+    <h2 id="plotTitle">売り地</h2>
+    <p id="plotText"></p>
+    <button class="action" id="plotAction" type="button">この土地を買う</button>
     <button class="close" type="button" data-close>とじる</button>
   </div>
 </div>
@@ -415,6 +463,8 @@
       <li>川は橋をつかってわたってね。</li>
       <li>家のドアに向かって歩くと、中に入れます。</li>
       <li>ハムスターの こむぎ が島を おさんぽしています。話しかけてみてね。</li>
+      <li>ひろばの西の よろず屋で、果物や宝石を ポカに かえられます。</li>
+      <li>「売り地」の看板がある土地は、ポカで買えます。買うと あなたの家が建ちます（ひとり ひとつ・30日来ないと空き地にもどります）。</li>
     </ul>
     <p id="boardNow"></p>
     <button class="close" type="button" data-close>とじる</button>
@@ -453,6 +503,13 @@
         </div>
       </div>
       <button id="go" type="button">島へ行く</button>
+      <div id="joinCode">
+        <button class="linkbtn" id="joinCodeOpen" type="button">引き継ぎコードで 続きから遊ぶ</button>
+        <div id="joinCodeForm" hidden>
+          <input id="joinCodeInput" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off">
+          <button id="joinCodeGo" type="button">つかう</button>
+        </div>
+      </div>
       <p id="status"></p>
     </div>
   </div>
