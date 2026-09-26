@@ -303,10 +303,33 @@ export function makeVillager(look) {
   pickaxe.add(pickHead);
   pickaxe.visible = false;
   arms[1].add(pickaxe);
+  // つりざお
+  const rod = new THREE.Group();
+  rod.position.set(0, parts.handY, 0.02);
+  rod.add(mesh(GEO.cyl, toon('#7a5230'), 0, 0, 0.12, 0.028, 0.3, 0.028).rotateX(Math.PI / 2));
+  rod.add(mesh(GEO.cyl, toon('#c9a26b'), 0, 0, 0.9, 0.012, 1.3, 0.012).rotateX(Math.PI / 2));
+  rod.add(mesh(GEO.cyl, toon('#b8c0cb'), 0.04, 0, 0.18, 0.03, 0.05, 0.03).rotateZ(Math.PI / 2));
+  const rodTip = new THREE.Object3D();
+  rodTip.position.set(0, 0, 1.55);
+  rod.add(rodTip);
+  rod.visible = false;
+  arms[1].add(rod);
+  // 虫とりあみ
+  const net = new THREE.Group();
+  net.position.set(0, parts.handY, 0.02);
+  net.add(mesh(GEO.cyl, toon('#c9a26b'), 0, 0, 0.45, 0.02, 0.9, 0.02).rotateX(Math.PI / 2));
+  const ring = mesh(new THREE.TorusGeometry(0.2, 0.018, 6, 20), toon('#e8e3d6'), 0, 0, 1.08);
+  net.add(ring);
+  const bag = mesh(new THREE.ConeGeometry(0.19, 0.32, 14, 1, true), toon('#f4f7f2', { transparent: true, opacity: 0.6, side: THREE.DoubleSide }), 0, 0, 1.08);
+  bag.rotation.x = Math.PI / 2; bag.position.y = 0; bag.translateY(-0.16);
+  net.add(bag);
+  net.visible = false;
+  arms[1].add(net);
+  const tools = { pickaxe, rod, net };
 
   const st = {
     pose: 'stand',
-    swingT: 0,
+    swingT: 0, swingTool: 'pickaxe', hold: null, rodPull: 0,
     phase: 0, walk: 0, blinkT: 2 + Math.random() * 3, talkT: 0, hopT: 0, waveT: 0, shakeT: 0, t: Math.random() * 10,
   };
 
@@ -375,9 +398,14 @@ export function makeVillager(look) {
       arms[1].rotation.z = 0.15;
       arms[0].rotation.x = a * 0.6;
       body.rotation.x = p > 0.45 ? 0.15 : -0.05;
-      pickaxe.visible = true;
-    } else {
-      pickaxe.visible = false;
+    }
+    // 手に持つ道具：ふっているあいだの道具か、持ったままの道具（つりざお）
+    const shown = st.swingT > 0 ? st.swingTool : st.hold;
+    for (const [k, m] of Object.entries(tools)) m.visible = k === shown;
+    if (st.hold === 'rod' && st.swingT <= 0) {
+      // さおを前に かまえる（st.bob でウキがひかれると少し下がる）
+      arms[1].rotation.x = -0.9 + st.rodPull * 0.5;
+      arms[1].rotation.z = 0.2;
     }
     body.position.y = y;
 
@@ -407,7 +435,10 @@ export function makeVillager(look) {
     hop() { st.hopT = 0.5; },
     wave() { st.waveT = 1.6; },
     shake() { st.shakeT = 0.6; },
-    swing() { st.swingT = 0.42; },
+    swing(tool = 'pickaxe') { st.swingT = 0.42; st.swingTool = tool; },
+    hold(tool) { st.hold = tool; },
+    setRodPull(v) { st.rodPull = v; },
+    rodTip(out) { return rodTip.getWorldPosition(out); },
     setPose(p) { st.pose = p; },
     get pose() { return st.pose; },
     lieShift: parts.lieShift, // ねころぶとき、頭がベッドの板にぶつからないよう足もと側へずらす量

@@ -3,7 +3,7 @@
 //  2. room   : claude.ai の Artifact として開いたとき、同じページを開いている人どうし
 //  3. solo   : どちらもつながらないときは、ひとりで遊べる
 
-import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS } from './world.js';
+import { gemPlan, gemDay, GEM_HITS, GEM_SPOTS, BUG_SPOTS, bugFor, fishFor, waterNear } from './world.js';
 
 const FRUIT_PER_TREE = 3;
 const GEM_REGROW_MS = 10 * 60 * 1000;
@@ -11,7 +11,42 @@ const FRUIT_REGROW_MS = 3 * 60 * 1000;
 
 // サーバーがいないときに、木の実と落とし物を手元で管理する
 class LocalWorld {
-  constructor() { this.trees = new Map(); this.drops = new Map(); this.gems = new Map(); }
+  constructor() { this.trees = new Map(); this.drops = new Map(); this.gems = new Map(); this.bugs = new Map(); this.nextBug = 1; }
+  // ---- 虫（この端末だけで出す） ----
+  bugList() { return [...this.bugs.values()].map((b) => [b.id, b.key, b.spot]); }
+  spawnBug() {
+    const spot = Math.floor(Math.random() * BUG_SPOTS.length);
+    if ([...this.bugs.values()].some((b) => b.spot === spot)) return false;
+    const key = bugFor(BUG_SPOTS[spot].hab, new Date().getHours(), Math.random());
+    if (!key) return false;
+    const id = 'b' + this.nextBug++;
+    this.bugs.set(id, { id, key, spot, until: Date.now() + (180 + Math.random() * 180) * 1000 });
+    return true;
+  }
+  bugTick() {
+    let changed = false;
+    for (const b of this.bugs.values()) if (b.until < Date.now()) { this.bugs.delete(b.id); changed = true; }
+    if (this.bugs.size < 10 && Math.random() < 0.6 && this.spawnBug()) changed = true;
+    return changed;
+  }
+  flee(x, z) {
+    const fled = [];
+    for (const b of this.bugs.values()) { const sp = BUG_SPOTS[b.spot]; if (Math.hypot(sp.x - x, sp.z - z) < 3.2) { this.bugs.delete(b.id); fled.push(b.id); } }
+    return fled;
+  }
+  // 虫・魚を つかまえる（はんていは、サーバーと同じ）
+  catchBug(id, x, z) {
+    const b = this.bugs.get(id);
+    if (!b) return null;
+    const sp = BUG_SPOTS[b.spot];
+    if (Math.hypot(sp.x - x, sp.z - z) > 3.4) return null;
+    this.bugs.delete(id);
+    return b.key;
+  }
+  fish(x, z) {
+    const where = waterNear(x, z, 5);
+    return where ? fishFor(where, new Date().getHours(), Math.random()) : null;
+  }
   // 宝石の岩をたたく：{ n: たたいた回数, kind: 掘れたら宝石の種類 }
   hitGem(i) {
     const now = Date.now();
@@ -64,6 +99,32 @@ function serverUrl() {
   if (q) return q.replace(/\/$/, '') + (q.endsWith('/ws') ? '' : '/ws');
   if (location.protocol !== 'http:' && location.protocol !== 'https:') return null;
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+}
+
+// ひとりモード・room で、虫と魚を手元で動かす
+function localCreatures(local, onMessage) {
+  for (let k = 0; k < 20 && local.bugs.size < 8; k++) local.spawnBug();
+  setInterval(() => { if (local.bugTick()) onMessage({ t: 'bugs', list: local.bugList() }); }, 4000);
+  let lastFish = 0;
+  return (msg) => {
+    switch (msg.t) {
+      case 'join': onMessage({ t: 'bugs', list: local.bugList() }); return true;
+      case 'move': if (msg.m === 2) { const fled = local.flee(msg.x, msg.z); if (fled.length) onMessage({ t: 'bugs', list: local.bugList(), fled }); } return false;
+      case 'catch': {
+        const key = local.catchBug(String(msg.id), msg.x, msg.z);
+        onMessage({ t: 'bugs', list: local.bugList() });
+        onMessage({ t: 'caught', kind: 'bug', key });
+        return true;
+      }
+      case 'fish': {
+        if (Date.now() - lastFish < 2500) return true;
+        lastFish = Date.now();
+        onMessage({ t: 'caught', kind: 'fish', key: local.fish(msg.x, msg.z) });
+        return true;
+      }
+    }
+    return false;
+  };
 }
 
 // ---------- 1. WebSocket サーバー ----------
@@ -120,6 +181,7 @@ async function connectRoom(onMessage) {
       name: String(pr.n || 'たびびと').slice(0, 12),
       look: { s: String(lk.s || 'cat'), f: Number(lk.f) || 0, c: Number(lk.c) || 0 },
       x: Number(pr.x) || 0, z: Number(pr.z) || 0, r: Number(pr.r) || 0, m: Number(pr.m) || 0,
+      rank: Number(pr.rk) || 0,
     };
   };
 
@@ -130,7 +192,7 @@ async function connectRoom(onMessage) {
       const info = fromPresence(p);
       let k = known.get(p.peer);
       if (!k) {
-        k = { say: p.presence.say?.k, emo: p.presence.emo?.k };
+        k = { say: p.presence.say?.k, emo: p.presence.emo?.k, rk: info.rank };
         known.set(p.peer, k);
         onMessage({ t: 'join', p: info });
         continue;
@@ -139,6 +201,7 @@ async function connectRoom(onMessage) {
       const say = p.presence.say, emo = p.presence.emo;
       if (say && say.k !== k.say) { k.say = say.k; onMessage({ t: 'chat', id: p.peer, text: String(say.t || '').slice(0, 80) }); }
       if (emo && emo.k !== k.emo) { k.emo = emo.k; onMessage({ t: 'emote', id: p.peer, e: String(emo.e || '') }); }
+      if (info.rank !== k.rk) { k.rk = info.rank; onMessage({ t: 'rank', id: p.peer, rank: info.rank }); }
     }
     for (const p of change.left) {
       if (known.delete(p.peer)) onMessage({ t: 'leave', id: p.peer });
@@ -170,9 +233,12 @@ async function connectRoom(onMessage) {
   });
 
   const quiet = (p) => p.catch(() => {});
+  const creatures = localCreatures(local, onMessage);
   return {
     mode: 'room',
     send(msg) {
+      if (msg.t === 'rank') { quiet(room.presence({ rk: msg.rank })); return; }
+      if (creatures(msg) && msg.t !== 'join') return;
       switch (msg.t) {
         case 'join': {
           joined = true;
@@ -226,10 +292,15 @@ async function connectRoom(onMessage) {
 // ---------- 3. ひとり ----------
 function soloNet(onMessage) {
   const local = new LocalWorld();
+  // サーバーに切りかわったら、手元の虫はもう配らない
+  let active = true;
+  const creatures = localCreatures(local, (m) => { if (active) onMessage(m); });
   let seq = 0;
   return {
     mode: 'solo',
+    deactivate() { active = false; },
     send(msg) {
+      if (creatures(msg) && msg.t !== 'join') return;
       switch (msg.t) {
         case 'join': onMessage({ t: 'welcome', id: 'me', players: [], world: local.snapshot() }); break;
         case 'chat': onMessage({ t: 'chat', id: 'me', text: msg.text }); break;
@@ -280,6 +351,7 @@ export async function connect(onMessage, onStatus = () => {}) {
     const attempt = () => connectServer(onMessage, onStatus).then((server) => {
       if (!server) { clearTimeout(giveUp); resolve(net); setTimeout(attempt, 5000); return; }
       clearTimeout(giveUp);
+      solo.deactivate();
       net.inner = server;
       net.mode = 'server';
       if (net.joinMsg) onStatus('upgraded'); // アプリが今の位置で join し直す

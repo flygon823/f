@@ -151,6 +151,22 @@ export class Sound {
     const t = this.ctx.currentTime;
     [84, 88, 91, 96, 100].forEach((n, i) => this._tone({ type: 'sine', freq: NOTE(n), t: t + i * 0.07, dur: 0.4, vol: 0.12 }));
   }
+  cast() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._noise({ t, dur: 0.25, vol: 0.08, freq: 1800, q: 0.6 });
+    this._tone({ type: 'sine', freq: 900, glide: 300, t: t + 0.25, dur: 0.12, vol: 0.06 });
+  }
+  nibble() {
+    if (!this.ctx) return;
+    this._tone({ type: 'sine', freq: 700, glide: 500, t: this.ctx.currentTime, dur: 0.06, vol: 0.06 });
+  }
+  splash() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._noise({ t, dur: 0.35, vol: 0.18, freq: 900, q: 0.5, type: 'lowpass' });
+    this._tone({ type: 'sine', freq: 300, glide: 120, t, dur: 0.2, vol: 0.12 });
+  }
   ladder() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

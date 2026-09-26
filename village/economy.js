@@ -29,7 +29,7 @@ class Economy {
   async init() {
     const data = await this.store.load();
     for (const [k, v] of Object.entries(data)) {
-      if (k.startsWith('acct:')) this.accounts.set(k.slice(5), v);
+      if (k.startsWith('acct:')) this.accounts.set(k.slice(5), this.upgrade(v));
       else if (k.startsWith('plot:')) { const i = Number(k.slice(5)); if (this.plots[i] !== undefined) this.plots[i] = v; }
     }
     this.releaseInactive();
@@ -48,6 +48,13 @@ class Economy {
     }
   }
   save(a) { this.dirty.add(a.id); }
+  // 古いデータに、あとから増えた項目を足す
+  upgrade(a) {
+    a.fish ||= {}; a.bugs ||= {}; a.fruit ||= {}; a.gems ||= {};
+    a.dex ||= { fish: {}, bug: {}, gem: {} };
+    for (const k of Object.keys(a.gems)) a.dex.gem[k] ||= a.created || Date.now();
+    return a;
+  }
 
   // ---------- アカウント ----------
   find(token) {
@@ -57,7 +64,7 @@ class Economy {
   create(name) {
     const token = newToken();
     const now = Date.now();
-    const a = { id: tokenId(token), name, color: 0, coins: 0, fruit: {}, gems: {}, chestDay: '', plot: null, pass: null, created: now, lastSeen: now };
+    const a = this.upgrade({ id: tokenId(token), name, color: 0, coins: 0, fruit: {}, gems: {}, chestDay: '', plot: null, pass: null, created: now, lastSeen: now });
     this.accounts.set(a.id, a);
     this.save(a);
     return { token, account: a };
@@ -69,17 +76,26 @@ class Economy {
     this.save(a);
   }
   view(a) {
-    return { coins: a.coins, fruit: a.fruit, gems: a.gems, plot: a.plot, price: this.W.PLOT_PRICE };
+    return { coins: a.coins, fruit: a.fruit, gems: a.gems, fish: a.fish, bugs: a.bugs, dex: a.dex, rank: this.W.rankOf(a.dex).i, plot: a.plot, price: this.W.PLOT_PRICE };
+  }
+  rank(a) { return this.W.rankOf(a.dex).i; }
+  // 図鑑に のせる。はじめてなら true
+  register(a, cat, key) {
+    if (a.dex[cat][key]) return false;
+    a.dex[cat][key] = Date.now();
+    return true;
   }
 
   // ---------- ひろう・ほる・売る ----------
   gotCoins(a) { const n = pick(COIN_BAG); a.coins += n; this.save(a); return n; }
   gotFruit(a, kind) { a.fruit[kind] = (a.fruit[kind] || 0) + 1; this.save(a); }
-  gotGem(a, kind) { a.gems[kind] = (a.gems[kind] || 0) + 1; this.save(a); }
+  gotGem(a, kind) { a.gems[kind] = (a.gems[kind] || 0) + 1; const first = this.register(a, 'gem', kind); this.save(a); return first; }
+  gotFish(a, key) { a.fish[key] = (a.fish[key] || 0) + 1; const first = this.register(a, 'fish', key); this.save(a); return first; }
+  gotBug(a, key) { a.bugs[key] = (a.bugs[key] || 0) + 1; const first = this.register(a, 'bug', key); this.save(a); return first; }
   // 持っているぶんを ぜんぶ売る。もらえたポカを返す
   sell(a, what, key) {
     const price = this.W.SELL_PRICES[what]?.[key];
-    const bag = what === 'fruit' ? a.fruit : what === 'gem' ? a.gems : null;
+    const bag = { fruit: a.fruit, gem: a.gems, fish: a.fish, bug: a.bugs }[what] || null;
     if (!price || !bag || !bag[key]) return 0;
     const gained = bag[key] * price;
     delete bag[key];

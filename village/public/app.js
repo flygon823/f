@@ -8,8 +8,10 @@ import {
   UNDER_X, TUNNEL_W, UNDER_SPOTS, UNDER_NODES, UNDER_EDGES, UNDER_ROOMS, CHEST, tunnelDist, surfaceExit, underEntry,
   GEM_KINDS, GEM_SPOTS, gemPlan, gemDay, PICKAXE_SPOT,
   PLOTS, PLOT_SIZE, PLOT_PRICE, PLOT_REFUND, setPlotOwned, plotOwned, inPlot, SHOP, SELL_PRICES,
+  FISH, BUGS, BUG_SPOTS, WHERE_NAMES, RANKS, rankOf, dexCount, DEX_TOTAL, waterAt, inHours,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
+import { makeCreature } from './creatures.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
 import { makeVillager, MOMO_ACCENT } from './villager.js';
 import { Sound } from './audio.js';
@@ -1142,7 +1144,8 @@ function applyPlots(list) {
 }
 function applyMe(v) {
   if (!v) return;
-  pocket = { coins: v.coins || 0, fruit: v.fruit || {}, gems: v.gems || {} };
+  pocket = { coins: v.coins || 0, fruit: v.fruit || {}, gems: v.gems || {}, fish: v.fish || {}, bugs: v.bugs || {}, dex: v.dex || { fish: {}, bug: {}, gem: {} } };
+  if (Number.isInteger(v.rank) && me) setRank(me, v.rank);
   myPlot = Number.isInteger(v.plot) ? v.plot : null;
   renderPocket();
   renderShop();
@@ -1232,6 +1235,8 @@ function renderShop() {
   const rows = [];
   for (const [key, n] of Object.entries(pocket.fruit || {})) if (n && SELL_PRICES.fruit[key]) rows.push({ what: 'fruit', key, n, name: FRUITS[key].name, color: FRUITS[key].color, price: SELL_PRICES.fruit[key] });
   for (const k of GEM_KINDS) { const n = pocket.gems?.[k.key]; if (n) rows.push({ what: 'gem', key: k.key, n, name: k.name, color: k.color, price: SELL_PRICES.gem[k.key] }); }
+  for (const f of FISH) { const n = pocket.fish?.[f.key]; if (n) rows.push({ what: 'fish', key: f.key, n, name: f.name, color: '#6cb7d9', price: f.price }); }
+  for (const b of BUGS) { const n = pocket.bugs?.[b.key]; if (n) rows.push({ what: 'bug', key: b.key, n, name: b.name, color: '#8fc45a', price: b.price }); }
   $('#shopEmpty').hidden = rows.length > 0;
   for (const r of rows) {
     const row = document.createElement('div');
@@ -1253,10 +1258,22 @@ function renderShop() {
     list.appendChild(row);
   }
   $('#shopCoins').textContent = pocket.coins.toLocaleString('ja-JP');
+  // はじめての人への道具
+  const tools = $('#shopTools');
+  tools.textContent = '';
+  for (const [k, name] of [['rod', 'つりざお'], ['net', '虫とりあみ']]) {
+    if (hasTool(k)) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${name}を もらう`;
+    b.addEventListener('click', () => { store.set(k, true); toast(`${name}を もらった！`); sound.coins(); renderShop(); });
+    tools.appendChild(b);
+  }
+  $('#shopToolsBox').hidden = !tools.children.length;
 }
 function sellItem(what, key) {
   if (serverMode()) { net.send({ t: 'sell', what, key }); return; }
-  const bag = what === 'fruit' ? pocket.fruit : pocket.gems;
+  const bag = { fruit: pocket.fruit, gem: pocket.gems, fish: pocket.fish, bug: pocket.bugs }[what];
   const gained = (bag[key] || 0) * SELL_PRICES[what][key];
   delete bag[key];
   pocket.coins += gained;
@@ -1264,6 +1281,309 @@ function sellItem(what, key) {
   renderPocket();
   renderShop();
   if (gained) { toast(`${gained.toLocaleString('ja-JP')} ポカで 売れました！`); sound.coins(); }
+}
+
+// =====================================================================
+// 虫・魚つり・図鑑
+// =====================================================================
+// 島の中の生き物は、セル調で地面といっしょに曲がるマテリアル
+function sceneM(c, o = {}) {
+  const { glow: g, ...rest } = o;
+  return g ? basic(c) : toon(c, rest);
+}
+const hasTool = (k) => store.get(k, false);
+const bugObjs = new Map(); // id -> { g, key, sp, flyer, wings, t0, fleeT }
+const TREE_Q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 1).normalize(), Math.PI);
+function applyBugs(list, fled = []) {
+  const alive = new Set();
+  for (const [id, key, spot] of list || []) {
+    alive.add(id);
+    if (bugObjs.has(id)) continue;
+    const sp = BUG_SPOTS[spot];
+    const c = sp && makeCreature('bug', key, sceneM);
+    if (!c) continue;
+    const g = new THREE.Group();
+    g.add(c.group);
+    c.group.scale.setScalar(2.4);
+    if (sp.hab === 'tree' && !c.flyer) c.group.quaternion.copy(TREE_Q); // 幹にとまる
+    else c.group.rotation.y = Math.random() * 6.28;
+    if (c.glow) { const gl = glow(c.glow, 1.4, 0.8); c.group.add(gl); }
+    g.position.set(sp.x, groundHeight(sp.x, sp.z) + sp.y, sp.z);
+    scene.add(g);
+    bugObjs.set(id, { g, c, key, sp, flyer: !!c.flyer, t0: Math.random() * 10, fleeT: 0 });
+  }
+  for (const [id, o] of bugObjs) {
+    if (alive.has(id) || o.fleeT) continue;
+    if (fled.includes(id)) o.fleeT = 0.9; // 飛んでにげる
+    else { scene.remove(o.g); bugObjs.delete(id); }
+  }
+}
+function bugPos(o) { return o.g.position; }
+function updateBugs(dt, now) {
+  for (const [id, o] of bugObjs) {
+    const base = o.sp, t = now + o.t0;
+    if (o.fleeT) {
+      o.fleeT -= dt;
+      o.g.position.y += dt * 5; o.g.position.x += dt * 2;
+      if (o.fleeT <= 0) { scene.remove(o.g); bugObjs.delete(id); }
+      continue;
+    }
+    if (o.flyer) {
+      o.g.position.set(base.x + Math.sin(t * 0.7) * 0.8, groundHeight(base.x, base.z) + base.y + 0.3 + Math.sin(t * 2.1) * 0.25, base.z + Math.cos(t * 0.5) * 0.6);
+      o.c.group.rotation.y = Math.atan2(Math.cos(t * 0.7), -Math.sin(t * 0.5));
+      for (const w of o.c.wings || []) w.rotation.z = w.userData.side * Math.sin(t * 24) * 0.7;
+    } else if (base.hab !== 'tree') {
+      o.c.group.rotation.y += Math.sin(t * 0.8) * dt * 0.6;
+    }
+  }
+}
+function nearestBug(range) {
+  let best = null, bd = range;
+  for (const [id, o] of bugObjs) {
+    if (o.fleeT) continue;
+    const p = bugPos(o), d = Math.hypot(p.x - me.x, p.z - me.z);
+    if (d < bd) { bd = d; best = id; }
+  }
+  return best;
+}
+function tryCatchBug(id) {
+  if (!hasTool('net')) { toast('あみが あれば つかまえられそう…（よろず屋で もらえるよ）'); sound.click(); return; }
+  if (performance.now() < swingCooldown) return;
+  swingCooldown = performance.now() + 550;
+  const o = bugObjs.get(id);
+  if (o) me.r = Math.atan2(bugPos(o).x - me.x, bugPos(o).z - me.z);
+  me.v.swing('net');
+  sound.rustle();
+  net.send({ t: 'catch', id, x: me.x, z: me.z });
+}
+
+// ---- 魚つり ----
+let fishing = null; // { phase, bob, line, biteAt, nibbles, until }
+const BOB_Y = WATER_Y + 0.03;
+function castPoint() {
+  for (const turn of [0, 0.35, -0.35, 0.7, -0.7]) {
+    const r = me.r + turn, fx = Math.sin(r), fz = Math.cos(r);
+    for (const d of [3.0, 2.6, 3.4, 2.2, 3.8]) {
+      const x = me.x + fx * d, z = me.z + fz * d;
+      if (waterAt(x, z)) return { x, z, r };
+    }
+  }
+  return null;
+}
+function canFishHere() { return layerOf(me.x) === 'surface' && !!castPoint(); }
+function startFishing() {
+  if (!hasTool('rod')) { toast('つりざおが あれば つりができそう…（よろず屋で もらえるよ）'); sound.click(); return; }
+  const cp = castPoint();
+  if (!cp) { toast('水のほうを向いて つりをしよう'); return; }
+  me.r = cp.r;
+  me.v.hold('rod');
+  sound.cast();
+  const bob = new THREE.Group();
+  bob.add(mesh(GEO.sphereLo, toon('#f4f1ea'), 0, 0.05, 0, 0.11, 0.08, 0.11));
+  bob.add(mesh(GEO.sphereLo, toon('#e2574c'), 0, 0.1, 0, 0.1, 0.07, 0.1));
+  bob.position.set(cp.x, BOB_Y, cp.z);
+  scene.add(bob);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: '#f5f5f0', transparent: true, opacity: 0.8 }));
+  line.frustumCulled = false;
+  scene.add(line);
+  const now = performance.now() / 1000;
+  const biteAt = now + 3 + Math.random() * 6;
+  const nibbles = [];
+  for (let k = 0; k < Math.floor(Math.random() * 4); k++) nibbles.push(now + 1.2 + Math.random() * (biteAt - now - 1.8));
+  nibbles.sort((a, b) => a - b);
+  fishing = { phase: 'wait', bob, line, cp, biteAt, nibbles, dip: 0, until: 0 };
+}
+function endFishing(msg) {
+  if (!fishing) return;
+  scene.remove(fishing.bob); scene.remove(fishing.line);
+  fishing.line.geometry.dispose();
+  fishing = null;
+  me.v.hold(null);
+  me.v.setRodPull(0);
+  if (msg) toast(msg);
+}
+function fishingAction() {
+  if (!fishing) return false;
+  if (fishing.phase === 'bite') {
+    fishing.phase = 'reel';
+    sound.splash();
+    net.send({ t: 'fish', x: me.x, z: me.z });
+    setTimeout(() => endFishing(), 600);
+  } else if (fishing.phase === 'wait') {
+    endFishing('はやすぎた… にげられちゃった');
+  }
+  return true;
+}
+const tipV = new THREE.Vector3();
+function updateFishing(now) {
+  if (!fishing) return;
+  const f = fishing;
+  if (f.phase === 'wait') {
+    if (f.nibbles.length && now > f.nibbles[0]) { f.nibbles.shift(); f.dip = 0.22; sound.nibble(); }
+    if (now > f.biteAt) {
+      f.phase = 'bite'; f.until = now + 0.95; f.dip = 1;
+      sound.splash();
+      doEmote(me, 'wow');
+    }
+  } else if (f.phase === 'bite' && now > f.until) {
+    endFishing('にげられた…');
+    return;
+  }
+  f.dip = Math.max(0, f.dip - 0.02);
+  const sink = f.phase === 'bite' ? 0.28 : f.dip * 0.5;
+  f.bob.position.y = BOB_Y - sink + Math.sin(now * 3) * 0.02;
+  me.v.setRodPull(f.phase === 'bite' ? 1 : f.dip);
+  me.v.rodTip(tipV);
+  tipV.y -= curveY(tipV.z);
+  const pos = f.line.geometry.attributes.position;
+  pos.setXYZ(0, tipV.x, tipV.y, tipV.z);
+  pos.setXYZ(1, f.bob.position.x, f.bob.position.y + 0.1 - curveY(f.bob.position.z), f.bob.position.z);
+  pos.needsUpdate = true;
+}
+
+// ---- 図鑑 ----
+const flatCache = new Map();
+function flatM(c, o = {}) { // 図鑑の絵用（地面といっしょに曲げない）
+  const { glow: g, ...rest } = o;
+  const key = c + JSON.stringify(rest) + (g ? 'g' : '');
+  if (!flatCache.has(key)) flatCache.set(key, g ? new THREE.MeshBasicMaterial({ color: c }) : new THREE.MeshToonMaterial({ color: c, gradientMap: GRADIENT, ...rest }));
+  return flatCache.get(key);
+}
+let portrait = null;
+const thumbs = new Map();
+function thumb(cat, key, shown) {
+  const id = `${cat}:${key}:${shown ? 1 : 0}`;
+  if (thumbs.has(id)) return thumbs.get(id);
+  if (!portrait) {
+    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    r.setSize(160, 160);
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight(0xffffff, 0xb8a888, 1.6));
+    const l = new THREE.DirectionalLight(0xffffff, 1.6); l.position.set(2, 4, 3); sc.add(l);
+    portrait = { r, sc, cam: new THREE.PerspectiveCamera(30, 1, 0.01, 50), dark: new THREE.MeshBasicMaterial({ color: '#b9aa8f' }) };
+  }
+  const { r, sc, cam } = portrait;
+  let obj;
+  if (cat === 'gem') {
+    obj = new THREE.Group();
+    const c = GEM_KINDS.find((k) => k.key === key).color;
+    const m = new THREE.MeshToonMaterial({ color: c, emissive: c, emissiveIntensity: 0.35, gradientMap: GRADIENT });
+    [[0, 0.1, 0, 1.3], [-0.2, -0.05, 0.05, 0.9], [0.22, -0.08, -0.02, 0.8]].forEach(([x, y, z, k]) => {
+      const o = new THREE.Mesh(new THREE.OctahedronGeometry(0.15), m); o.position.set(x, y, z); o.scale.set(k, k * 1.6, k); o.rotation.z = x * 2; obj.add(o);
+    });
+  } else {
+    obj = makeCreature(cat, key, flatM).group;
+    if (cat === 'fish') obj.rotation.y = key === 'madako' ? 0.5 : Math.PI / 2 - 0.35;
+    else obj.rotation.set(0.9, 0.5, 0);
+  }
+  sc.add(obj);
+  sc.overrideMaterial = shown ? null : portrait.dark;
+  // 大きさをそろえて まん中に
+  const box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+  const rad = Math.max(size.x, size.y, size.z) * 0.62;
+  cam.position.set(center.x, center.y + rad * 0.5, center.z + rad / Math.tan((15 * Math.PI) / 180) * 1.05);
+  cam.lookAt(center);
+  r.render(sc, cam);
+  const url = r.domElement.toDataURL();
+  sc.remove(obj);
+  thumbs.set(id, url);
+  return url;
+}
+let dexTab = 'fish';
+function hoursText(h) {
+  if (h.length === 1 && h[0][0] === 0 && h[0][1] === 24) return '一日中';
+  return h.map(([a, b]) => `${a}時〜${b}時`).join('・');
+}
+function renderDex() {
+  const dex = pocket.dex || { fish: {}, bug: {}, gem: {} };
+  const n = dexCount(dex), total = DEX_TOTAL();
+  const rk = rankOf(dex);
+  $('#dexRank').textContent = `${rk.mark} ${rk.name}`;
+  $('#dexCount').textContent = `${n} / ${total}（${Math.floor(rk.pct)}%）`;
+  $('#dexBar').style.width = `${(n / total) * 100}%`;
+  const next = RANKS[rk.i + 1];
+  $('#dexNext').textContent = next ? `あと ${Math.max(1, Math.ceil((next.min / 100) * total) - n)}種類で ${next.mark} ${next.name}` : 'すべて そろえました！';
+  const lists = { fish: FISH, bug: BUGS, gem: GEM_KINDS };
+  for (const cat of ['fish', 'bug', 'gem']) {
+    const got = lists[cat].filter((x) => dex[cat]?.[x.key]).length;
+    $(`#dexTab-${cat} b`).textContent = `${got}/${lists[cat].length}`;
+    $(`#dexTab-${cat}`).classList.toggle('on', cat === dexTab);
+  }
+  const grid = $('#dexGrid');
+  grid.textContent = '';
+  for (const x of lists[dexTab]) {
+    const has = !!dex[dexTab]?.[x.key];
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'dexcell' + (has ? '' : ' unknown');
+    const img = document.createElement('img');
+    img.alt = has ? x.name : 'まだ見つけていない';
+    img.src = thumb(dexTab, x.key, has);
+    const nm = document.createElement('span');
+    nm.textContent = has ? x.name : '？？？';
+    cell.append(img, nm);
+    cell.addEventListener('click', () => {
+      if (!has) { $('#dexInfo').textContent = dexTab === 'gem' ? 'どこかの宝石の岩で ほれるみたい…' : `${WHERE_NAMES[x.where || x.hab]}で 見つかるかも…`; return; }
+      const where = dexTab === 'gem' ? '地下の宝石の岩' : `${WHERE_NAMES[x.where || x.hab]}・${hoursText(x.h)}`;
+      const price = SELL_PRICES[dexTab]?.[x.key];
+      $('#dexInfo').textContent = `${x.name}：${where}・よろず屋で ${price.toLocaleString('ja-JP')} ポカ`;
+    });
+    grid.appendChild(cell);
+  }
+}
+function openDex() { renderDex(); $('#dexInfo').textContent = 'マスをおすと、くわしく見られます。'; openModal('#dexModal'); }
+$('#dexBtn').addEventListener('click', openDex);
+for (const cat of ['fish', 'bug', 'gem']) $(`#dexTab-${cat}`).addEventListener('click', () => { dexTab = cat; renderDex(); sound.click(); });
+
+// ---- つかまえた！ ----
+let localFirst = false;
+function addLocalDex(cat, key) {
+  localFirst = !pocket.dex[cat][key];
+  if (localFirst) pocket.dex[cat][key] = Date.now();
+  return localFirst;
+}
+let trophy = null; // 頭の上にかかげる生き物
+function onCaught(msg) {
+  const cat = msg.kind;
+  if (!msg.key) { toast(cat === 'bug' ? 'にげられた…' : 'なにも つれなかった…'); return; }
+  const info = (cat === 'fish' ? FISH : BUGS).find((x) => x.key === msg.key);
+  let first = !!msg.first;
+  const before = me.rank || 0;
+  if (!serverMode()) {
+    const bag = cat === 'fish' ? pocket.fish : pocket.bugs;
+    bag[msg.key] = (bag[msg.key] || 0) + 1;
+    first = addLocalDex(cat === 'fish' ? 'fish' : 'bug', msg.key);
+    savePocket();
+    renderPocket();
+    const r = rankOf(pocket.dex).i;
+    setRank(me, r);
+    net.send({ t: 'rank', rank: r });
+  }
+  // 頭の上に かかげる
+  if (trophy) scene.remove(trophy.g);
+  const c = makeCreature(cat, msg.key, sceneM);
+  if (c) {
+    const g = new THREE.Group();
+    g.add(c.group);
+    c.group.scale.setScalar(cat === 'fish' ? 1.3 : 3.2);
+    if (cat === 'fish') c.group.rotation.y = Math.PI / 2;
+    scene.add(g);
+    trophy = { g, until: performance.now() / 1000 + 2.8 };
+  }
+  me.v.hop();
+  sound.sparkle();
+  toast(`${info.name}を ${cat === 'fish' ? 'つりあげた' : 'つかまえた'}！`);
+  if (first) setTimeout(() => toast(`📖 ${info.name}が 図鑑に のったよ！`), 1700);
+  setTimeout(() => {
+    const now = me.rank || 0;
+    if (now > before) { toast(`🎉 ランクアップ！ ${RANKS[now].mark} ${RANKS[now].name} になった！`); sound.coins(); }
+  }, first ? 3400 : 1700);
+}
+function updateTrophy(now) {
+  if (!trophy) return;
+  if (now > trophy.until) { scene.remove(trophy.g); trophy = null; return; }
+  trophy.g.position.set(me.x, standHeight(me.x, me.z) + 2.9 + Math.sin(now * 3) * 0.05, me.z);
+  trophy.g.rotation.y = Math.sin(now * 1.5) * 0.4;
 }
 
 // =====================================================================
@@ -1347,7 +1667,7 @@ function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   wrap.className = 'tagwrap';
   const tag = document.createElement('div');
   tag.className = 'nametag' + (isMe ? ' me' : npc ? ' npc' : '');
-  tag.textContent = name;
+  tag.textContent = `${RANKS[0].mark} ${name}`;
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   const who = document.createElement('span');
@@ -1369,6 +1689,13 @@ function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   };
   if (!npc) people.set(id, p);
   return p;
+}
+// ランクのマークは、名前の横にいつも出す
+function setRank(p, r) {
+  const rank = RANKS[Math.max(0, Math.min(RANKS.length - 1, Number(r) || 0))];
+  p.rank = RANKS.indexOf(rank);
+  p.tag.textContent = `${rank.mark} ${p.name}`;
+  p.tag.title = `ランク：${rank.name}`;
 }
 function removePerson(id) {
   const p = people.get(id);
@@ -1450,27 +1777,22 @@ function savePocket() { if (!serverMode()) savePocket(); }
 let myPlot = null;           // 自分の土地の番号
 let accountToken = store.get('token', null);
 const formatCode = (t) => (t || '').match(/.{1,5}/g)?.join('-') || '';
+if (!pocket.fish || typeof pocket.fish !== 'object') pocket.fish = {};
+if (!pocket.bugs || typeof pocket.bugs !== 'object') pocket.bugs = {};
+if (!pocket.dex || typeof pocket.dex !== 'object') pocket.dex = { fish: {}, bug: {}, gem: {} };
+for (const k of Object.keys(pocket.gems)) pocket.dex.gem[k] ||= Date.now();
+// 持ちものは、種類ごとの数だけ出す（くわしくは よろず屋で見られる）
 function renderPocket() {
   $('#coinCount').textContent = pocket.coins.toLocaleString('ja-JP');
   const box = $('#fruits');
   box.textContent = '';
-  for (const [k, n] of Object.entries(pocket.fruit)) {
-    if (!n || !FRUITS[k]) continue;
-    const chip = document.createElement('span');
-    chip.className = 'pill fchip';
-    const dot = document.createElement('i');
-    dot.style.background = FRUITS[k].color;
-    chip.append(dot, document.createTextNode(`${FRUITS[k].name} ×${n}`));
-    box.appendChild(chip);
-  }
-  for (const kind of GEM_KINDS) {
-    const n = pocket.gems[kind.key];
+  const sum = (bag) => Object.values(bag || {}).reduce((t, n) => t + (n || 0), 0);
+  for (const [icon, label, n] of [['🍑', 'くだもの', sum(pocket.fruit)], ['🐟', '魚', sum(pocket.fish)], ['🐛', '虫', sum(pocket.bugs)], ['💎', '宝石', sum(pocket.gems)]]) {
     if (!n) continue;
     const chip = document.createElement('span');
-    chip.className = 'pill fchip gem';
-    const dot = document.createElement('i');
-    dot.style.background = kind.color;
-    chip.append(dot, document.createTextNode(`${kind.name} ×${n}`));
+    chip.className = 'pill fchip';
+    chip.title = label;
+    chip.textContent = `${icon} ×${n}`;
     box.appendChild(chip);
   }
 }
@@ -1489,7 +1811,7 @@ function handle(msg) {
       myId = msg.id;
       me.id = myId;
       people.set(myId, me);
-      for (const p of msg.players || []) if (!people.has(p.id)) createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false).m = p.m;
+      for (const p of msg.players || []) if (!people.has(p.id)) { const q = createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false); q.m = p.m; setRank(q, p.rank); }
       for (const [i, n] of msg.world?.trees || []) setTreeFruit(i, n);
       for (const d of msg.world?.drops || []) addDrop(d, false);
       gemMinedUntil.clear();
@@ -1499,12 +1821,14 @@ function handle(msg) {
       if (msg.pass && !pass) { pass = msg.pass; store.set('pass', pass); premium = true; }
       if (msg.me) applyMe(msg.me);
       if (msg.plots) applyPlots(msg.plots);
+      if (msg.bugs) applyBugs(msg.bugs);
+      if (!serverMode()) setRank(me, rankOf(pocket.dex).i);
       updateOnline();
       break;
     }
     case 'join':
       if (!people.has(msg.p.id)) {
-        createPerson(msg.p.id, msg.p.name, msg.p.look, msg.p.x, msg.p.z, msg.p.r, false).m = msg.p.m;
+        { const q = createPerson(msg.p.id, msg.p.name, msg.p.look, msg.p.x, msg.p.z, msg.p.r, false); q.m = msg.p.m; setRank(q, msg.p.rank); }
         addLog(null, `${msg.p.name} さんが島にやってきました`);
         updateOnline();
       }
@@ -1571,7 +1895,8 @@ function handle(msg) {
       const kind = GEM_KINDS.find((k) => k.key === msg.kind) || GEM_KINDS[0];
       spawnSparks(g.x, 0.7, g.z + 0.3, kind.color, 16, 4);
       if (msg.id === myId) {
-        if (!serverMode()) pocket.gems[kind.key] = (pocket.gems[kind.key] || 0) + 1;
+        if (!serverMode()) { pocket.gems[kind.key] = (pocket.gems[kind.key] || 0) + 1; addLocalDex('gem', kind.key); }
+        if (msg.first || (!serverMode() && localFirst)) setTimeout(() => toast(`📖 ${kind.name}が 図鑑に のったよ！`), 1600);
         savePocket();
         renderPocket();
         sound.sparkle();
@@ -1604,6 +1929,17 @@ function handle(msg) {
     case 'me':
       applyMe(msg.me);
       break;
+    case 'bugs':
+      applyBugs(msg.list, msg.fled);
+      break;
+    case 'caught':
+      onCaught(msg);
+      break;
+    case 'rank': {
+      const p = people.get(msg.id);
+      if (p && !p.isMe) setRank(p, msg.rank);
+      break;
+    }
     case 'plots':
       applyPlots(msg.plots);
       break;
@@ -1668,6 +2004,7 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'm' || e.key === 'M') { toggleMap(); return; }
+  if (e.key === 'b' || e.key === 'B') { openDex(); return; }
   if (e.key === 'Enter') { e.preventDefault(); chatInput.focus(); return; }
   if (e.key === 'Escape') { closeModals(); return; }
   if (/^[1-8]$/.test(e.key)) { sendEmote(EMOTES[+e.key - 1].key); return; }
@@ -1877,6 +2214,7 @@ function findTarget() {
   }
   if (best) return best;
   if (resident && Math.hypot(resident.x - me.x, resident.z - me.z) < 2.0) return { type: 'talk' };
+  { const b = nearestBug(2.3); if (b) return { type: 'bug', id: b }; }
   for (const sp of UNDER_SPOTS) {
     if (sp.kind !== 'hatch' && Math.hypot(me.x - sp.x, me.z - sp.z) < 2.6) return { type: 'down', sp };
   }
@@ -1904,11 +2242,13 @@ function findTarget() {
   }
   if (best) return best;
   if (Math.hypot(BOARD.x - me.x, BOARD.z - me.z) < 2.2) return { type: 'board' };
+  if (canFishHere()) return { type: 'fish' };
   return null;
 }
 let shakeCooldown = 0;
 function action() {
   if (!me || !net) return;
+  if (fishingAction()) return;
   const t = findTarget();
   if (!t) { me.v.hop(); return; }
   if (t.type === 'door') { enterHouse(t.i); return; }
@@ -1918,6 +2258,8 @@ function action() {
   if (t.type === 'shop') { renderShop(); openModal('#shopModal'); return; }
   if (t.type === 'plot') { openPlotModal(t.i); return; }
   if (t.type === 'mine') { mineGem(t.i); return; }
+  if (t.type === 'bug') { tryCatchBug(t.id); return; }
+  if (t.type === 'fish') { startFishing(); return; }
   if (t.type === 'pickaxe') {
     hasPickaxe = true;
     store.set('pickaxe', true);
@@ -1950,10 +2292,17 @@ function action() {
 $('#promptKey').textContent = isTouch ? 'A' : 'E';
 let lastPrompt = null;
 function updatePrompt() {
+  if (fishing) {
+    const label = fishing.phase === 'bite' ? 'いまだ！ つりあげる' : 'ウキが しずんだら おす';
+    if (label !== lastPrompt) { lastPrompt = label; $('#prompt').classList.add('on'); $('#promptText').textContent = label; }
+    return;
+  }
   const t = findTarget();
   const label = !t ? '' : {
     pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
     stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう', shop: 'よろず屋で売る',
+    bug: t.id && (hasTool('net') ? `${BUGS.find((b) => b.key === bugObjs.get(t.id)?.key)?.name || '虫'}を つかまえる` : '虫がいる…（あみが ほしい）'),
+    fish: hasTool('rod') ? 'つりをする' : 'ここで つりが できそう',
     plot: t.i !== undefined && (plotInfo[t.i]?.owner ? '看板を読む' : '売り地を見る'),
     mine: hasPickaxe ? 'ピッケルで ほる' : 'ピッケルがあれば ほれそう…',
     down: t.sp && (t.sp.kind === 'well' ? '井戸をおりる' : t.sp.kind === 'hatch' ? '床の扉からおりる' : 'ほらあなに入る'),
@@ -2419,6 +2768,7 @@ function moveMe(dt) {
   if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   let mag = Math.hypot(ix, iz);
   if (mag > 0) { ix /= mag; iz /= mag; mag = 1; }
+  if (fishing && (mag || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget)) endFishing();
   if (!mag && (stickVec.x || stickVec.y)) {
     mag = Math.hypot(stickVec.x, stickVec.y);
     if (mag > 0.15) { ix = stickVec.x / mag; iz = stickVec.y / mag; run = mag > 0.92; } else mag = 0;
@@ -2555,6 +2905,9 @@ function frame() {
     if (now > dripAt) { dripAt = now + 2 + Math.random() * 5; sound.drip(); }
   }
   updateSparks(dt);
+  updateBugs(dt, now);
+  updateFishing(now);
+  updateTrophy(now);
   if (me && layerOf(me.x) === 'under') {
     for (const sh of shafts) {
       const front = sh.z > me.z + 0.8;
@@ -2594,7 +2947,6 @@ function frame() {
     if (s.ok) p.wrap.style.transform = `translate(${s.sx.toFixed(1)}px, ${s.sy.toFixed(1)}px)`;
     const talking = now < p.sayUntil;
     if (!talking && p.bubble.classList.contains('on')) p.bubble.classList.remove('on');
-    p.tag.style.opacity = talking || now < p.emoteUntil ? 0 : 1;
     if (now > p.emoteUntil && p.emote.classList.contains('on')) p.emote.classList.remove('on');
   }
 
@@ -2896,4 +3248,4 @@ setupPreview();
 initPayments();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs };
+window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, get fishing() { return fishing; } };

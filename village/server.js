@@ -155,7 +155,39 @@ function worldSnapshot() {
 }
 
 const publicDrop = (d) => ({ id: d.id, tree: d.tree, slot: d.slot, kind: d.kind });
-const publicPlayer = (p) => ({ id: p.id, name: p.name, look: p.look, x: p.x, z: p.z, r: p.r, m: p.m });
+const publicPlayer = (p) => ({ id: p.id, name: p.name, look: p.look, x: p.x, z: p.z, r: p.r, m: p.m, rank: p.rank || 0 });
+
+// ---------- 虫（島のみんなで同じ虫を見る） ----------
+const MAX_BUGS = 10;
+const bugs = new Map(); // id -> { id, key, spot, until }
+let nextBug = 1;
+const jstHour = () => new Date(Date.now() + 9 * 3600e3).getUTCHours();
+const bugList = () => [...bugs.values()].map((b) => [b.id, b.key, b.spot]);
+function spawnBug() {
+  const spot = Math.floor(Math.random() * W.BUG_SPOTS.length);
+  if ([...bugs.values()].some((b) => b.spot === spot)) return false;
+  const key = W.bugFor(W.BUG_SPOTS[spot].hab, jstHour(), Math.random());
+  if (!key) return false;
+  const id = String(nextBug++);
+  bugs.set(id, { id, key, spot, until: Date.now() + (180 + Math.random() * 180) * 1000 });
+  return true;
+}
+function bugTick() {
+  const now = Date.now();
+  let changed = false;
+  for (const b of bugs.values()) if (b.until < now) { bugs.delete(b.id); changed = true; }
+  if (bugs.size < MAX_BUGS && Math.random() < 0.6 && spawnBug()) changed = true;
+  if (changed) broadcast({ t: 'bugs', list: bugList() });
+}
+// 虫をつかまえた・魚をつった：ポケットと図鑑に入れて、ランクが上がったらみんなに知らせる
+function caught(me, kind, key) {
+  const before = me.rank;
+  const first = kind === 'fish' ? economy.gotFish(me.account, key) : economy.gotBug(me.account, key);
+  send(me.ws, { t: 'caught', kind, key, first });
+  send(me.ws, { t: 'me', me: economy.view(me.account) });
+  me.rank = economy.rank(me.account);
+  if (me.rank !== before) broadcast({ t: 'rank', id: me.id, rank: me.rank });
+}
 
 // ---------- 入力の検査 ----------
 const cleanText = (s, max) => String(s ?? '')
@@ -231,6 +263,7 @@ wss.on('connection', (ws, req) => {
         name,
         look,
         premium,
+        rank: economy.rank(account),
         x: num(msg.x, -70, MAX_X), z: num(msg.z, -70, 70), r: num(msg.r, -10, 10), m: 0,
         dirty: false, lastChat: 0, lastEmote: 0, lastShake: 0,
       };
@@ -242,6 +275,7 @@ wss.on('connection', (ws, req) => {
         plots: economy.plotsView(),
         players: [...players.values()].filter((p) => p !== me).map(publicPlayer),
         world: worldSnapshot(),
+        bugs: bugList(),
       });
       broadcast({ t: 'plots', plots: economy.plotsView() }, me.id); // 看板の名前が変わったかもしれない
       broadcast({ t: 'join', p: publicPlayer(me) }, me.id);
@@ -257,6 +291,15 @@ wss.on('connection', (ws, req) => {
         me.r = num(msg.r, -10, 10, me.r);
         me.m = idx(msg.m, 5); // 0 たつ 1 あるく 2 はしる 3 すわる 4 ねころぶ
         me.dirty = true;
+        if (me.m === 2 && bugs.size) {
+          // 走って近づくと、虫はにげる
+          const fled = [];
+          for (const b of bugs.values()) {
+            const sp = W.BUG_SPOTS[b.spot];
+            if (Math.hypot(sp.x - me.x, sp.z - me.z) < 3.2) { bugs.delete(b.id); fled.push(b.id); }
+          }
+          if (fled.length) broadcast({ t: 'bugs', list: bugList(), fled });
+        }
         break;
       case 'chat': {
         const text = cleanText(msg.text, 80);
@@ -301,9 +344,10 @@ wss.on('connection', (ws, req) => {
         if (g.hits < W.GEM_HITS) { broadcast({ t: 'hit', id: me.id, i, n: g.hits }); return; }
         g.hits = 0;
         g.minedUntil = now + GEM_REGROW_MS;
-        economy.gotGem(me.account, plan.kind);
-        broadcast({ t: 'gem', id: me.id, i, kind: plan.kind, regrow: GEM_REGROW_MS });
+        const firstGem = economy.gotGem(me.account, plan.kind);
+        broadcast({ t: 'gem', id: me.id, i, kind: plan.kind, regrow: GEM_REGROW_MS, first: firstGem });
         send(ws, { t: 'me', me: economy.view(me.account) });
+        { const r = economy.rank(me.account); if (r !== me.rank) { me.rank = r; broadcast({ t: 'rank', id: me.id, rank: r }); } }
         break;
       }
       case 'pick': {
@@ -319,6 +363,28 @@ wss.on('connection', (ws, req) => {
         }
         send(ws, { t: 'me', me: economy.view(me.account) });
         broadcast({ t: 'picked', id: d.id, by: me.id });
+        break;
+      }
+      case 'catch': {
+        // 虫とりあみで つかまえる（近くにいるときだけ）
+        const b = bugs.get(String(msg.id));
+        if (!b || now - (me.lastCatch || 0) < 400) return;
+        me.lastCatch = now;
+        const sp = W.BUG_SPOTS[b.spot];
+        if (Math.hypot(sp.x - me.x, sp.z - me.z) > 3.4) { send(ws, { t: 'caught', kind: 'bug', key: null }); return; }
+        bugs.delete(b.id);
+        broadcast({ t: 'bugs', list: bugList() });
+        caught(me, 'bug', b.key);
+        break;
+      }
+      case 'fish': {
+        // つりあげた。どの魚かは、水の種類と時間でサーバーが決める
+        if (now - (me.lastFish || 0) < 2500) return;
+        me.lastFish = now;
+        const where = W.waterNear(me.x, me.z, 5);
+        if (!where) { send(ws, { t: 'caught', kind: 'fish', key: null }); return; }
+        const key = W.fishFor(where, jstHour(), Math.random());
+        if (key) caught(me, 'fish', key);
         break;
       }
       case 'chest': {
@@ -385,6 +451,8 @@ setInterval(() => {
   W = await import('./public/world.js');
   economy = new Economy(createStore(), W);
   await economy.init();
+  for (let k = 0; k < MAX_BUGS * 2 && bugs.size < MAX_BUGS - 2; k++) spawnBug();
+  setInterval(bugTick, 4000);
   server.listen(PORT, () => {
     console.log(`ぽかぽか島がひらきました → http://localhost:${PORT}/`);
   });

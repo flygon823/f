@@ -322,6 +322,28 @@ function buildPlacements() {
 
 export const PLACE = buildPlacements();
 
+// 虫が出る場所：花・木の幹・草むら・水辺・岩のそば
+function buildBugSpots() {
+  const spots = [];
+  PLACE.flowers.forEach((f, i) => { if (i % 3 === 0) spots.push({ x: f.x, z: f.z, y: 0.7, hab: 'flower' }); });
+  PLACE.trees.forEach((t) => { if (t.kind !== 'palm') spots.push({ x: t.x, z: t.z + 0.3 * t.s, y: 1.0 * t.s, hab: 'tree' }); });
+  PLACE.tufts.forEach((t, i) => { if (i % 5 === 0) spots.push({ x: t.x, z: t.z + 0.15, y: 0.18, hab: 'grass' }); });
+  PLACE.rocks.forEach((r) => spots.push({ x: r.x, z: r.z + 0.85 * r.s, y: 0.1, hab: 'rock' }));
+  for (let i = 0; i < RIVER.length - 1; i++) {
+    const [ax, az] = RIVER[i], [bx, bz] = RIVER[i + 1];
+    const len = Math.hypot(bx - ax, bz - az), nx = -(bz - az) / len, nz = (bx - ax) / len;
+    for (let t = 3; t < len; t += 7) {
+      for (const sgn of [-1, 1]) {
+        const x = ax + (bx - ax) * (t / len) + nx * sgn * (RIVER_W + 0.9), z = az + (bz - az) * (t / len) + nz * sgn * (RIVER_W + 0.9);
+        if (islandSDF(x, z) < -8 && pondDist(x, z) > 1) spots.push({ x, z, y: 1.1, hab: 'water' });
+      }
+    }
+  }
+  for (let a = 0; a < 6.28; a += 0.9) spots.push({ x: POND.x + Math.cos(a) * (POND.rx + 0.9), z: POND.z + Math.sin(a) * (POND.rz + 0.9), y: 1.0, hab: 'water' });
+  return spots;
+}
+export const BUG_SPOTS = buildBugSpots();
+
 // 広場の飾り
 export const TOWN_TREE = { x: PLAZA.x, z: PLAZA.z };
 export const BOARD = { x: PLAZA.x + 4.5, z: PLAZA.z - 6.2 };
@@ -361,10 +383,102 @@ export const GEM_KINDS = [
   { key: 'diamond', name: 'ダイヤモンド', color: '#e8fbff', w: 3 },
 ];
 export const GEM_HITS = 3; // 何回たたくと取れるか
+// ---------- 魚と虫 ----------
+// h: 出てくる時間（[はじめ, おわり) の時。はじめ > おわり なら夜をまたぐ）、w: 出やすさ、price: よろず屋の値段
+const ALL_DAY = [[0, 24]];
+export const FISH = [
+  { key: 'funa', name: 'フナ', where: 'river', h: ALL_DAY, w: 30, price: 150 },
+  { key: 'oikawa', name: 'オイカワ', where: 'river', h: [[6, 18]], w: 25, price: 200 },
+  { key: 'yamame', name: 'ヤマメ', where: 'river', h: [[4, 9], [16, 19]], w: 12, price: 800 },
+  { key: 'ayu', name: 'アユ', where: 'river', h: [[6, 18]], w: 12, price: 700 },
+  { key: 'nijimasu', name: 'ニジマス', where: 'river', h: ALL_DAY, w: 10, price: 600 },
+  { key: 'namazu', name: 'ナマズ', where: 'river', h: [[19, 4]], w: 6, price: 1200 },
+  { key: 'medaka', name: 'メダカ', where: 'pond', h: ALL_DAY, w: 30, price: 100 },
+  { key: 'koi', name: 'コイ', where: 'pond', h: ALL_DAY, w: 22, price: 400 },
+  { key: 'zarigani', name: 'ザリガニ', where: 'pond', h: ALL_DAY, w: 15, price: 300 },
+  { key: 'kingyo', name: 'キンギョ', where: 'pond', h: ALL_DAY, w: 5, price: 1300 },
+  { key: 'aji', name: 'アジ', where: 'sea', h: ALL_DAY, w: 28, price: 150 },
+  { key: 'iwashi', name: 'イワシ', where: 'sea', h: ALL_DAY, w: 25, price: 120 },
+  { key: 'mejina', name: 'メジナ', where: 'sea', h: ALL_DAY, w: 15, price: 400 },
+  { key: 'agohaze', name: 'アゴハゼ', where: 'sea', h: ALL_DAY, w: 14, price: 200 },
+  { key: 'karei', name: 'カレイ', where: 'sea', h: ALL_DAY, w: 10, price: 500 },
+  { key: 'fugu', name: 'フグ', where: 'sea', h: [[19, 4]], w: 8, price: 600 },
+  { key: 'madako', name: 'マダコ', where: 'sea', h: [[18, 6]], w: 6, price: 1000 },
+  { key: 'tai', name: 'タイ', where: 'sea', h: ALL_DAY, w: 4, price: 1500 },
+  { key: 'coelacanth', name: 'シーラカンス', where: 'sea', h: ALL_DAY, w: 0.6, price: 15000 },
+];
+export const BUGS = [
+  { key: 'monshiro', name: 'モンシロチョウ', hab: 'flower', h: [[6, 17]], w: 30, price: 120 },
+  { key: 'ageha', name: 'アゲハチョウ', hab: 'flower', h: [[6, 17]], w: 12, price: 400 },
+  { key: 'tentou', name: 'テントウムシ', hab: 'flower', h: [[6, 17]], w: 20, price: 150 },
+  { key: 'mitsubachi', name: 'ミツバチ', hab: 'flower', h: [[8, 17]], w: 15, price: 250 },
+  { key: 'semi', name: 'セミ', hab: 'tree', h: [[8, 17]], w: 25, price: 250 },
+  { key: 'kamikiri', name: 'カミキリムシ', hab: 'tree', h: ALL_DAY, w: 12, price: 350 },
+  { key: 'kabuto', name: 'カブトムシ', hab: 'tree', h: [[17, 8]], w: 6, price: 1500 },
+  { key: 'kuwagata', name: 'クワガタ', hab: 'tree', h: [[17, 8]], w: 5, price: 2000 },
+  { key: 'batta', name: 'バッタ', hab: 'grass', h: [[6, 17]], w: 28, price: 150 },
+  { key: 'korogi', name: 'コオロギ', hab: 'grass', h: [[17, 6]], w: 22, price: 150 },
+  { key: 'kamakiri', name: 'カマキリ', hab: 'grass', h: [[8, 17]], w: 10, price: 450 },
+  { key: 'tonbo', name: 'トンボ', hab: 'water', h: [[6, 17]], w: 25, price: 200 },
+  { key: 'oniyanma', name: 'オニヤンマ', hab: 'water', h: [[8, 16]], w: 6, price: 900 },
+  { key: 'hotaru', name: 'ホタル', hab: 'water', h: [[19, 4]], w: 20, price: 300 },
+  { key: 'dangomushi', name: 'ダンゴムシ', hab: 'rock', h: ALL_DAY, w: 25, price: 80 },
+];
+export const WHERE_NAMES = { river: '川', pond: '池', sea: '海', flower: '花', tree: '木', grass: '草むら', water: '水辺', rock: '岩' };
+export const inHours = (hour, ranges) => ranges.some(([a, b]) => (a <= b ? hour >= a && hour < b : hour >= a || hour < b));
+function pickWeighted(list, r) {
+  const total = list.reduce((t, x) => t + x.w, 0);
+  let v = r * total;
+  for (const x of list) { if (v < x.w) return x.key; v -= x.w; }
+  return list.length ? list[list.length - 1].key : null;
+}
+// いまの時間に、その場所で釣れる魚／出てくる虫（r は 0〜1 の乱数）
+export const fishFor = (where, hour, r) => pickWeighted(FISH.filter((f) => f.where === where && inHours(hour, f.h)), r);
+export const bugFor = (hab, hour, r) => pickWeighted(BUGS.filter((b) => b.hab === hab && inHours(hour, b.h)), r);
+// その場所の水の種類（深さが足りないところは null）
+export function waterAt(x, z) {
+  if (x > INDOOR_X) return null;
+  if (groundHeight(x, z) > WATER_Y - 0.12) return null;
+  if (pondDist(x, z) < 0.6) return 'pond';
+  if (riverDist(x, z) < RIVER_W + 0.6 && islandSDF(x, z) < -2) return 'river';
+  return 'sea';
+}
+// まわり（半径 r）で一番近い水
+export function waterNear(x, z, r = 4.5) {
+  for (let d = 0.5; d <= r; d += 0.5) {
+    for (let a = 0; a < 6.28; a += 0.4) { const w = waterAt(x + Math.cos(a) * d, z + Math.sin(a) * d); if (w) return w; }
+  }
+  return null;
+}
+
+// ---------- 図鑑とランク ----------
+export const DEX_TOTAL = () => FISH.length + BUGS.length + GEM_KINDS.length;
+export const RANKS = [
+  { min: 0, mark: '🌱', name: 'わかば' },
+  { min: 10, mark: '🍀', name: 'みならい' },
+  { min: 30, mark: '🌼', name: 'コレクター' },
+  { min: 55, mark: '⭐', name: 'はかせ' },
+  { min: 80, mark: '🌟', name: 'だいはかせ' },
+  { min: 100, mark: '👑', name: 'でんせつ' },
+];
+export function dexCount(dex) {
+  if (!dex) return 0;
+  const has = (cat, list) => list.filter((x) => dex[cat] && dex[cat][x.key]).length;
+  return has('fish', FISH) + has('bug', BUGS) + has('gem', GEM_KINDS);
+}
+export function rankOf(dex) {
+  const pct = (dexCount(dex) / DEX_TOTAL()) * 100;
+  let i = 0;
+  RANKS.forEach((r, k) => { if (pct >= r.min) i = k; });
+  return { i, pct, ...RANKS[i] };
+}
+
 // よろず屋の買い取り値段（ポカ）
 export const SELL_PRICES = {
   fruit: { peach: 100, apple: 150, orange: 150, pear: 150, cherry: 200 },
   gem: { amethyst: 300, topaz: 400, emerald: 600, sapphire: 800, ruby: 1500, diamond: 5000 },
+  fish: Object.fromEntries(FISH.map((f) => [f.key, f.price])),
+  bug: Object.fromEntries(BUGS.map((b) => [b.key, b.price])),
 };
 export const gemDay = (ms = Date.now()) => Math.floor(ms / 86400000);
 export function gemPlan(i, day) {
