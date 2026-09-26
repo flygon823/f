@@ -348,7 +348,11 @@ function turnTo(a, b, max) { return a + clamp(angDiff(b, a), -max, max); }
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ------------------------------------------------------------------ world shape */
-const A = 12, B = 9, SE = 4, BOTTOM = -4.2, WATER_BOTTOM = -3.6;
+const A = 11.5, B = 11.5, SE = 2, BOTTOM = -4.2;
+// The world is a small planet: each side's flat map is wrapped onto one hemisphere.
+// A flat point at distance r from the centre lands at polar angle (r / RIM) * 90deg,
+// so the map's rim meets the other side's rim at the equator.
+const RIM = A, PR = 9, CEN = BOTTOM, SEA_FLOOR = -3.1;
 const TIDE_LOW = -0.95, TIDE_HIGH = 1.8;
 const POOLS = [
   { x: -3.4, z: 0.2, r: 2.3, rim: 1.38, floor: 0.22, level: 1.05, seed: 1 },
@@ -387,9 +391,32 @@ function sample(x, z) {
     const q = qs[i];
     if (q < 1) { h = bowlH(p, q) + (fbm(x * 2.1, z * 2.1) - 0.5) * 0.1 * smooth(0.2, 0.6, q) * (1 - smooth(0.85, 1, q)); rock = 1; }
   });
-  return { h, rock };
+  return { h: rimBlend(x, z, h), rock: rock * (1 - smooth(0.8, 0.95, Math.hypot(x, z) / RIM)) };
 }
 const heightAt = (x, z) => sample(x, z).h;
+const UP = new THREE.Vector3(0, 1, 0);
+// flat side-local (x, y, z) -> point on the sphere (side-local)
+function bendVec(x, y, z, out = new THREE.Vector3()) {
+  const r = Math.hypot(x, z), th = r / RIM * Math.PI / 2, k = r > 1e-6 ? Math.sin(th) / r : 0, rad = PR + y;
+  return out.set(x * k * rad, CEN + Math.cos(th) * rad, z * k * rad);
+}
+function normalAt(x, z, out = new THREE.Vector3()) {
+  const r = Math.hypot(x, z), th = r / RIM * Math.PI / 2, k = r > 1e-6 ? Math.sin(th) / r : 0;
+  return out.set(x * k, Math.cos(th), z * k);
+}
+// sphere point (side-local) -> flat { x, y, z, r }
+function unbend(v) {
+  const cx = v.x, cy = v.y - CEN, cz = v.z, L = Math.hypot(cx, cy, cz) || 1e-6;
+  const r = Math.acos(clamp(cy / L, -1, 1)) / (Math.PI / 2) * RIM, hz = Math.hypot(cx, cz) || 1e-6;
+  return { x: cx / hz * r, y: L - PR, z: cz / hz * r, r };
+}
+function bendGeometry(g) {
+  const p = g.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) { bendVec(p.getX(i), p.getY(i), p.getZ(i), v); p.setXYZ(i, v.x, v.y, v.z); }
+  g.computeVertexNormals();
+  return g;
+}
+const rimBlend = (x, z, h) => lerp(h, SEA_FLOOR, smooth(0.8, 0.97, Math.hypot(x, z) / RIM));
 
 let tn = 0.52;              // normalized tide 0..1
 let tideY = lerp(TIDE_LOW, TIDE_HIGH, tn);
@@ -425,8 +452,8 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.minDistance = 1.6;
-controls.maxDistance = 85;
-controls.maxPolarAngle = Math.PI * 0.53;
+controls.maxDistance = 110;
+controls.maxPolarAngle = Math.PI * 0.82;
 controls.autoRotateSpeed = 0.45;
 controls.target.set(0, 0.1, 0.8);
 
@@ -480,21 +507,25 @@ function wetShader(mat, sideU = SHORE_U) {
       .replace('#include <color_fragment>', `#include <color_fragment>
       float foamGlow = 0.0;
       {
+        vec3 cc = vWPos - vec3(0.0, ${CEN.toFixed(3)}, 0.0);
+        float hh = length(cc) - ${PR.toFixed(3)};
+        vec3 nn = cc / max(length(cc), 1e-4);
+        vec2 fxz = normalize(nn.xz + vec2(1e-5)) * (acos(clamp(nn.y, -1.0, 1.0)) / 1.5707963 * ${RIM.toFixed(3)});
         float wl = uTide;
-        for (int i = 0; i < 2; i++) { if (distance(vWPos.xz, uPools[i].xy) < uPools[i].z) wl = max(wl, uPools[i].w); }
-        float under = wl - vWPos.y;
+        for (int i = 0; i < 2; i++) { if (distance(fxz, uPools[i].xy) < uPools[i].z) wl = max(wl, uPools[i].w); }
+        float under = wl - hh;
         float wet = smoothstep(-0.03, 0.04, under);
         float deep = smoothstep(0.0, 2.2, under);
         diffuseColor.rgb *= mix(1.0, 0.84, wet);
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.72, 0.93, 0.94), wet * deep);
-        vec2 cp = vWPos.xz * 2.2;
+        vec2 cp = fxz * 2.2;
         float c1 = sin(cp.x + uTime * 1.1 + sin(cp.y * 1.3 + uTime * 0.7));
         float c2 = sin(cp.y * 1.1 - uTime * 0.9 + sin(cp.x * 1.2 - uTime * 0.6));
         float caus = pow(clamp(1.0 - abs(c1 + c2) * 0.5, 0.0, 1.0), 6.0);
         diffuseColor.rgb += wet * caus * 0.2 * (1.0 - deep * 0.6);
-        float wave = 0.035 * sin(uTime * 1.7 + vWPos.x * 1.3 + vWPos.z * 0.9) + 0.02 * sin(uTime * 2.3 - vWPos.z * 2.1);
+        float wave = 0.035 * sin(uTime * 1.7 + fxz.x * 1.3 + fxz.y * 0.9) + 0.02 * sin(uTime * 2.3 - fxz.y * 2.1);
         float foam = 1.0 - smoothstep(0.0, 0.06, abs(under - wave));
-        float grain = fract(sin(dot(floor(vWPos.xz * 18.0), vec2(12.9898, 78.233))) * 43758.5453);
+        float grain = fract(sin(dot(floor(fxz * 18.0), vec2(12.9898, 78.233))) * 43758.5453);
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), foam * (0.45 + 0.4 * grain));
         // night: noctiluca sparkle along the waterline
         foamGlow = foam * grain * (0.35 + 0.65 * max(0.0, sin(uTime * 2.6 + grain * 40.0)));
@@ -569,44 +600,14 @@ let terrainMesh;
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
+  bendGeometry(g);
   terrainMesh = new THREE.Mesh(g, terrainMat);
+  terrainMesh.userData.noBend = true;
   terrainMesh.receiveShadow = true;
   terrainMesh.castShadow = true;
   shoreSide.add(terrainMesh);
 
-  // Side walls: layered sand, like a slice of cake.
-  const WR = 18, wp = [], wc = [], wi = [];
-  const w1 = new THREE.Color('#e4d5b4'), w2 = new THREE.Color('#cdb994'), w3 = new THREE.Color('#b3a07e');
-  for (let m = 0; m <= MSEG; m++) {
-    const [bx, bz] = bnd[m % MSEG];
-    const top = heightAt(bx, bz);
-    for (let r = 0; r <= WR; r++) {
-      const y = lerp(top, BOTTOM, r / WR);
-      wp.push(bx, y, bz);
-      const band = 0.5 + 0.5 * Math.sin(y * 2.6 + vnoise(bx * 0.6, bz * 0.6) * 2.5);
-      c.copy(w1).lerp(w2, band * 0.55).lerp(w3, smooth(-1.5, BOTTOM, y) * 0.6);
-      wc.push(c.r, c.g, c.b);
-    }
-  }
-  for (let m = 0; m < MSEG; m++) for (let r = 0; r < WR; r++) {
-    const a = m * (WR + 1) + r, b = (m + 1) * (WR + 1) + r, cc = a + 1, d = b + 1;
-    wi.push(a, b, cc, b, d, cc);
-  }
-  const wg = new THREE.BufferGeometry();
-  wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3));
-  wg.setAttribute('color', new THREE.Float32BufferAttribute(wc, 3));
-  wg.setIndex(wi);
-  wg.computeVertexNormals();
-  const wall = new THREE.Mesh(wg, wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 })));
-  wall.receiveShadow = true;
-  shoreSide.add(wall);
 
-  const shape = new THREE.Shape(bnd.map(([x, z]) => new THREE.Vector2(x, -z)));
-  const cap = new THREE.ShapeGeometry(shape, 1);
-  cap.rotateX(Math.PI / 2);
-  cap.translate(0, BOTTOM, 0);
-  shoreSide.add(new THREE.Mesh(cap, M('#ad9a78')));
 }
 
 /* ------------------------------------------------------------------ water */
@@ -639,42 +640,23 @@ const poolMat = seaMat.clone();
 poolMat.color.set('#86cfc4');
 poolMat.opacity = 0.5;
 
-const sea = new THREE.Group();
-{
-  const MM = 220, pts = [];
-  for (let i = 0; i < MM; i++) pts.push(boundaryAt(i / MM * TAU));
-  const shape = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
-  const top = new THREE.ShapeGeometry(shape, 1);
-  top.rotateX(-Math.PI / 2);
-  top.translate(0, 1, 0);
-  const sp = [], su = [], si = [];
-  let arc = 0;
-  for (let i = 0; i <= MM; i++) {
-    const [x, z] = pts[i % MM];
-    if (i > 0) { const [px, pz] = pts[i - 1]; arc += Math.hypot(x - px, z - pz); }
-    sp.push(x, 0, z, x, 1, z);
-    su.push(arc, 0, arc, 4);
-  }
-  for (let i = 0; i < MM; i++) { const a = i * 2; si.push(a, a + 2, a + 1, a + 2, a + 3, a + 1); }
-  const side = new THREE.BufferGeometry();
-  side.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
-  side.setAttribute('uv', new THREE.Float32BufferAttribute(su, 2));
-  side.setIndex(si);
-  side.computeVertexNormals();
-  sea.add(new THREE.Mesh(top, seaMat), new THREE.Mesh(side, seaMat));
-  sea.scale.set(0.996, 1, 0.996);
-  sea.position.y = WATER_BOTTOM;
-  sea.renderOrder = 2;
-  shoreSide.add(sea);
-}
+const waterGeo = new THREE.SphereGeometry(1, 180, 64, 0, TAU, 0, Math.PI / 2);
+{ const uv = waterGeo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 64, uv.getY(i) * 16); }
+const sea = new THREE.Mesh(waterGeo, seaMat);
+sea.position.y = CEN;
+sea.renderOrder = 2;
+sea.userData.noBend = true;
+shoreSide.add(sea);
 const poolDiscs = POOLS.map((p) => {
   let qd = 0.3;
   while (qd < 1 && bowlH(p, qd) < p.level + 0.08) qd += 0.01;
-  const g = new THREE.CircleGeometry(p.r * qd * 1.09, 72);
+  const g = new THREE.RingGeometry(0, p.r * qd * 1.09, 72, 10);
   g.rotateX(-Math.PI / 2);
+  g.translate(p.x, p.level, p.z);
+  bendGeometry(g);
   const m = new THREE.Mesh(g, poolMat);
-  m.position.set(p.x, p.level, p.z);
   m.renderOrder = 1;
+  m.userData.noBend = true;
   shoreSide.add(m);
   return m;
 });
@@ -797,9 +779,11 @@ makeTree(8.0, -1.0, 0.7, 3.0);
 function instanced(geo, mat, list, colorFn, parent = shoreSide) {
   const im = new THREE.InstancedMesh(geo, mat, list.length);
   const o = new THREE.Object3D(), c = new THREE.Color();
+  const q = new THREE.Quaternion(), n = new THREE.Vector3(), e = new THREE.Euler();
   list.forEach((it, i) => {
-    o.position.set(it.x, it.y, it.z);
-    o.rotation.set(it.rx || 0, it.ry || 0, it.rz || 0);
+    bendVec(it.x, it.y, it.z, o.position);
+    q.setFromUnitVectors(UP, normalAt(it.x, it.z, n));
+    o.quaternion.copy(q).multiply(new THREE.Quaternion().setFromEuler(e.set(it.rx || 0, it.ry || 0, it.rz || 0)));
     o.scale.set(it.sx || 1, it.sy || 1, it.sz || 1);
     o.updateMatrix();
     im.setMatrixAt(i, o.matrix);
@@ -807,6 +791,7 @@ function instanced(geo, mat, list, colorFn, parent = shoreSide) {
   });
   im.castShadow = true;
   im.receiveShadow = true;
+  im.userData.noBend = true;
   parent.add(im);
   return im;
 }
@@ -1216,6 +1201,7 @@ function register(ind) {
   ind.moving = false;
   ind.yaw = ind.yaw ?? rr(0, TAU);
   if (ind.pickShape) pr.scale.set(...ind.pickShape.map(v => v / gs));
+  ind.group.userData.ind = ind;
   ind.sideName = ind.sideName || 'shore';
   inds.push(ind);
   (ind.parent || (ind.sideName === 'ice' ? iceSide : shoreSide)).add(ind.group);
@@ -1344,7 +1330,7 @@ POOLS.forEach((p, pi) => {
     const y = heightAt(x, z);
     an.group.position.set(x, y - 0.02, z);
     register({
-      species: 'umeboshi', ...an, x, z, pick: 0.24, pickY: 0.14, focus: 2.2, fixed: true,
+      species: 'umeboshi', ...an, x, z, pick: 0.24, pickY: 0.14, focus: 2.2, fixed: true, staticPos: true,
       update(ind, dt, t) {
         ind.submerged = waterLevelAt(x, z) > y + 0.1;
         const target = ind.submerged && ind.react <= 0 ? 1 : 0;
@@ -1425,7 +1411,7 @@ function iceHeight(x, z) {
   let h = lerp(2.3, -3.1, smooth(-5.2, -1.2, shore)) + (fbm(x * 0.35 + 40, z * 0.35 + 9) - 0.5) * 0.5;
   const g = Math.exp(-(((x - ISLET.x) ** 2) / 2.2 + ((z - ISLET.z) ** 2) / 1.8));
   h = lerp(h, Math.max(h, 1.15 + (fbm(x * 1.2, z * 1.2) - 0.5) * 0.3), smooth(0.25, 0.6, g));
-  return h;
+  return rimBlend(x, z, h);
 }
 const iceOnLand = (x, z) => iceHeight(x, z) > tideY + 0.15;
 
@@ -1453,34 +1439,13 @@ const iceRocks = [];
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
+  bendGeometry(g);
   iceTerrain = new THREE.Mesh(g, wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), ICE_U));
   iceTerrain.receiveShadow = iceTerrain.castShadow = true;
+  iceTerrain.userData.noBend = true;
   iceSide.add(iceTerrain);
 
-  // side walls: layers of dark rock and old ice
-  const WR = 18, wp = [], wc = [], wi = [];
-  const w1 = new THREE.Color('#c3d0d6'), w2 = new THREE.Color('#8f9ea7'), w3 = new THREE.Color('#66737c');
-  for (let m = 0; m <= MSEG; m++) {
-    const [bx, bz] = bnd[m % MSEG], top = iceHeight(bx, bz);
-    for (let r = 0; r <= WR; r++) {
-      const y = lerp(top, BOTTOM, r / WR), band = 0.5 + 0.5 * Math.sin(y * 3.1 + vnoise(bx * 0.6 + 7, bz * 0.6) * 2.5);
-      c.copy(w1).lerp(w2, band * 0.6).lerp(w3, smooth(-1.5, BOTTOM, y) * 0.7);
-      wp.push(bx, y, bz); wc.push(c.r, c.g, c.b);
-    }
-  }
-  for (let m = 0; m < MSEG; m++) for (let r = 0; r < WR; r++) {
-    const a = m * (WR + 1) + r, b = (m + 1) * (WR + 1) + r;
-    wi.push(a, b, a + 1, b, b + 1, a + 1);
-  }
-  const wg = new THREE.BufferGeometry();
-  wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3));
-  wg.setAttribute('color', new THREE.Float32BufferAttribute(wc, 3));
-  wg.setIndex(wi);
-  wg.computeVertexNormals();
-  const wall = new THREE.Mesh(wg, wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 }), ICE_U));
-  wall.receiveShadow = true;
-  iceSide.add(wall);
+
 
   // dark shore rocks with a cap of snow
   const dark = wetShader(new THREE.MeshStandardMaterial({ color: '#5b666c', roughness: 0.9, flatShading: true }), ICE_U);
@@ -1503,11 +1468,10 @@ const iceRocks = [];
 const iceSeaMat = seaMat.clone();
 iceSeaMat.color.set('#3c7f93');
 iceSeaMat.opacity = 0.66;
-const iceSea = new THREE.Group();
-sea.children.forEach(ch => iceSea.add(new THREE.Mesh(ch.geometry, iceSeaMat)));
-iceSea.scale.copy(sea.scale);
-iceSea.position.y = WATER_BOTTOM;
+const iceSea = new THREE.Mesh(waterGeo, iceSeaMat);
+iceSea.position.y = CEN;
 iceSea.renderOrder = 2;
+iceSea.userData.noBend = true;
 iceSide.add(iceSea);
 
 // conifers with snow, and a bare snag for the eagle
@@ -1631,22 +1595,24 @@ function updateFloes(dt, t) {
 // falling snow, drawn only while the ice side faces up
 const snow = (() => {
   const N = 1400, p = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) { p[i * 3] = rr(-A, A); p[i * 3 + 1] = rr(-1, 10); p[i * 3 + 2] = rr(-B, B); }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(p, 3));
   const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: 0.07, transparent: true, opacity: 0.85, depthWrite: false }));
+  pts.userData = { noBend: true, flat: Array.from({ length: N }, () => ({ x: rr(-RIM, RIM) * 0.9, z: rr(-RIM, RIM) * 0.9, y: rr(0, 10), v: rr(0.35, 0.6) })) };
   pts.visible = false;
+  pts.frustumCulled = false;
   iceSide.add(pts);
   return pts;
 })();
 function updateSnow(dt, t) {
-  const p = snow.geometry.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    let y = p.getY(i) - dt * (0.35 + (i % 7) * 0.04);
-    let x = p.getX(i) + Math.sin(t * 0.6 + i) * dt * 0.12;
-    if (y < iceHeight(x, p.getZ(i)) || y < tideY) { y = 10; x = rr(-A, A); }
-    p.setXY(i, x, y);
-  }
+  const p = snow.geometry.attributes.position, v = new THREE.Vector3();
+  snow.userData.flat.forEach((f, i) => {
+    f.y -= dt * f.v;
+    f.x += Math.sin(t * 0.6 + i) * dt * 0.12;
+    if (f.y < Math.max(tideY, iceHeight(f.x, f.z)) || Math.hypot(f.x, f.z) > RIM * 0.95) { f.y = 10; f.x = rr(-RIM, RIM) * 0.9; f.z = rr(-RIM, RIM) * 0.9; }
+    bendVec(f.x, f.y, f.z, v);
+    p.setXYZ(i, v.x, v.y, v.z);
+  });
   p.needsUpdate = true;
 }
 
@@ -1805,9 +1771,10 @@ floes.forEach((f) => {
       ind.a += dt * 0.12;
       const x = -4.5 + Math.cos(ind.a) * 4.2, z = 5 + Math.sin(ind.a * 2) * 1.6;
       const floor = iceHeight(x, z), y = clamp(tideY - 0.75, floor + 0.35, tideY - 0.4);
-      const g = ind.group, px = g.position.x, pz = g.position.z;
+      const g = ind.group, px = ind.px ?? x, pz = ind.pz ?? z;
       g.position.set(x, y, z);
       if (Math.hypot(x - px, z - pz) > 1e-4) g.rotation.y = Math.atan2(x - px, z - pz);
+      ind.px = x; ind.pz = z;
       ind.tail.rotation.y = Math.sin(t * 5) * 0.5;
       ind.head.rotation.x = ind.react > 0 ? -0.4 : 0;
     },
@@ -1846,7 +1813,7 @@ for (let k = 0; k < 8; k++) {
   e.group.rotation.y = -0.6;
   e.group.scale.setScalar(1.25);
   register({
-    species: 'oowashi', sideName: 'ice', ...e, fixed: true, pick: 0.45, pickY: 0.35, focus: 2.8, ph: rr(0, TAU),
+    species: 'oowashi', sideName: 'ice', ...e, fixed: true, staticPos: true, pick: 0.45, pickY: 0.35, focus: 2.8, ph: rr(0, TAU),
     ringY: () => snagTopY - 1.7 + 0.03,
     update(ind, dt, t) {
       const look = Math.sin(t * 0.3 + ind.ph) > 0.6 ? 0.9 : Math.sin(t * 0.3 + ind.ph) < -0.6 ? -0.9 : 0;
@@ -1882,6 +1849,43 @@ ring.renderOrder = 5;
 ring.visible = false;
 shoreSide.add(ring);
 
+// a thin atmosphere: a soft blue rim around the planet, dimmer at night
+const atmoMat = new THREE.ShaderMaterial({
+  uniforms: { uColor: { value: new THREE.Color('#9fd3e6') }, uStrength: { value: 0.9 } },
+  vertexShader: `varying vec3 vN; varying vec3 vV;
+    void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform vec3 uColor; uniform float uStrength; varying vec3 vN; varying vec3 vV;
+    void main() { float f = pow(1.0 - clamp(dot(vN, vV), 0.0, 1.0), 4.0); gl_FragColor = vec4(uColor, f * uStrength); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(PR + 2.4, 96, 64), atmoMat);
+atmosphere.renderOrder = 6;
+flipGroup.add(atmosphere);
+
+/* ------------------------------------------------------------------ planet placement */
+// Objects keep flat coordinates (what all the behaviour code works in). A wrapper
+// parent puts each one on the sphere, turned so its "up" follows the ground.
+const bendRoots = [];
+const bendN = new THREE.Vector3();
+function applyBend(e) {
+  const p = e.obj.position;
+  bendVec(p.x, p.y, p.z, e.wrap.position);
+  e.wrap.quaternion.setFromUnitVectors(UP, normalAt(p.x, p.z, bendN));
+  p.set(0, 0, 0);
+}
+[shoreSide, iceSide].forEach((sideG) => {
+  [...sideG.children].forEach((obj) => {
+    if (obj.userData.noBend) return;
+    const wrap = new THREE.Group();
+    sideG.add(wrap);
+    wrap.add(obj);
+    const ind = obj.userData.ind;
+    const e = { obj, wrap, side: sideG === iceSide ? 'ice' : 'shore', dynamic: obj === ring || (!!ind && !ind.staticPos) };
+    applyBend(e);
+    bendRoots.push(e);
+  });
+});
+
 /* ------------------------------------------------------------------ camera views */
 const VIEWS = {
   shore: { dir: new THREE.Vector3(-15.5, 17, 21.7).normalize(), dist: 32, target: new THREE.Vector3(0, 0.1, 0.8) },
@@ -1896,18 +1900,30 @@ const VIEWS_ICE = {
 let side = 'shore', flipAnim = null, flipF = 0;
 const sideGroup = (name) => name === 'ice' ? iceSide : shoreSide;
 function fitFov() { camera.fov = camera.aspect < 1 ? 42 : 30; camera.updateProjectionMatrix(); }
+// overview: the whole planet, the upward side facing the viewer
 function shorePose() {
   const v = VIEWS.shore;
-  const half = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
-  const dist = clamp(19 / Math.tan(half), 44, 72);
-  return { pos: v.target.clone().addScaledVector(v.dir, dist), target: v.target.clone() };
+  const vHalf = THREE.MathUtils.degToRad(camera.fov / 2), hHalf = Math.atan(Math.tan(vHalf) * camera.aspect);
+  // fit the planet (plus its thin atmosphere) and lift it clear of the tide panel
+  const dist = clamp((PR + 4) / Math.sin(Math.min(vHalf, hHalf)) * 1.12, 40, 110);
+  const target = new THREE.Vector3(0, CEN - PR * 0.12, 0);
+  return { pos: target.clone().addScaledVector(v.dir, dist), target };
 }
+// close views are written in flat map terms; the side facing up has world = side-local,
+// so a bent point is already a world point once the flip has finished
 function viewPose(name) {
   if (name === 'shore') return shorePose();
   const v = (side === 'ice' ? VIEWS_ICE : VIEWS)[name];
-  const pos = v.pos.clone();
-  if (camera.aspect < 1) pos.sub(v.target).multiplyScalar(1.45).add(v.target);
-  return { pos, target: v.target.clone() };
+  const target = bendVec(v.target.x, v.target.y, v.target.z);
+  let pos;
+  if (name === 'under') pos = bendVec(v.pos.x, v.pos.y, v.pos.z);
+  else {
+    // keep the flat camera offset, but in the target's tilted frame
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, normalAt(v.target.x, v.target.z));
+    pos = v.pos.clone().sub(v.target).applyQuaternion(q).add(target);
+  }
+  if (camera.aspect < 1) pos.sub(target).multiplyScalar(1.45).add(target);
+  return { pos, target };
 }
 let camAnim = null;
 function flyTo(pos, target, dur = 1.6) {
@@ -1995,6 +2011,8 @@ function updateDay(dt) {
   iceSeaMat.color.copy(m.water).lerp(ICE_WATER, 0.55);
   poolMat.color.copy(m.water).lerp(WHITE, 0.22);
   U.uNight.value = m.night;
+  atmoMat.uniforms.uStrength.value = lerp(0.7, 0.3, m.night);
+  atmoMat.uniforms.uColor.value.copy(m.sky).lerp(ATMO_DAY, 0.6);
   scene.fog.color.set('#4f9e9b').lerp(NIGHT_FOG, m.night * 0.8);
   dayUiTimer -= dt;
   if (dayUiTimer <= 0) {
@@ -2017,6 +2035,7 @@ function updateDay(dt) {
     if (!todDragging) ui.tod.value = Math.floor(hour * 60);
   }
 }
+const ATMO_DAY = new THREE.Color('#9fd3e6');
 const ICE_WATER = new THREE.Color('#2b6f88'), COLD_TINT = new THREE.Color(0.9, 0.97, 1.08), BG_TMP = new THREE.Color(), BG_TMP2 = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff'), NIGHT_FOG = new THREE.Color('#123a4a');
 let todDragging = false;
@@ -2129,7 +2148,7 @@ function select(ind, fly) {
   $('cardHabitat').textContent = sp.habitat;
   $('cardBuy').href = BOOTH.set || BOOTH.shop;
   $('cardBuy').hidden = sp.side === 'ice';
-  sideGroup(ind.sideName).add(ring);
+  sideGroup(ind.sideName).add(ring.parent);
   $('cardNow').textContent = sp.status(ind);
   ui.card.hidden = false;
   document.body.classList.add('has-card');
@@ -2269,8 +2288,8 @@ function frame() {
   tideY = lerp(TIDE_LOW, TIDE_HIGH, tn);
   U.uTide.value = tideY;
   U.uTime.value = t;
-  sea.scale.y = tideY - WATER_BOTTOM;
-  iceSea.scale.y = tideY - WATER_BOTTOM;
+  sea.scale.setScalar(PR + tideY);
+  iceSea.scale.setScalar(PR + tideY);
   if (flipAnim) {
     flipAnim.t += dt / flipAnim.dur;
     flipGroup.rotation.z = lerp(flipAnim.from, flipAnim.to, easeInOut(Math.min(1, flipAnim.t)));
@@ -2300,12 +2319,14 @@ function frame() {
     ind.anim(ind, dt, t);
   }
   if (shoreLive) updateSchool(dt, t);
+  for (const e of bendRoots) if (e.dynamic && e.obj !== ring && (e.side === 'ice' ? iceLive : shoreLive)) applyBend(e);
 
   // selection
   if (sel) {
     const p = sel.group.getWorldPosition(selWorld);
-    const lp = sideGroup(sel.sideName).worldToLocal(selLocal.copy(p));
+    const lp = unbend(sideGroup(sel.sideName).worldToLocal(selLocal.copy(p)));
     ring.position.set(lp.x, sel.ringY ? sel.ringY(lp) : heightOnSide(sel.sideName)(lp.x, lp.z) + 0.03, lp.z);
+    applyBend(bendRoots.find(e => e.obj === ring));
     ring.scale.setScalar(sel.pick * 1.25 * (1 + Math.sin(t * 3) * 0.05));
     ring.material.opacity = 0.55 + Math.sin(t * 3) * 0.25;
     if (!camAnim) {
@@ -2337,9 +2358,9 @@ function frame() {
     camera.setViewOffset(window.innerWidth, window.innerHeight, viewOff.x, viewOff.y, window.innerWidth, window.innerHeight);
   } else if (camera.view && camera.view.enabled) camera.clearViewOffset();
 
-  const cp = sideGroup(side).worldToLocal(selLocal.copy(camera.position));
+  const cp = unbend(sideGroup(side).worldToLocal(selLocal.copy(camera.position)));
   const wl = side === 'ice' ? tideY : waterLevelAt(cp.x, cp.z);
-  camUnder = !flipAnim && seF(cp.x, cp.z) < 1 && cp.y < wl - 0.02 && cp.y > heightOnSide(side)(cp.x, cp.z);
+  camUnder = !flipAnim && cp.r < RIM && cp.y < wl - 0.02 && cp.y > heightOnSide(side)(cp.x, cp.z);
   scene.fog.near = camUnder ? 0.5 : 400;
   scene.fog.far = camUnder ? 17 : 1000;
   ui.under.classList.toggle('on', camUnder);
