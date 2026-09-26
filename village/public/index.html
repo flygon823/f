@@ -294,6 +294,37 @@
     display: block; margin: 18px auto 0; height: 44px; padding: 0 30px; border: 0; border-radius: 999px; background: var(--teal); color: #fff;
     font-size: 15px; box-shadow: 0 4px 0 #149c8f;
   }
+  /* ---------- 島ナビ ---------- */
+  .asknote { margin: 0 0 8px; }
+  .asklog { max-height: min(42vh, 320px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .asklog:empty { display: none; }
+  .askq, .aska { padding: 9px 13px; border-radius: 18px; font-size: 14px; line-height: 1.6; font-weight: 700; max-width: 88%; overflow-wrap: anywhere; }
+  .askq { align-self: flex-end; background: var(--teal); color: #fff; border-bottom-right-radius: 6px; }
+  .aska { align-self: flex-start; background: var(--cream-2); color: var(--ink); border-bottom-left-radius: 6px; }
+  .aska.thinking { opacity: .7; }
+  .aska .pin { display: block; margin-top: 4px; font-size: 12px; color: #b0662a; }
+  .askchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .askchips button { border: 0; border-radius: 999px; padding: 6px 12px; background: var(--cream-2); font-size: 13px; color: var(--ink); }
+  .askform { display: flex; gap: 8px; }
+  .askform input { flex: 1; min-width: 0; height: 44px; border-radius: 999px; border: 2px solid var(--line); padding: 0 16px; font: inherit; font-size: 16px; background: #fff; }
+  .askform button { height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: var(--sun); color: #6b4f14; font-size: 15px; box-shadow: 0 3px 0 var(--sun-dark); }
+  .askform button:disabled { opacity: .5; }
+
+  /* ---------- つかまえたものカード ---------- */
+  .catchcard { position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; padding: 16px; pointer-events: auto; cursor: pointer; }
+  .catchcard[hidden] { display: none; }
+  .cc-inner {
+    position: relative; width: min(300px, 100%); background: var(--paper); border-radius: 30px; padding: 18px 18px 14px; text-align: center;
+    box-shadow: var(--shadow), 0 0 0 6px rgba(255,255,255,.6);
+  }
+  .catchcard.pop .cc-inner { animation: ccpop .45s cubic-bezier(.3,1.6,.5,1); }
+  @keyframes ccpop { from { transform: scale(.5) rotate(-6deg); opacity: 0; } to { transform: none; opacity: 1; } }
+  .cc-inner img { width: 180px; height: 180px; display: block; margin: 0 auto; border-radius: 22px; background: radial-gradient(circle at 50% 45%, #fffaf0, #f2e6cc); }
+  .cc-title { font-size: 19px; font-weight: 800; color: var(--ink); margin-top: 8px; }
+  .cc-sub { font-size: 12.5px; color: #8b7a60; font-weight: 700; margin-top: 4px; line-height: 1.6; }
+  .cc-new { position: absolute; top: -14px; left: 50%; transform: translateX(-50%) rotate(-2deg); background: var(--sun); color: #6b4f14; font-weight: 800; font-size: 13px; padding: 5px 14px; border-radius: 999px; box-shadow: 0 3px 0 var(--sun-dark); white-space: nowrap; }
+  .cc-hint { font-size: 11px; color: #a89878; margin-top: 8px; }
+
   .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin: 8px 0; }
   .keys kbd {
     font-family: inherit; font-size: 12px; background: var(--cream-2); border-radius: 8px; padding: 2px 8px; box-shadow: 0 2px 0 var(--line);
@@ -408,6 +439,7 @@
   <div class="pill" id="online"><span class="dot"></span><span id="onlineText">…</span></div>
   <button class="pill iconbtn" id="bgmBtn" title="BGM">🎵</button>
   <button class="pill iconbtn" id="seBtn" title="効果音">🔊</button>
+  <button class="pill iconbtn" id="askBtn" title="島ナビに聞く（Q）">💬</button>
   <button class="pill iconbtn" id="dexBtn" title="図鑑（B）">📖</button>
   <button class="pill iconbtn" id="helpBtn" title="あそびかた・招待">？</button>
 </div>
@@ -442,6 +474,7 @@
       <kbd>E・スペース</kbd><span>木をゆらす／ひろう／はなす／家に入る</span>
       <kbd>M</kbd><span>地図を大きくする</span>
       <kbd>B</kbd><span>図鑑をひらく</span>
+      <kbd>Q</kbd><span>島ナビに聞く</span>
       <kbd>Enter</kbd><span>おしゃべり</span>
       <kbd>1〜8</kbd><span>リアクション</span>
       <kbd>ホイール</kbd><span>ズーム</span>
@@ -488,6 +521,35 @@
   </div>
 </div>
 
+<div class="modal" id="askModal">
+  <div class="card askcard">
+    <h2>島ナビ</h2>
+    <p class="asknote" id="askNote">MOMO の頭のテレビに住んでいる 島ナビに、なんでも 聞いてみてね。</p>
+    <div class="asklog" id="askLog" aria-live="polite"></div>
+    <div class="askchips" id="askChips">
+      <button type="button">お店はどこ？</button>
+      <button type="button">宝石はどこで ほれる？</button>
+      <button type="button">魚の影って なに？</button>
+      <button type="button">ポカを かせぐには？</button>
+    </div>
+    <form class="askform" id="askForm" autocomplete="off">
+      <input id="askInput" maxlength="120" placeholder="たとえば「潮だまりは どこ？」" enterkeyhint="send">
+      <button type="submit" id="askSend">聞く</button>
+    </form>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div id="catchCard" class="catchcard" hidden>
+  <div class="cc-inner">
+    <div class="cc-new" id="ccNew" hidden>📖 図鑑に のったよ！</div>
+    <img id="ccImg" alt="" width="180" height="180">
+    <div class="cc-title" id="ccTitle"></div>
+    <div class="cc-sub" id="ccSub"></div>
+    <div class="cc-hint">タップ または E で とじる</div>
+  </div>
+</div>
+
 <div class="modal" id="plotModal">
   <div class="card">
     <h2 id="plotTitle">売り地</h2>
@@ -508,6 +570,7 @@
       <li>川は橋をつかってわたってね。</li>
       <li>家のドアに向かって歩くと、中に入れます。</li>
       <li>ハムスターの こむぎ が島を おさんぽしています。話しかけてみてね。</li>
+      <li>わからないことは 右上の 💬（Q キー）で <b>島ナビ</b>に 聞けます。場所を聞くと 地図に しるしを つけてくれます。</li>
       <li>ひろばの西の よろず屋で、果物・魚・虫・磯の生きもの・宝石を ポカに かえられます。つりざおと虫とりあみも もらえます。</li>
       <li>川・池・海に 泳いでいる <b>魚の影</b>の近くへ ウキを投げると、魚が よってきます。ツンツンは まだ。ウキが しずんだ しゅんかんに E！ 影が大きいほど 大物です。岸を走ると 魚も虫も にげるので、そっと近づいてね。</li>
       <li>砂浜の 潮だまりには ヒトデや ウニが いて、手で ひろえます。まわりには カニや ヤドカリも。</li>

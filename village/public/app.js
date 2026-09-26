@@ -13,6 +13,7 @@ import {
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
 import { makeCreature } from './creatures.js';
+import { PLACES, GUIDE_SYSTEM, guideUser, parseAnswer, offlineAnswer } from './guide.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
 import { makeVillager, MOMO_ACCENT } from './villager.js';
 import { Sound } from './audio.js';
@@ -1448,6 +1449,11 @@ function updateShadows(dt, now) {
       if (o.fleeT <= 0) { scene.remove(o.g); shadowObjs.delete(id); }
       continue;
     }
+    if (o.reel) { // つりざおと ひっぱりあい中（動きは updateReel が決める）
+      o.g.position.set(o.x, WATER_Y + 0.03, o.z);
+      o.g.rotation.y = o.head + Math.sin(now * 21) * 0.5;
+      continue;
+    }
     // 行きたい場所：ウキ（口がウキにとどくところ）か、ふだんの道すじ
     let tx, tz, speed;
     if (o.hook && fishing) {
@@ -1527,19 +1533,24 @@ function endFishing(msg, spook = false) {
   fishing = null;
   me.v.hold(null);
   me.v.setRodPull(0);
+  me.v.strain(0);
   if (msg) toast(msg);
 }
 function fishingAction() {
   if (!fishing) return false;
+  if (fishing.phase === 'reel') return true; // ひっぱりあい中は ボタンを受けつけない
   if (fishing.phase === 'bite') {
-    fishing.phase = 'reel';
+    // あわせた！ ここから ひっぱりあい（大きい魚ほど長い）
+    const f = fishing, o = shadowObjs.get(f.fish);
+    f.phase = 'reel';
+    f.reelT0 = performance.now() / 1000;
+    f.reelDur = 1.5 + (o ? o.sz : 3) * 0.2;
+    f.reelFrom = { x: f.bob.position.x, z: f.bob.position.z };
+    f.nextSplash = 0;
+    f.caughtMsg = null;
+    if (o) o.reel = true;
     sound.splash();
-    const id = fishing.fish;
-    const o = shadowObjs.get(id);
-    if (o) { scene.remove(o.g); shadowObjs.delete(id); }
-    fishing.fish = null;
-    net.send({ t: 'fish', id, x: me.x, z: me.z });
-    setTimeout(() => endFishing(), 600);
+    net.send({ t: 'fish', id: f.fish, x: me.x, z: me.z });
   } else if (fishing.phase === 'wait') {
     if (fishing.fish && fishing.state === 'nibble') endFishing('はやすぎた… にげられちゃった', true);
     else if (fishing.fish) endFishing('あっ… 魚が びっくりして にげちゃった', true);
@@ -1551,6 +1562,7 @@ const tipV = new THREE.Vector3();
 function updateFishing(now) {
   if (!fishing) return;
   const f = fishing;
+  if (f.phase === 'reel') { updateReel(f, now); return; }
   if (f.phase === 'wait') {
     const o = f.fish && shadowObjs.get(f.fish);
     if (f.fish && (!o || o.fleeT)) { f.fish = null; f.state = null; f.idleUntil = now + 8; } // ほかの人に つられた・時間で いなくなった
@@ -1586,12 +1598,86 @@ function updateFishing(now) {
   const sink = f.phase === 'bite' ? 0.28 : f.dip * 0.5;
   f.bob.position.y = BOB_Y - sink + Math.sin(now * 3) * 0.02;
   me.v.setRodPull(f.phase === 'bite' ? 1 : f.dip);
+  drawLine(f);
+}
+function drawLine(f) {
   me.v.rodTip(tipV);
   tipV.y -= curveY(tipV.z);
   const pos = f.line.geometry.attributes.position;
   pos.setXYZ(0, tipV.x, tipV.y, tipV.z);
   pos.setXYZ(1, f.bob.position.x, f.bob.position.y + 0.1 - curveY(f.bob.position.z), f.bob.position.z);
   pos.needsUpdate = true;
+}
+// ひっぱりあい：MOMO は うしろに ふんばり、魚は あばれながら 岸へ よってくる
+function updateReel(f, now) {
+  const p = Math.min(1, (now - f.reelT0) / f.reelDur);
+  me.v.strain(Math.min(1, p * 5));
+  me.v.setRodPull(1);
+  const k = p * 0.55;
+  const bx = lerp(f.reelFrom.x, me.x, k) + Math.sin(now * 9.1) * 0.22;
+  const bz = lerp(f.reelFrom.z, me.z, k) + Math.sin(now * 6.3) * 0.22;
+  f.bob.position.set(bx, BOB_Y - 0.22 + Math.abs(Math.sin(now * 13)) * 0.12, bz);
+  const o = shadowObjs.get(f.fish);
+  if (o) {
+    o.x = bx + Math.sin(now * 11) * 0.3; o.z = bz + Math.cos(now * 8) * 0.3;
+    o.head = Math.atan2(f.reelFrom.x - me.x, f.reelFrom.z - me.z) + Math.sin(now * 5) * 0.8;
+  }
+  if (now > f.nextSplash) {
+    spawnSplash(bx, bz, 0.7 + (o ? o.sz : 3) * 0.15);
+    if (Math.random() < 0.45) sound.splash();
+    f.nextSplash = now + 0.22 + Math.random() * 0.12;
+  }
+  drawLine(f);
+  if (p < 1) return;
+  // つりあげた！ 魚が 水から とびだす
+  const from = { x: bx, z: bz };
+  if (o) { scene.remove(o.g); shadowObjs.delete(f.fish); }
+  f.fish = null;
+  spawnSplash(bx, bz, 2.2);
+  sound.splash();
+  landing = { from, msg: f.caughtMsg, waitUntil: now + 4, obj: null, t1: 0 };
+  endFishing();
+}
+// 水しぶきの輪
+const splashGeo = new THREE.RingGeometry(0.72, 1, 28).rotateX(-Math.PI / 2);
+const splashes = [];
+function spawnSplash(x, z, s = 1) {
+  const m = new THREE.Mesh(splashGeo, curvify(new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false })));
+  m.position.set(x, WATER_Y + 0.05, z);
+  m.scale.setScalar(0.2 * s);
+  scene.add(m);
+  splashes.push({ m, t0: performance.now() / 1000, s });
+}
+function updateSplashes(now) {
+  for (let i = splashes.length - 1; i >= 0; i--) {
+    const sp = splashes[i], a = (now - sp.t0) / 0.65;
+    if (a >= 1) { scene.remove(sp.m); sp.m.material.dispose(); splashes.splice(i, 1); continue; }
+    sp.m.scale.setScalar((0.2 + a * 0.9) * sp.s);
+    sp.m.material.opacity = 0.85 * (1 - a);
+  }
+}
+// 水から とびだして、頭の上へ
+let landing = null; // { from, msg, waitUntil, obj, t1 }
+function updateLanding(now) {
+  const L = landing;
+  if (!L) return;
+  if (!L.msg) { if (now > L.waitUntil) { landing = null; toast('にげられた…'); } return; }
+  if (!L.msg.key) { landing = null; toast('にげられた…'); return; }
+  if (!L.obj) {
+    const c = makeCreature('fish', L.msg.key, sceneM);
+    L.obj = new THREE.Group();
+    if (c) { c.group.scale.setScalar(1.3); c.group.rotation.y = Math.PI / 2; L.obj.add(c.group); }
+    scene.add(L.obj);
+    L.t1 = now;
+  }
+  const q = Math.min(1, (now - L.t1) / 0.75);
+  const topY = standHeight(me.x, me.z) + 2.9;
+  L.obj.position.set(lerp(L.from.x, me.x, q), lerp(WATER_Y, topY, q) + Math.sin(q * Math.PI) * 1.8, lerp(L.from.z, me.z, q));
+  L.obj.rotation.z = Math.sin(q * 18) * 0.5 * (1 - q);
+  if (q < 1) return;
+  scene.remove(L.obj);
+  landing = null;
+  applyCatch(L.msg);
 }
 
 // ---- 図鑑 ----
@@ -1699,6 +1785,12 @@ function addLocalDex(cat, key) {
 }
 let trophy = null; // 頭の上にかかげる生き物
 function onCaught(msg) {
+  // つりは、ひっぱりあいと ジャンプが おわってから見せる
+  if (msg.kind === 'fish' && fishing && fishing.phase === 'reel') { fishing.caughtMsg = msg; return; }
+  if (msg.kind === 'fish' && landing && !landing.msg) { landing.msg = msg; return; }
+  applyCatch(msg);
+}
+function applyCatch(msg) {
   const cat = msg.kind;
   if (!msg.key) { toast(cat === 'fish' ? 'なにも つれなかった…' : cat === 'iso' ? 'とどかなかった…' : 'にげられた…'); return; }
   const info = cat === 'fish' ? FISH.find((x) => x.key === msg.key) : critterInfo(msg.key);
@@ -1729,18 +1821,142 @@ function onCaught(msg) {
   }
   me.v.hop();
   sound.sparkle();
-  toast(`${info.name}を ${cat === 'fish' ? 'つりあげた' : cat === 'iso' ? 'ひろった' : 'つかまえた'}！`);
-  if (first) setTimeout(() => toast(`📖 ${info.name}が 図鑑に のったよ！`), 1700);
+  showCatchCard(cat, msg.key, info, first);
   setTimeout(() => {
     const now = me.rank || 0;
     if (now > before) { toast(`🎉 ランクアップ！ ${RANKS[now].mark} ${RANKS[now].name} になった！`); sound.coins(); }
-  }, first ? 3400 : 1700);
+  }, 1800);
 }
+// つかまえたものの絵を、カードで大きく見せる
+let cardTimer = 0;
+function showCatchCard(cat, key, info, first) {
+  const verb = cat === 'fish' ? 'つりあげた' : cat === 'iso' ? 'ひろった' : 'つかまえた';
+  $('#ccImg').src = thumb(cat, key, true);
+  $('#ccImg').alt = info.name;
+  $('#ccTitle').textContent = `${info.name}を ${verb}！`;
+  const where = WHERE_NAMES[info.where || info.hab] || '';
+  const size = cat === 'fish' && info.sz ? `　大きさ ${'●'.repeat(info.sz)}${'○'.repeat(6 - info.sz)}` : '';
+  $('#ccSub').textContent = `${where}${size}　よろず屋で ${info.price.toLocaleString('ja-JP')} ポカ`;
+  $('#ccNew').hidden = !first;
+  const card = $('#catchCard');
+  card.hidden = false;
+  card.classList.remove('pop'); void card.offsetWidth; card.classList.add('pop');
+  clearTimeout(cardTimer);
+  cardTimer = setTimeout(closeCatchCard, 4500);
+}
+function closeCatchCard() { clearTimeout(cardTimer); $('#catchCard').hidden = true; }
+$('#catchCard').addEventListener('click', closeCatchCard);
 function updateTrophy(now) {
   if (!trophy) return;
   if (now > trophy.until) { scene.remove(trophy.g); trophy = null; return; }
   trophy.g.position.set(me.x, standHeight(me.x, me.z) + 2.9 + Math.sin(now * 3) * 0.05, me.z);
   trophy.g.rotation.y = Math.sin(now * 1.5) * 0.4;
+}
+
+// =====================================================================
+// 島ナビ：わからないことを AI に聞く
+// =====================================================================
+// みんなの島（サーバー）では サーバーが Claude に聞く（鍵がなければ キーワードで答える）。
+// claude.ai のページ版では、見ている人の Claude に聞く（sample）。どちらもなければ キーワードで答える。
+let sampleFn = null;
+(async () => { try { sampleFn = window.claude ? await window.claude.use('sample') : null; } catch { sampleFn = null; } })();
+const askWait = new Map();
+let askSeq = 0;
+async function askNavi(q) {
+  const layerX = layerOf(me.x) === 'under' ? me.x - UNDER_X : me.x;
+  const ctx = { where: whereName(me.x, me.z), x: layerX, z: me.z, hour: new Date().getHours() };
+  if (serverMode()) {
+    const id = String(++askSeq);
+    net.send({ t: 'ask', id, q, where: ctx.where });
+    return new Promise((resolve) => {
+      askWait.set(id, resolve);
+      setTimeout(() => { if (askWait.delete(id)) resolve({ ...offlineAnswer(q), offline: true }); }, 50000);
+    });
+  }
+  if (sampleFn) {
+    try {
+      const r = await sampleFn.json([{ role: 'user', content: `${GUIDE_SYSTEM}\n\n${guideUser(q, ctx)}` }], { modelTier: 'quick', cache: false });
+      return parseAnswer(JSON.stringify(r));
+    } catch (e) {
+      if (e && e.code === 'not_granted') sampleFn = null; // ことわられたら キーワードで答える
+      return { ...offlineAnswer(q), offline: true };
+    }
+  }
+  return { ...offlineAnswer(q), offline: true };
+}
+function askBubble(cls, text) {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = text;
+  $('#askLog').appendChild(d);
+  $('#askLog').scrollTop = $('#askLog').scrollHeight;
+  return d;
+}
+let asking = false;
+async function submitAsk(text) {
+  const q = String(text || '').trim().slice(0, 120);
+  if (!q || asking || !me) return;
+  asking = true;
+  $('#askSend').disabled = true;
+  $('#askInput').value = '';
+  askBubble('askq', q);
+  const b = askBubble('aska thinking', 'かんがえ中…');
+  me.v.talk(1.5);
+  const r = await askNavi(q);
+  b.classList.remove('thinking');
+  b.textContent = r.answer;
+  if (r.place) {
+    const m = markPlace(r.place);
+    if (m) { const pin = document.createElement('span'); pin.className = 'pin'; pin.textContent = `📍 地図に「${m.name}」の しるしを つけたよ`; b.appendChild(pin); }
+  }
+  if (r.offline) $('#askNote').textContent = 'いまは AI に つながらないので、かんたんな答えだけ 出しています。';
+  $('#askLog').scrollTop = $('#askLog').scrollHeight;
+  me.v.talk(2.2);
+  sound.speak(r.answer.slice(0, 28), 1.3, 0.5, true);
+  asking = false;
+  $('#askSend').disabled = false;
+}
+$('#askForm').addEventListener('submit', (e) => { e.preventDefault(); submitAsk($('#askInput').value); });
+for (const c of document.querySelectorAll('#askChips button')) c.addEventListener('click', () => submitAsk(c.textContent));
+function openAsk() { openModal('#askModal'); setTimeout(() => $('#askInput').focus(), 60); }
+$('#askBtn').addEventListener('click', openAsk);
+
+// 島ナビの しるし（地図のピンと、島の上の ぴょこぴょこ マーク）
+let guideMark = null; // { x, z, name, until, obj, follow }
+function markPlace(key) {
+  const p = PLACES[key];
+  if (!p) return null;
+  const mx = layerOf(me.x) === 'under' ? me.x - UNDER_X : me.x;
+  let x = p.x, z = p.z, follow = false;
+  const nearest = (list) => list.reduce((b, c) => (Math.hypot(c.x - mx, c.z - me.z) < Math.hypot(b.x - mx, b.z - me.z) ? c : b));
+  if (p.near === 'tidepool') ({ x, z } = nearest(TIDEPOOLS));
+  if (p.near === 'plot') ({ x, z } = nearest(PLOTS.filter((q) => !plotInfo[q.i]?.owner).length ? PLOTS.filter((q) => !plotInfo[q.i]?.owner) : PLOTS));
+  if (p.near === 'resident' && resident) { x = resident.x; z = resident.z; follow = true; }
+  if (guideMark) scene.remove(guideMark.obj);
+  const obj = new THREE.Group();
+  const tip = mesh(GEO.cone, toon('#ff5a3c'), 0, 0, 0, 0.45, 0.8, 0.45);
+  tip.rotation.x = Math.PI; // 下向き
+  obj.add(tip);
+  obj.add(mesh(GEO.sphereLo, toon('#ff5a3c'), 0, 0.55, 0, 0.42, 0.42, 0.42));
+  obj.add(mesh(GEO.sphereLo, basic('#ffffff'), 0, 0.58, 0.3, 0.16, 0.16, 0.16));
+  scene.add(obj);
+  guideMark = { x, z, name: p.name, until: performance.now() / 1000 + 180, obj, follow };
+  return guideMark;
+}
+function updateGuideMark(now) {
+  const m = guideMark;
+  if (!m) return;
+  if (m.follow && resident) { m.x = resident.x; m.z = resident.z; }
+  const onSurface = layerOf(me.x) === 'surface';
+  if (now > m.until || (onSurface && Math.hypot(me.x - m.x, me.z - m.z) < 2.5)) {
+    if (now <= m.until) { toast(`📍 ${m.name}に ついたよ！`); sound.sparkle(); }
+    scene.remove(m.obj);
+    guideMark = null;
+    return;
+  }
+  m.obj.visible = onSurface;
+  m.obj.position.set(m.x, groundHeight(m.x, m.z) + 2.6 + Math.abs(Math.sin(now * 3)) * 0.5, m.z);
+  m.obj.rotation.y = now * 1.5;
 }
 
 // =====================================================================
@@ -2095,6 +2311,11 @@ function handle(msg) {
     case 'shadows':
       applyShadows(msg.list, msg.fled);
       break;
+    case 'answer': {
+      const done = askWait.get(msg.id);
+      if (done) { askWait.delete(msg.id); done(msg); }
+      break;
+    }
     case 'caught':
       onCaught(msg);
       break;
@@ -2157,8 +2378,9 @@ let zoom = 1;
 const chatInput = $('#chat');
 
 addEventListener('keydown', (e) => {
-  if (document.activeElement === chatInput || document.activeElement === $('#name')) {
-    if (e.key === 'Escape') chatInput.blur();
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
+    if (e.key === 'Escape') ae.blur();
     return;
   }
   if (!me) return;
@@ -2168,10 +2390,17 @@ addEventListener('keydown', (e) => {
   }
   if (e.key === 'm' || e.key === 'M') { toggleMap(); return; }
   if (e.key === 'b' || e.key === 'B') { openDex(); return; }
+  if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); openAsk(); return; }
   if (e.key === 'Enter') { e.preventDefault(); chatInput.focus(); return; }
   if (e.key === 'Escape') { closeModals(); return; }
   if (/^[1-8]$/.test(e.key)) { sendEmote(EMOTES[+e.key - 1].key); return; }
-  if (['e', 'E', ' ', 'z', 'Z'].includes(e.key)) { e.preventDefault(); if (!e.repeat) action(); return; }
+  if (['e', 'E', ' ', 'z', 'Z'].includes(e.key)) {
+    e.preventDefault();
+    if (e.repeat) return;
+    if (!$('#catchCard').hidden) { closeCatchCard(); return; }
+    action();
+    return;
+  }
   keys.add(e.code);
   if (e.code.startsWith('Arrow')) e.preventDefault();
   clickTarget = null;
@@ -2456,7 +2685,7 @@ $('#promptKey').textContent = isTouch ? 'A' : 'E';
 let lastPrompt = null;
 function updatePrompt() {
   if (fishing) {
-    const label = fishing.phase === 'bite' ? 'いまだ！ つりあげる' : 'ウキが しずんだら おす';
+    const label = fishing.phase === 'reel' ? 'ふんばれ〜！' : fishing.phase === 'bite' ? 'いまだ！ つりあげる' : 'ウキが しずんだら おす';
     if (label !== lastPrompt) { lastPrompt = label; $('#prompt').classList.add('on'); $('#promptText').textContent = label; }
     return;
   }
@@ -2773,6 +3002,18 @@ function drawMap() {
   const same = (x) => (layerOf(x) === 'under') === !!under;
   for (const p of people.values()) if (!p.isMe && same(p.x)) dot(p.x, p.z, tagColor(p.name), R);
   if (resident && !under) dot(resident.x, resident.z, '#e2a91e', R);
+  if (guideMark && !under) {
+    // 島ナビの しるし（ぴょこぴょこ はねる ピン）
+    const [u, v] = mapPos(guideMark.x, guideMark.z);
+    const px = u * W, py = v * W - Math.abs(Math.sin(performance.now() / 250)) * 3 * dpr, r = R * 1.25;
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(px, py - r * 1.6, r + 2 * dpr, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(px - r - 2 * dpr, py - r * 1.4); g.lineTo(px, py + 2 * dpr); g.lineTo(px + r + 2 * dpr, py - r * 1.4); g.fill();
+    g.fillStyle = '#ff5a3c';
+    g.beginPath(); g.arc(px, py - r * 1.6, r, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(px - r, py - r * 1.4); g.lineTo(px, py); g.lineTo(px + r, py - r * 1.4); g.fill();
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(px, py - r * 1.6, r * 0.4, 0, 7); g.fill();
+  }
   if (me) {
     const [u, v] = mapPos(me.x, me.z);
     const t = performance.now() / 1000;
@@ -2916,7 +3157,7 @@ function angleLerp(a, b, t) {
 }
 
 function moveMe(dt) {
-  if (transitioning || dialog.open) { me.speed = 0; return; }
+  if (transitioning || dialog.open || (fishing && fishing.phase === 'reel')) { me.speed = 0; return; }
   if (me.seat) {
     const moving = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].some((k) => keys.has(k))
       || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget;
@@ -2931,7 +3172,7 @@ function moveMe(dt) {
   if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   let mag = Math.hypot(ix, iz);
   if (mag > 0) { ix /= mag; iz /= mag; mag = 1; }
-  if (fishing && (mag || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget)) endFishing();
+  if (fishing && fishing.phase !== 'reel' && (mag || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget)) endFishing();
   if (!mag && (stickVec.x || stickVec.y)) {
     mag = Math.hypot(stickVec.x, stickVec.y);
     if (mag > 0.15) { ix = stickVec.x / mag; iz = stickVec.y / mag; run = mag > 0.92; } else mag = 0;
@@ -3070,6 +3311,9 @@ function frame() {
   updateSparks(dt);
   updateBugs(dt, now);
   updateShadows(dt, now);
+  updateSplashes(now);
+  updateLanding(now);
+  updateGuideMark(now);
   updateFishing(now);
   updateTrophy(now);
   if (me && layerOf(me.x) === 'under') {
@@ -3412,4 +3656,4 @@ setupPreview();
 initPayments();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, shadowObjs, get fishing() { return fishing; } };
+window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, shadowObjs, get fishing() { return fishing; }, get guideMark() { return guideMark; } };

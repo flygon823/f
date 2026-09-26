@@ -11,6 +11,7 @@ const { Economy, formatCode } = require('./economy');
 
 let W = null;        // public/world.js（島の形・宝石・土地。画面と同じものを使う）
 let economy = null;  // アカウント・ポケット・土地
+let G = null;        // public/guide.js（島ナビの知識）
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -74,7 +75,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: !!economy.find(url.searchParams.get('code')) });
   }
   if (url.pathname === '/api/config') {
-    return json(res, 200, { payments: payments.enabled(), price: payments.PRICE });
+    return json(res, 200, { payments: payments.enabled(), price: payments.PRICE, ai: aiEnabled() });
   }
   if (url.pathname === '/api/premium') {
     return json(res, 200, { premium: await payments.verify(url.searchParams.get('code')) });
@@ -213,6 +214,43 @@ function shadowTick() {
 }
 // 影に手がとどく（つりざおの先 + 泳いでいるぶん）くらい近くにいるか
 const nearShadow = (me, f) => { const sp = W.FISH_SPOTS[f.spot]; return Math.hypot(sp.x - me.x, sp.z - me.z) < 9; };
+
+// ---------- 島ナビ（AI に島のことを聞く） ----------
+// ANTHROPIC_API_KEY があるときだけ Claude に聞く。ないとき・エラーのときは キーワードで答える。
+const AI_MODEL = process.env.AI_MODEL || 'claude-opus-5';
+const ASK_PER_HOUR = Number(process.env.AI_ASK_PER_HOUR) || 30;     // ひとりあたり
+const ASK_ALL_PER_HOUR = Number(process.env.AI_ASK_ALL_PER_HOUR) || 600; // 島ぜんぶで（お金のつかいすぎ防止）
+const aiEnabled = () => !!process.env.ANTHROPIC_API_KEY;
+let anthropic = null;
+const askLog = new Map(); // accountId -> [時刻…]
+let askAll = [];
+async function askClaude(q, ctx) {
+  if (!anthropic) {
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    anthropic = new Anthropic({ maxRetries: 1, timeout: 45000 });
+  }
+  const res = await anthropic.beta.messages.create({
+    model: AI_MODEL,
+    max_tokens: 2000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low' },
+    system: [{ type: 'text', text: G.GUIDE_SYSTEM, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: G.guideUser(q, ctx) }],
+  });
+  if (res.stop_reason === 'refusal') return { answer: 'ごめんね、それには こたえられないみたい。', place: null };
+  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  return G.parseAnswer(text);
+}
+function askAllowed(me, now) {
+  const hourAgo = now - 3600e3;
+  askAll = askAll.filter((t) => t > hourAgo);
+  const mine = (askLog.get(me.account.id) || []).filter((t) => t > hourAgo);
+  askLog.set(me.account.id, mine);
+  if (mine.length >= ASK_PER_HOUR || askAll.length >= ASK_ALL_PER_HOUR) return false;
+  mine.push(now); askAll.push(now);
+  return true;
+}
 
 // 虫をつかまえた・魚をつった・磯の生きものをひろった：ポケットと図鑑に入れて、ランクが上がったらみんなに知らせる
 function caught(me, kind, key) {
@@ -433,6 +471,22 @@ wss.on('connection', (ws, req) => {
         caught(me, 'fish', f.key);
         break;
       }
+      case 'ask': {
+        const q = cleanText(msg.q, 120);
+        const id = String(msg.id || '').slice(0, 20);
+        if (!q) return;
+        if (now - (me.lastAsk || 0) < 3000) { send(ws, { t: 'answer', id, answer: 'ちょっと まってね。つぎの質問は 少しあけてね。', place: null }); return; }
+        me.lastAsk = now;
+        if (!aiEnabled() || !askAllowed(me, now)) { send(ws, { t: 'answer', id, ...G.offlineAnswer(q), offline: true }); return; }
+        const ctx = { where: cleanText(msg.where, 30), x: me.x, z: me.z, hour: jstHour() };
+        askClaude(q, ctx)
+          .then((r) => send(ws, { t: 'answer', id, ...r }))
+          .catch((e) => {
+            console.error('[ask]', e.status || '', e.message);
+            send(ws, { t: 'answer', id, ...G.offlineAnswer(q), offline: true });
+          });
+        break;
+      }
       case 'spook': {
         // はやく引きすぎた・おそすぎた：その影は にげていく
         const f = shadows.get(String(msg.id));
@@ -503,6 +557,8 @@ setInterval(() => {
 
 (async () => {
   W = await import('./public/world.js');
+  G = await import('./public/guide.js');
+  console.log(`[ai] 島ナビ: ${aiEnabled() ? `Claude（${AI_MODEL}）` : 'キーワードで答える（ANTHROPIC_API_KEY なし）'}`);
   economy = new Economy(createStore(), W);
   await economy.init();
   for (let k = 0; k < MAX_BUGS * 2 && countBugs(false) < MAX_BUGS - 2; k++) spawnBug(false);

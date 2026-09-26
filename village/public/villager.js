@@ -329,7 +329,7 @@ export function makeVillager(look) {
 
   const st = {
     pose: 'stand',
-    swingT: 0, swingTool: 'pickaxe', hold: null, rodPull: 0,
+    swingT: 0, swingTool: 'pickaxe', hold: null, rodPull: 0, strain: 0,
     phase: 0, walk: 0, blinkT: 2 + Math.random() * 3, talkT: 0, hopT: 0, waveT: 0, shakeT: 0, t: Math.random() * 10,
   };
 
@@ -409,9 +409,24 @@ export function makeVillager(look) {
     }
     body.position.y = y;
 
+    // ふんばる（大物と ひっぱりあい）：うしろに体をたおして、さおを両手で高く
+    const sp = st.pose === 'stand' ? st.strain : 0;
+    if (sp > 0) {
+      const j = Math.sin(st.t * 31) * 0.05 * sp;
+      arms[1].rotation.x = -0.9 * (1 - sp) - 1.75 * sp + j * 2;
+      arms[1].rotation.z = 0.2 - 0.12 * sp;
+      arms[0].rotation.x = -1.45 * sp + j * 2;
+      arms[0].rotation.z = -0.55 + 0.35 * sp;
+      legs[0].rotation.x = 0.5 * sp;
+      legs[1].rotation.x = -0.3 * sp;
+      head.rotation.x = -0.18 * sp;
+      head.rotation.z = j * 1.5;
+      body.position.y = y - 0.05 * sp;
+    }
+
     // すわる・ねころぶ
     shadow.visible = st.pose === 'stand';
-    posePivot.rotation.x = st.pose === 'lie' ? -Math.PI / 2 : 0;
+    posePivot.rotation.x = st.pose === 'lie' ? -Math.PI / 2 : -0.3 * sp + Math.sin(st.t * 23) * 0.03 * sp;
     if (st.pose === 'sit') {
       legs[0].rotation.x = legs[1].rotation.x = -1.45;
       arms[0].rotation.x = arms[1].rotation.x = -0.35;
@@ -438,6 +453,7 @@ export function makeVillager(look) {
     swing(tool = 'pickaxe') { st.swingT = 0.42; st.swingTool = tool; },
     hold(tool) { st.hold = tool; },
     setRodPull(v) { st.rodPull = v; },
+    strain(v) { st.strain = v; }, // 0〜1：つりで ふんばる
     rodTip(out) { return rodTip.getWorldPosition(out); },
     setPose(p) { st.pose = p; },
     get pose() { return st.pose; },
