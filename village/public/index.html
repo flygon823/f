@@ -58,7 +58,7 @@
   }
   .nametag.me { background: rgba(31, 195, 179, 0.75); }
   .bubble {
-    position: absolute; left: 0; bottom: 8px; transform: translate(-50%, 0) scale(0.6); transform-origin: 50% 100%;
+    position: absolute; left: 0; bottom: 30px; transform: translate(-50%, 0) scale(0.6); transform-origin: 50% 100%;
     width: max-content; min-width: 96px; max-width: min(260px, 70vw); padding: 16px 18px 12px; border-radius: 28px / 24px;
     background: var(--cream); color: var(--ink); font-size: 15px; line-height: 1.5; font-weight: 700;
     box-shadow: 0 4px 0 rgba(114, 93, 66, 0.12), 0 10px 22px rgba(40, 30, 10, 0.18);
@@ -76,7 +76,7 @@
     transform: rotate(-4deg); white-space: nowrap; box-shadow: 0 2px 0 rgba(0,0,0,0.08);
   }
   .emote {
-    position: absolute; left: 0; bottom: 6px; transform: translate(-50%, 0) scale(0); font-size: 34px;
+    position: absolute; left: 0; bottom: 28px; transform: translate(-50%, 0) scale(0); font-size: 34px;
     filter: drop-shadow(0 3px 2px rgba(0,0,0,0.18)); transition: transform .3s cubic-bezier(.3,1.8,.5,1), opacity .3s;
     opacity: 0;
   }
@@ -111,6 +111,7 @@
   #fruits:empty { display: none; }
   .fchip { height: 30px; padding: 0 10px 0 6px; font-size: 13px; }
   .fchip i { width: 16px; height: 16px; border-radius: 50%; display: inline-block; box-shadow: inset -3px -3px 0 rgba(0,0,0,0.12); }
+  .fchip.gem i { width: 12px; height: 12px; border-radius: 2px; transform: rotate(45deg); margin: 0 2px; box-shadow: inset -2px -2px 0 rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.12); }
 
   #chatbar {
     bottom: max(18px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
@@ -205,6 +206,51 @@
   #fade { position: fixed; inset: 0; z-index: 14; background: #1f1712; opacity: 0; pointer-events: none; transition: opacity .25s; }
   #fade.on { opacity: 1; }
 
+  /* よろず屋・土地 */
+  .shoprow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 2px dashed var(--line); }
+  .shoprow i { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset -3px -3px 0 rgba(0,0,0,0.12); }
+  .shoprow i.gemdot { width: 12px; height: 12px; border-radius: 2px; transform: rotate(45deg); margin: 0 2px; }
+  .shoprow .nm { font-size: 14px; }
+  .shoprow .pr { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .shoprow button, .card .action {
+    height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--sun); color: #6b4f14; font-size: 13px; box-shadow: 0 3px 0 var(--sun-dark);
+  }
+  .card .action { display: block; width: 100%; height: 46px; margin-top: 12px; font-size: 15px; }
+  .card .action.danger { background: #f3c1b6; color: #7a2e22; box-shadow: 0 3px 0 #d99a8c; }
+  .card .action:disabled { opacity: .5; }
+  .coinline { font-size: 14px; margin: 4px 0 8px; }
+  .code { font-size: 17px; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+  #codeForm { display: flex; gap: 6px; margin-top: 8px; }
+  #codeInput, #joinCodeInput {
+    flex: 1; min-width: 0; height: 38px; border-radius: 12px; border: 2px solid var(--line); background: #fff; padding: 0 10px;
+    font-size: 13px; font-weight: 800; color: var(--ink); text-transform: uppercase; user-select: text; -webkit-user-select: text;
+  }
+  #codeGo, #joinCodeGo { height: 38px; padding: 0 14px; border-radius: 12px; border: 0; background: var(--teal); color: #fff; font-size: 13px; }
+  #joinCode { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  #joinCodeForm { display: flex; gap: 6px; width: 100%; }
+
+  /* 図鑑 */
+  .dexcard { width: min(620px, 100%); }
+  .dexhead { display: grid; gap: 6px; margin-bottom: 12px; }
+  .dexrank { font-size: 20px; font-weight: 800; }
+  .dexmeter { height: 12px; border-radius: 999px; background: var(--cream-2); overflow: hidden; }
+  .dexmeter i { display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--leaf), var(--sun)); transition: width .4s; }
+  .dexcount { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .dextabs { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
+  .dextabs button { height: 36px; padding: 0 11px; border: 0; border-radius: 999px; background: var(--cream-2); font-size: 13px; }
+  .dextabs button.on { background: var(--sun); color: #6b4f14; box-shadow: 0 3px 0 var(--sun-dark); }
+  .dextabs b { font-size: 11px; margin-left: 3px; font-variant-numeric: tabular-nums; }
+  .dexgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+  .dexcell {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px 8px; border: 0; border-radius: 16px;
+    background: #fff; box-shadow: 0 2px 0 var(--line); font-size: 11px;
+  }
+  .dexcell img { width: 72px; height: 72px; }
+  .dexcell.unknown { background: var(--cream-2); color: var(--ink-soft); }
+  .dexinfo { min-height: 2.6em; margin: 10px 0 0; font-size: 13px; }
+  #shopTools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  #shopTools button { height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--teal); color: #fff; font-size: 13px; }
+
   /* スマホ用 */
   #stick, #actBtn { display: none; }
   body.touch #stick {
@@ -227,13 +273,13 @@
 
   /* ---------- パネル（けいじばん・はじめに） ---------- */
   .modal {
-    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: safe center; padding: 32px 16px 16px; overflow-y: auto;
     background: rgba(60, 90, 70, 0.28); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
     opacity: 0; pointer-events: none; transition: opacity .25s;
   }
   .modal.on { opacity: 1; pointer-events: auto; }
   .card {
-    position: relative; width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--paper);
+    position: relative; width: min(460px, 100%); background: var(--paper);
     border-radius: 32px; padding: 30px 26px 24px; box-shadow: var(--shadow);
     transform: translateY(12px) scale(.97); transition: transform .3s cubic-bezier(.3,1.5,.5,1);
   }
@@ -248,6 +294,37 @@
     display: block; margin: 18px auto 0; height: 44px; padding: 0 30px; border: 0; border-radius: 999px; background: var(--teal); color: #fff;
     font-size: 15px; box-shadow: 0 4px 0 #149c8f;
   }
+  /* ---------- 島ナビ ---------- */
+  .asknote { margin: 0 0 8px; }
+  .asklog { max-height: min(42vh, 320px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .asklog:empty { display: none; }
+  .askq, .aska { padding: 9px 13px; border-radius: 18px; font-size: 14px; line-height: 1.6; font-weight: 700; max-width: 88%; overflow-wrap: anywhere; }
+  .askq { align-self: flex-end; background: var(--teal); color: #fff; border-bottom-right-radius: 6px; }
+  .aska { align-self: flex-start; background: var(--cream-2); color: var(--ink); border-bottom-left-radius: 6px; }
+  .aska.thinking { opacity: .7; }
+  .aska .pin { display: block; margin-top: 4px; font-size: 12px; color: #b0662a; }
+  .askchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .askchips button { border: 0; border-radius: 999px; padding: 6px 12px; background: var(--cream-2); font-size: 13px; color: var(--ink); }
+  .askform { display: flex; gap: 8px; }
+  .askform input { flex: 1; min-width: 0; height: 44px; border-radius: 999px; border: 2px solid var(--line); padding: 0 16px; font: inherit; font-size: 16px; background: #fff; }
+  .askform button { height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: var(--sun); color: #6b4f14; font-size: 15px; box-shadow: 0 3px 0 var(--sun-dark); }
+  .askform button:disabled { opacity: .5; }
+
+  /* ---------- つかまえたものカード ---------- */
+  .catchcard { position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; padding: 16px; pointer-events: auto; cursor: pointer; }
+  .catchcard[hidden] { display: none; }
+  .cc-inner {
+    position: relative; width: min(300px, 100%); background: var(--paper); border-radius: 30px; padding: 18px 18px 14px; text-align: center;
+    box-shadow: var(--shadow), 0 0 0 6px rgba(255,255,255,.6);
+  }
+  .catchcard.pop .cc-inner { animation: ccpop .45s cubic-bezier(.3,1.6,.5,1); }
+  @keyframes ccpop { from { transform: scale(.5) rotate(-6deg); opacity: 0; } to { transform: none; opacity: 1; } }
+  .cc-inner img { width: 180px; height: 180px; display: block; margin: 0 auto; border-radius: 22px; background: radial-gradient(circle at 50% 45%, #fffaf0, #f2e6cc); }
+  .cc-title { font-size: 19px; font-weight: 800; color: var(--ink); margin-top: 8px; }
+  .cc-sub { font-size: 12.5px; color: #8b7a60; font-weight: 700; margin-top: 4px; line-height: 1.6; }
+  .cc-new { position: absolute; top: -14px; left: 50%; transform: translateX(-50%) rotate(-2deg); background: var(--sun); color: #6b4f14; font-weight: 800; font-size: 13px; padding: 5px 14px; border-radius: 999px; box-shadow: 0 3px 0 var(--sun-dark); white-space: nowrap; }
+  .cc-hint { font-size: 11px; color: #a89878; margin-top: 8px; }
+
   .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin: 8px 0; }
   .keys kbd {
     font-family: inherit; font-size: 12px; background: var(--cream-2); border-radius: 8px; padding: 2px 8px; box-shadow: 0 2px 0 var(--line);
@@ -314,6 +391,7 @@
     font-size: 11px; font-weight: 700; color: var(--ink); user-select: text; -webkit-user-select: text;
   }
   .passrow button { height: 32px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--teal); color: #fff; font-size: 12px; }
+  .linkbtn { border: 0; background: none; padding: 0; color: var(--ink-2); font-size: 12px; text-decoration: underline; }
   .passrow .linkbtn { height: auto; border: 0; background: none; padding: 0; color: var(--ink-2); font-size: 12px; text-decoration: underline; }
   #passBox a { color: var(--ink-2); font-size: 11px; }
   #go {
@@ -361,6 +439,8 @@
   <div class="pill" id="online"><span class="dot"></span><span id="onlineText">…</span></div>
   <button class="pill iconbtn" id="bgmBtn" title="BGM">🎵</button>
   <button class="pill iconbtn" id="seBtn" title="効果音">🔊</button>
+  <button class="pill iconbtn" id="askBtn" title="島ナビに聞く（Q）">💬</button>
+  <button class="pill iconbtn" id="dexBtn" title="図鑑（B）">📖</button>
   <button class="pill iconbtn" id="helpBtn" title="あそびかた・招待">？</button>
 </div>
 <div id="mapbox" class="hud"><canvas id="map" title="地図（M キーで大きく）"></canvas><div class="pill" id="where"></div></div>
@@ -393,12 +473,88 @@
       <kbd>クリック</kbd><span>その場所まであるく</span>
       <kbd>E・スペース</kbd><span>木をゆらす／ひろう／はなす／家に入る</span>
       <kbd>M</kbd><span>地図を大きくする</span>
+      <kbd>B</kbd><span>図鑑をひらく</span>
+      <kbd>Q</kbd><span>島ナビに聞く</span>
       <kbd>Enter</kbd><span>おしゃべり</span>
       <kbd>1〜8</kbd><span>リアクション</span>
       <kbd>ホイール</kbd><span>ズーム</span>
     </div>
+    <div id="accountBox" hidden>
+      <p><b>引き継ぎコード</b>：ほかのスマホやパソコンで続きから遊ぶときに使います。人には教えないでね。</p>
+      <div class="share"><input id="myCode" class="code" readonly><button id="copyCode" type="button">コピー</button></div>
+    </div>
     <p id="shareNote">このページのURLを友だちに送ると、同じ島で会えます。</p>
     <div class="share"><input id="shareUrl" readonly><button id="copyBtn" type="button">コピー</button></div>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div class="modal" id="shopModal">
+  <div class="card">
+    <h2>よろず屋（買い取り）</h2>
+    <p>果物や宝石を ポカに かえられます。</p>
+    <p class="coinline">🪙 いまのポカ：<b id="shopCoins">0</b></p>
+    <div id="shopToolsBox" hidden><p>はじめての人には、道具をプレゼント！</p><div id="shopTools"></div></div>
+    <div id="shopList"></div>
+    <p id="shopEmpty">売れるものを持っていません。木をゆらしたり、地下で宝石を ほったりしてみてね。</p>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div class="modal" id="dexModal">
+  <div class="card dexcard">
+    <h2>図鑑</h2>
+    <div class="dexhead">
+      <div class="dexrank" id="dexRank">🌱 わかば</div>
+      <div class="dexmeter"><i id="dexBar"></i></div>
+      <div class="dexcount"><span id="dexCount"></span><span id="dexNext"></span></div>
+    </div>
+    <div class="dextabs" role="tablist">
+      <button type="button" id="dexTab-fish">🐟 魚 <b></b></button>
+      <button type="button" id="dexTab-bug">🐛 虫 <b></b></button>
+      <button type="button" id="dexTab-iso">🐚 磯 <b></b></button>
+      <button type="button" id="dexTab-gem">💎 宝石 <b></b></button>
+    </div>
+    <div class="dexgrid" id="dexGrid"></div>
+    <p class="dexinfo" id="dexInfo"></p>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div class="modal" id="askModal">
+  <div class="card askcard">
+    <h2>島ナビ</h2>
+    <p class="asknote" id="askNote">MOMO の頭のテレビに住んでいる 島ナビに、なんでも 聞いてみてね。</p>
+    <div class="asklog" id="askLog" aria-live="polite"></div>
+    <div class="askchips" id="askChips">
+      <button type="button">お店はどこ？</button>
+      <button type="button">宝石はどこで ほれる？</button>
+      <button type="button">魚の影って なに？</button>
+      <button type="button">ポカを かせぐには？</button>
+    </div>
+    <form class="askform" id="askForm" autocomplete="off">
+      <input id="askInput" maxlength="120" placeholder="たとえば「潮だまりは どこ？」" enterkeyhint="send">
+      <button type="submit" id="askSend">聞く</button>
+    </form>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div id="catchCard" class="catchcard" hidden>
+  <div class="cc-inner">
+    <div class="cc-new" id="ccNew" hidden>📖 図鑑に のったよ！</div>
+    <img id="ccImg" alt="" width="180" height="180">
+    <div class="cc-title" id="ccTitle"></div>
+    <div class="cc-sub" id="ccSub"></div>
+    <div class="cc-hint">タップ または E で とじる</div>
+  </div>
+</div>
+
+<div class="modal" id="plotModal">
+  <div class="card">
+    <h2 id="plotTitle">売り地</h2>
+    <p id="plotText"></p>
+    <button class="action" id="plotAction" type="button">この土地を買う</button>
     <button class="close" type="button" data-close>とじる</button>
   </div>
 </div>
@@ -414,6 +570,12 @@
       <li>川は橋をつかってわたってね。</li>
       <li>家のドアに向かって歩くと、中に入れます。</li>
       <li>ハムスターの こむぎ が島を おさんぽしています。話しかけてみてね。</li>
+      <li>わからないことは 右上の 💬（Q キー）で <b>島ナビ</b>に 聞けます。場所を聞くと 地図に しるしを つけてくれます。</li>
+      <li>ひろばの西の よろず屋で、果物・魚・虫・磯の生きもの・宝石を ポカに かえられます。つりざおと虫とりあみも もらえます。</li>
+      <li>川・池・海に 泳いでいる <b>魚の影</b>の近くへ ウキを投げると、魚が よってきます。ツンツンは まだ。ウキが しずんだ しゅんかんに E！ 影が大きいほど 大物です。岸を走ると 魚も虫も にげるので、そっと近づいてね。</li>
+      <li>砂浜の 潮だまりには ヒトデや ウニが いて、手で ひろえます。まわりには カニや ヤドカリも。</li>
+      <li>つった魚・つかまえた虫・ひろった磯の生きもの・ほった宝石は 図鑑（📖）に のります。うめるほど ランクが上がって、名前のよこの マークが かわります。</li>
+      <li>「売り地」の看板がある土地は、ポカで買えます。買うと あなたの家が建ちます（ひとり ひとつ・30日来ないと空き地にもどります）。</li>
     </ul>
     <p id="boardNow"></p>
     <button class="close" type="button" data-close>とじる</button>
@@ -452,6 +614,13 @@
         </div>
       </div>
       <button id="go" type="button">島へ行く</button>
+      <div id="joinCode">
+        <button class="linkbtn" id="joinCodeOpen" type="button">引き継ぎコードで 続きから遊ぶ</button>
+        <div id="joinCodeForm" hidden>
+          <input id="joinCodeInput" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off">
+          <button id="joinCodeGo" type="button">つかう</button>
+        </div>
+      </div>
       <p id="status"></p>
     </div>
   </div>

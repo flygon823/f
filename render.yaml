@@ -15,3 +15,9 @@ services:
       # カラーパスの値段（円）
       - key: PREMIUM_PRICE_JPY
         value: "300"
+      # 島のデータ（アカウント・ポカ・土地）を残す Postgres の接続文字列（Neon など）。Render の画面で入力する
+      - key: DATABASE_URL
+        sync: false
+      # 島ナビ（AI に島のことを聞く）の Claude API キー。Render の画面で入力する。なくても キーワードで答える
+      - key: ANTHROPIC_API_KEY
+        sync: false
