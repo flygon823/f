@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>ぽかぽか島</title>
+<meta name="description" content="みんなで入れる、のんびりした島のミニメタバース">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍃</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap">
+<style>
+  :root {
+    --cream: #fffae6;
+    --cream-2: #f6efd6;
+    --paper: #fdf8e8;
+    --ink: #725d42;
+    --ink-2: #9a8566;
+    --ink-soft: #b7a584;
+    --leaf: #5fbf5a;
+    --leaf-dark: #3f9a45;
+    --teal: #1fc3b3;
+    --sun: #f7cf3c;
+    --sun-dark: #e0aa1c;
+    --pink: #f59ab5;
+    --line: rgba(114, 93, 66, 0.16);
+    --shadow: 0 6px 0 rgba(114, 93, 66, 0.14), 0 14px 30px rgba(60, 45, 20, 0.16);
+    --round: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+    --hud-ink: #ffffff;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #8fd6f5;
+    color: var(--ink);
+    font-family: var(--round);
+    font-weight: 700;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  [hidden] { display: none !important; }
+  button { font-family: inherit; font-weight: 800; color: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+  #game { position: fixed; inset: 0; }
+  #game canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+
+  /* ---------- 頭の上：名前・ふきだし・リアクション ---------- */
+  .tagwrap { position: absolute; left: 0; top: 0; will-change: transform; }
+  .nametag {
+    position: absolute; left: 0; bottom: 0; transform: translate(-50%, 0);
+    white-space: nowrap; font-size: 12px; font-weight: 800; color: #fff;
+    padding: 2px 9px 3px; border-radius: 999px; background: rgba(90, 70, 40, 0.42);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.15); transition: opacity .25s;
+  }
+  .nametag.me { background: rgba(31, 195, 179, 0.75); }
+  .bubble {
+    position: absolute; left: 0; bottom: 8px; transform: translate(-50%, 0) scale(0.6); transform-origin: 50% 100%;
+    width: max-content; min-width: 96px; max-width: min(260px, 70vw); padding: 16px 18px 12px; border-radius: 28px / 24px;
+    background: var(--cream); color: var(--ink); font-size: 15px; line-height: 1.5; font-weight: 700;
+    box-shadow: 0 4px 0 rgba(114, 93, 66, 0.12), 0 10px 22px rgba(40, 30, 10, 0.18);
+    opacity: 0; transition: opacity .18s, transform .22s cubic-bezier(.3,1.6,.5,1);
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .bubble.on { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  .bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -9px; margin-left: -9px;
+    border: 9px solid transparent; border-bottom: 0; border-top-color: var(--cream);
+  }
+  .bubble .who {
+    position: absolute; top: -13px; left: 12px; padding: 2px 11px 3px; border-radius: 999px;
+    font-size: 12px; font-weight: 800; color: #fff; background: var(--c, var(--pink));
+    transform: rotate(-4deg); white-space: nowrap; box-shadow: 0 2px 0 rgba(0,0,0,0.08);
+  }
+  .emote {
+    position: absolute; left: 0; bottom: 6px; transform: translate(-50%, 0) scale(0); font-size: 34px;
+    filter: drop-shadow(0 3px 2px rgba(0,0,0,0.18)); transition: transform .3s cubic-bezier(.3,1.8,.5,1), opacity .3s;
+    opacity: 0;
+  }
+  .emote.on { transform: translate(-50%, -6px) scale(1); opacity: 1; }
+
+  /* ---------- HUD ---------- */
+  .hud { position: fixed; z-index: 5; pointer-events: none; }
+  .hud > * { pointer-events: auto; }
+  #clock {
+    top: max(14px, env(safe-area-inset-top)); left: 18px; color: var(--hud-ink);
+    text-shadow: 0 2px 0 rgba(60, 50, 30, 0.28), 0 0 12px rgba(40, 30, 10, 0.18);
+    pointer-events: none;
+  }
+  #clock .t { font-size: 40px; font-weight: 800; letter-spacing: 0.01em; line-height: 1; }
+  #clock .ap { font-size: 18px; margin-left: 4px; }
+  #clock .d { font-size: 15px; margin-top: 4px; opacity: 0.95; }
+  #topright { top: max(14px, env(safe-area-inset-top)); right: 14px; display: flex; gap: 8px; align-items: center; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px; border: 0;
+    background: var(--cream); color: var(--ink); font-size: 14px; box-shadow: 0 4px 0 rgba(114, 93, 66, 0.14);
+  }
+  .iconbtn { width: 38px; height: 38px; padding: 0; justify-content: center; font-size: 18px; }
+  .iconbtn.off { opacity: 0.45; }
+  #online .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--leaf); box-shadow: 0 0 0 3px rgba(95,191,90,0.25); }
+  #online.solo .dot { background: var(--ink-soft); box-shadow: none; }
+  #online.offline .dot { background: #e2574c; }
+
+  #pocket { bottom: max(18px, env(safe-area-inset-bottom)); right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  #coins { font-size: 15px; }
+  #coins b { font-size: 17px; }
+  #fruits { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 60vw; }
+  #fruits:empty { display: none; }
+  .fchip { height: 30px; padding: 0 10px 0 6px; font-size: 13px; }
+  .fchip i { width: 16px; height: 16px; border-radius: 50%; display: inline-block; box-shadow: inset -3px -3px 0 rgba(0,0,0,0.12); }
+
+  #chatbar {
+    bottom: max(18px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 8px; width: min(520px, calc(100vw - 32px));
+  }
+  #chatform {
+    flex: 1; display: flex; align-items: center; height: 46px; border-radius: 999px; background: var(--cream);
+    box-shadow: var(--shadow); padding: 0 6px 0 18px;
+  }
+  #chat {
+    flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 15px; font-weight: 700;
+    user-select: text; -webkit-user-select: text;
+  }
+  #chat::placeholder { color: var(--ink-soft); }
+  #send { height: 34px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--sun); color: #6b4f14; font-size: 14px; }
+  #emoteBtn { width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--cream); box-shadow: var(--shadow); font-size: 22px; }
+  #emotes {
+    position: absolute; bottom: 58px; right: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 10px;
+    background: var(--cream); border-radius: 22px; box-shadow: var(--shadow); opacity: 0; transform: translateY(8px) scale(.96);
+    transform-origin: 90% 100%; pointer-events: none; transition: opacity .15s, transform .2s cubic-bezier(.3,1.5,.5,1);
+  }
+  #emotes.on { opacity: 1; transform: none; pointer-events: auto; }
+  #emotes button {
+    width: 64px; height: 58px; border: 0; border-radius: 16px; background: var(--cream-2); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px; font-size: 22px;
+  }
+  #emotes button span { font-size: 10px; color: var(--ink-2); }
+  #emotes button:hover { background: #fbe7a0; }
+
+  #log {
+    bottom: max(84px, calc(env(safe-area-inset-bottom) + 70px)); left: 16px; width: min(320px, 44vw); max-height: 30vh; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; pointer-events: none;
+    mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
+  }
+  #log div {
+    align-self: flex-start; padding: 4px 11px 5px; border-radius: 14px; background: rgba(255, 250, 230, 0.86); font-size: 13px; color: var(--ink);
+    box-shadow: 0 2px 0 rgba(114, 93, 66, 0.1); max-width: 100%; word-break: break-word;
+  }
+  #log div b { margin-right: 6px; }
+  #log div.sys { background: rgba(255, 250, 230, 0.62); color: var(--ink-2); font-size: 12px; }
+
+  #prompt {
+    left: 50%; bottom: max(78px, calc(env(safe-area-inset-bottom) + 64px)); transform: translateX(-50%) scale(.9);
+    opacity: 0; transition: opacity .15s, transform .2s cubic-bezier(.3,1.6,.5,1); pointer-events: none;
+  }
+  #prompt.on { opacity: 1; transform: translateX(-50%) scale(1); }
+  #prompt kbd {
+    display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--teal); color: #fff;
+    font-family: inherit; font-size: 13px; font-weight: 800;
+  }
+
+  #toast {
+    top: 76px; left: 50%; transform: translate(-50%, -10px); opacity: 0; transition: opacity .25s, transform .3s cubic-bezier(.3,1.5,.5,1);
+    pointer-events: none; font-size: 15px; height: 42px; padding: 0 20px;
+  }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- 地図 ---------- */
+  #mapbox {
+    top: calc(max(14px, env(safe-area-inset-top)) + 72px); left: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  }
+  #map {
+    display: block; width: 150px; height: 150px; border-radius: 22px; border: 4px solid var(--cream); background: #7fd0e6;
+    box-shadow: 0 5px 0 rgba(114, 93, 66, 0.16), 0 10px 22px rgba(40, 30, 10, 0.16); cursor: pointer;
+    transition: width .25s cubic-bezier(.3,1.3,.5,1), height .25s cubic-bezier(.3,1.3,.5,1);
+  }
+  #mapbox.big #map { width: min(360px, 78vw, 62vh); height: min(360px, 78vw, 62vh); }
+  #where { height: 28px; padding: 0 12px; font-size: 12px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ---------- 住民との会話 ---------- */
+  #dialog {
+    position: fixed; z-index: 12; left: 50%; bottom: max(26px, calc(env(safe-area-inset-bottom) + 12px)); width: min(620px, calc(100vw - 32px));
+    min-height: 118px; padding: 26px 30px 24px; border-radius: 44px / 38px; background: var(--cream); color: var(--ink);
+    font-size: 18px; line-height: 1.65; font-weight: 700; box-shadow: 0 6px 0 rgba(114, 93, 66, 0.14), 0 16px 34px rgba(40, 30, 10, 0.22);
+    transform: translate(-50%, 16px) scale(.96); opacity: 0; pointer-events: none; cursor: pointer;
+    transition: opacity .2s, transform .25s cubic-bezier(.3,1.5,.5,1);
+  }
+  #dialog.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  #dialog .who {
+    position: absolute; top: -18px; left: 30px; padding: 5px 18px 6px; border-radius: 999px; background: #f7c948; color: #6b4f14;
+    font-size: 16px; transform: rotate(-4deg); box-shadow: 0 3px 0 #dba92a;
+  }
+  #dialog .next {
+    position: absolute; right: 26px; bottom: 14px; width: 0; height: 0; border: 9px solid transparent; border-bottom: 0;
+    border-top: 12px solid var(--sun-dark); animation: bob .8s ease-in-out infinite; opacity: 0;
+  }
+  #dialog.done .next { opacity: 1; }
+  @keyframes bob { 50% { transform: translateY(4px); } }
+  body.talking #chatbar, body.talking #prompt { opacity: 0; pointer-events: none; }
+  .nametag.npc { background: rgba(214, 160, 30, 0.85); }
+
+  #fade { position: fixed; inset: 0; z-index: 14; background: #1f1712; opacity: 0; pointer-events: none; transition: opacity .25s; }
+  #fade.on { opacity: 1; }
+
+  /* スマホ用 */
+  #stick, #actBtn { display: none; }
+  body.touch #stick {
+    display: block; position: fixed; left: 22px; bottom: max(84px, calc(env(safe-area-inset-bottom) + 70px)); width: 116px; height: 116px;
+    border-radius: 50%; background: rgba(255, 250, 230, 0.35); border: 3px solid rgba(255, 250, 230, 0.7); z-index: 6; touch-action: none;
+  }
+  #stick i {
+    position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
+    background: var(--cream); box-shadow: 0 4px 0 rgba(114,93,66,.18);
+  }
+  body.touch #actBtn {
+    display: grid; place-items: center; position: fixed; right: 20px; bottom: max(150px, calc(env(safe-area-inset-bottom) + 136px));
+    width: 74px; height: 74px; border-radius: 50%; border: 0; background: var(--teal); color: #fff; font-size: 26px; z-index: 6;
+    box-shadow: 0 5px 0 #149c8f, 0 10px 20px rgba(0,0,0,.18);
+  }
+  body.touch #actBtn:active { transform: translateY(3px); box-shadow: 0 2px 0 #149c8f; }
+  body.touch #prompt { bottom: max(240px, calc(env(safe-area-inset-bottom) + 226px)); left: auto; right: 10px; transform: none; }
+  body.touch #log { display: none; }
+  body.touch #pocket { bottom: auto; top: max(62px, calc(env(safe-area-inset-top) + 50px)); }
+
+  /* ---------- パネル（けいじばん・はじめに） ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
+    background: rgba(60, 90, 70, 0.28); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  .modal.on { opacity: 1; pointer-events: auto; }
+  .card {
+    position: relative; width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--paper);
+    border-radius: 32px; padding: 30px 26px 24px; box-shadow: var(--shadow);
+    transform: translateY(12px) scale(.97); transition: transform .3s cubic-bezier(.3,1.5,.5,1);
+  }
+  .modal.on .card { transform: none; }
+  .card h2 {
+    position: absolute; top: -16px; left: 22px; margin: 0; padding: 6px 18px 7px; border-radius: 999px; background: var(--sun);
+    color: #6b4f14; font-size: 17px; transform: rotate(-3deg); box-shadow: 0 3px 0 var(--sun-dark);
+  }
+  .card p, .card li { font-size: 14px; line-height: 1.75; color: var(--ink); font-weight: 700; }
+  .card ul { padding-left: 1.2em; margin: 8px 0; }
+  .card .close {
+    display: block; margin: 18px auto 0; height: 44px; padding: 0 30px; border: 0; border-radius: 999px; background: var(--teal); color: #fff;
+    font-size: 15px; box-shadow: 0 4px 0 #149c8f;
+  }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin: 8px 0; }
+  .keys kbd {
+    font-family: inherit; font-size: 12px; background: var(--cream-2); border-radius: 8px; padding: 2px 8px; box-shadow: 0 2px 0 var(--line);
+    white-space: nowrap; justify-self: start;
+  }
+  .share { display: flex; gap: 8px; margin-top: 10px; }
+  .share input {
+    flex: 1; min-width: 0; height: 38px; border-radius: 12px; border: 2px solid var(--line); background: #fff; padding: 0 10px;
+    color: var(--ink); font-size: 12px; font-weight: 700; user-select: all;
+  }
+  .share button { height: 38px; padding: 0 14px; border-radius: 12px; border: 0; background: var(--sun); color: #6b4f14; font-size: 13px; }
+
+  /* ---------- はじめの画面 ---------- */
+  #join {
+    position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; overflow: auto;
+    background:
+      radial-gradient(circle at 20% 15%, rgba(255,255,255,.55) 0 60px, transparent 61px),
+      radial-gradient(circle at 80% 85%, rgba(255,255,255,.35) 0 90px, transparent 91px),
+      repeating-linear-gradient(45deg, #9ee0c9 0 22px, #a8e6d0 22px 44px);
+    transition: opacity .6s;
+  }
+  #join.hide { opacity: 0; pointer-events: none; }
+  .passport {
+    width: min(720px, 100%); background: var(--paper); border-radius: 36px; box-shadow: var(--shadow);
+    display: grid; grid-template-columns: 250px 1fr; overflow: hidden;
+  }
+  .passport .left { background: linear-gradient(#bfe9fb, #e6f7fd 60%, #b9e28f 60%, #9fd476); position: relative; min-height: 300px; }
+  .passport .left canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .passport .right { padding: 26px 26px 22px; }
+  .logo { margin: 0 0 2px; font-size: 32px; font-weight: 800; color: var(--leaf-dark); letter-spacing: .04em; }
+  .logo span { color: var(--sun-dark); }
+  .sub { margin: 0 0 16px; font-size: 13px; color: var(--ink-2); }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  #name {
+    width: 100%; height: 46px; border-radius: 16px; border: 3px solid var(--cream-2); background: #fff; padding: 0 14px; font-size: 17px;
+    font-weight: 800; color: var(--ink); outline: none; user-select: text; -webkit-user-select: text;
+  }
+  #name:focus { border-color: var(--sun); }
+  .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+  .choices .sp {
+    height: 36px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--cream-2); color: var(--ink); font-size: 14px;
+  }
+  .choices .sp.on { background: var(--sun); color: #6b4f14; box-shadow: 0 3px 0 var(--sun-dark); }
+  .swatch { width: 30px; height: 30px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px var(--cream-2); padding: 0; }
+  .swatch.on { box-shadow: 0 0 0 3px var(--teal); }
+  .swatch { position: relative; }
+  .swatch.locked { opacity: 0.45; cursor: not-allowed; }
+  .swatch.locked::after {
+    content: "🔒"; position: absolute; right: -6px; bottom: -6px; font-size: 11px; line-height: 1;
+    background: var(--cream); border-radius: 50%; padding: 2px;
+  }
+  .plan { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--cream-2); color: var(--ink-2); font-size: 11px; }
+  #colorNote { margin: 8px 0 0; font-size: 12px; color: var(--ink-2); min-height: 1.2em; }
+  .plan.paid { background: #fbe7a0; color: #6b4f14; }
+  #passBox { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 12px 14px; border-radius: 18px; background: var(--cream-2); }
+  #buyPass {
+    height: 42px; border: 0; border-radius: 999px; background: var(--sun); color: #6b4f14; font-size: 14px; box-shadow: 0 3px 0 var(--sun-dark);
+  }
+  #buyPass:disabled { opacity: .6; }
+  .passrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+  .passrow input {
+    flex: 1; min-width: 0; height: 32px; border-radius: 10px; border: 2px solid var(--line); background: #fff; padding: 0 8px;
+    font-size: 11px; font-weight: 700; color: var(--ink); user-select: text; -webkit-user-select: text;
+  }
+  .passrow button { height: 32px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--teal); color: #fff; font-size: 12px; }
+  .passrow .linkbtn { height: auto; border: 0; background: none; padding: 0; color: var(--ink-2); font-size: 12px; text-decoration: underline; }
+  #passBox a { color: var(--ink-2); font-size: 11px; }
+  #go {
+    width: 100%; height: 54px; margin-top: 6px; border: 0; border-radius: 999px; background: var(--teal); color: #fff; font-size: 18px;
+    box-shadow: 0 5px 0 #149c8f;
+  }
+  #go:active { transform: translateY(3px); box-shadow: 0 2px 0 #149c8f; }
+  #go:disabled { opacity: .7; }
+  #status { margin: 10px 0 0; font-size: 12px; color: var(--ink-2); text-align: center; min-height: 1em; }
+
+  @media (max-width: 640px) {
+    .passport { grid-template-columns: 1fr; border-radius: 28px; }
+    .passport .left { min-height: 190px; }
+    .passport .right { padding: 20px 18px 18px; }
+    .logo { font-size: 27px; }
+    #clock { left: 14px; }
+    #mapbox { top: calc(max(14px, env(safe-area-inset-top)) + 52px); left: 12px; }
+    #map { width: 104px; height: 104px; border-radius: 18px; border-width: 3px; }
+    #where { height: 24px; font-size: 11px; max-width: 150px; }
+    #dialog { font-size: 16px; padding: 24px 22px 22px; min-height: 104px; }
+    #clock .t { font-size: 26px; }
+    #clock .ap { font-size: 13px; }
+    #clock .d { font-size: 12px; }
+    #online .lbl { display: none; }
+    #topright .iconbtn { width: 34px; height: 34px; font-size: 16px; }
+    #topright .pill { height: 34px; }
+    #topright .pill:not(.iconbtn) { padding: 0 11px; font-size: 13px; }
+    #topright { gap: 6px; }
+    #emotes button { width: 58px; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="game"></div>
+<div id="overlay"></div>
+
+<div id="clock" class="hud"><div><span class="t" id="time">--:--</span><span class="ap" id="ampm"></span></div><div class="d" id="date"></div></div>
+<div id="topright" class="hud">
+  <div class="pill" id="online"><span class="dot"></span><span id="onlineText">…</span></div>
+  <button class="pill iconbtn" id="bgmBtn" title="BGM">🎵</button>
+  <button class="pill iconbtn" id="seBtn" title="効果音">🔊</button>
+  <button class="pill iconbtn" id="helpBtn" title="あそびかた・招待">？</button>
+</div>
+<div id="mapbox" class="hud"><canvas id="map" title="地図（M キーで大きく）"></canvas><div class="pill" id="where"></div></div>
+<div id="toast" class="hud pill"></div>
+<div id="dialog" role="dialog" aria-live="polite"><span class="who" id="dialogWho"></span><span id="dialogText"></span><i class="next"></i></div>
+<div id="fade"></div>
+<div id="prompt" class="hud pill"><kbd id="promptKey">E</kbd><span id="promptText"></span></div>
+<div id="log" class="hud"></div>
+<div id="pocket" class="hud">
+  <div id="fruits"></div>
+  <div class="pill" id="coins">🪙 <b id="coinCount">0</b> ポカ</div>
+</div>
+<div id="chatbar" class="hud">
+  <form id="chatform" autocomplete="off">
+    <input id="chat" maxlength="80" placeholder="Enter でおしゃべり" enterkeyhint="send">
+    <button id="send" type="submit">はなす</button>
+  </form>
+  <button id="emoteBtn" type="button" title="リアクション">😊</button>
+  <div id="emotes"></div>
+</div>
+<div id="stick"><i></i></div>
+<button id="actBtn" type="button">A</button>
+
+<div class="modal" id="helpModal">
+  <div class="card">
+    <h2>あそびかた</h2>
+    <p>ここは、みんなで入れる小さな島。歩きまわって、おしゃべりしたり、木をゆらして果物をあつめたりできます。</p>
+    <div class="keys">
+      <kbd>WASD・矢印</kbd><span>あるく（Shift でかける）</span>
+      <kbd>クリック</kbd><span>その場所まであるく</span>
+      <kbd>E・スペース</kbd><span>木をゆらす／ひろう／はなす／家に入る</span>
+      <kbd>M</kbd><span>地図を大きくする</span>
+      <kbd>Enter</kbd><span>おしゃべり</span>
+      <kbd>1〜8</kbd><span>リアクション</span>
+      <kbd>ホイール</kbd><span>ズーム</span>
+    </div>
+    <p id="shareNote">このページのURLを友だちに送ると、同じ島で会えます。</p>
+    <div class="share"><input id="shareUrl" readonly><button id="copyBtn" type="button">コピー</button></div>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div class="modal" id="boardModal">
+  <div class="card">
+    <h2>島のけいじばん</h2>
+    <p>ようこそ、ぽかぽか島へ！</p>
+    <ul>
+      <li>実のなる木をゆらすと、果物が落ちてきます。3分ほどでまた実ります。</li>
+      <li>どの木でも、ゆらすと たまに ポカぶくろ（島のお金）が落ちてくるみたい。</li>
+      <li>空の色とBGMは、あなたの時計といっしょに変わります。</li>
+      <li>川は橋をつかってわたってね。</li>
+      <li>家のドアに向かって歩くと、中に入れます。</li>
+      <li>ハムスターの こむぎ が島を おさんぽしています。話しかけてみてね。</li>
+    </ul>
+    <p id="boardNow"></p>
+    <button class="close" type="button" data-close>とじる</button>
+  </div>
+</div>
+
+<div id="join">
+  <div class="passport">
+    <div class="left"><canvas id="preview"></canvas></div>
+    <div class="right">
+      <h1 class="logo">ぽかぽか<span>島</span></h1>
+      <p class="sub">ロボットの MOMO になって、みんなで島をおさんぽ。</p>
+      <div class="field">
+        <label for="name">なまえ</label>
+        <input id="name" maxlength="12" placeholder="なまえを入れてね" autocomplete="nickname">
+      </div>
+      <div class="field">
+        <label>MOMO の色<span class="plan" id="planBadge">無料プラン</span></label>
+        <div class="choices" id="furChoices"></div>
+        <p id="colorNote"></p>
+        <div id="passBox" hidden>
+          <button id="buyPass" type="button">🎨 カラーパスを買う</button>
+          <div class="passrow" id="restoreRow">
+            <button class="linkbtn" id="restoreOpen" type="button">復元コードをお持ちの方</button>
+          </div>
+          <div class="passrow" id="restoreForm" hidden>
+            <input id="restoreInput" placeholder="復元コード（cs_ から始まる番号）" autocomplete="off">
+            <button id="restoreGo" type="button">つかう</button>
+          </div>
+          <div class="passrow" id="ownedRow" hidden>
+            <span>復元コード（ほかの端末で使えます）</span>
+            <input id="ownedCode" readonly>
+            <button id="ownedCopy" type="button">コピー</button>
+          </div>
+          <a href="./tokushoho.html" target="_blank" rel="noopener">特定商取引法に基づく表記</a>
+        </div>
+      </div>
+      <button id="go" type="button">島へ行く</button>
+      <p id="status"></p>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
