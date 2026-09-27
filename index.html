@@ -315,8 +315,8 @@
   <p class="desc" id="cardDesc"></p>
   <div class="now"><span>いまの様子</span><p id="cardNow"></p></div>
   <dl>
-    <dt>大きさ</dt><dd id="cardSize"></dd>
-    <dt>すみか</dt><dd id="cardHabitat"></dd>
+    <dt id="cardSizeL">大きさ</dt><dd id="cardSize"></dd>
+    <dt id="cardHabL">すみか</dt><dd id="cardHabitat"></dd>
   </dl>
   <div class="card-actions">
     <button type="button" class="pov" id="cardPov"><span class="pov-eye" aria-hidden="true"></span>目線で見る</button>
@@ -4828,6 +4828,274 @@ scene.add(starfield);
   layer(4200, 1.1, [0.08, 0.3], true);      // the Milky Way's haze of faint stars
 }
 
+// Real stars and constellations among the scattered ones, placed by right ascension and
+// declination with the celestial north pole over the southern shore's pole (+y). They can
+// be clicked like the animals: a named star, or anywhere on a constellation's figure.
+const SKY_R = 180;
+function skyVec(raH, decD, out = new THREE.Vector3()) {
+  const ra = raH / 24 * TAU, dec = THREE.MathUtils.degToRad(decD);
+  return out.set(Math.cos(dec) * Math.cos(ra), Math.sin(dec), -Math.cos(dec) * Math.sin(ra));
+}
+// [key, ra (h), dec (°), magnitude, colour]
+const SKY_STARS = {
+  betelgeuse: [5.92, 7.41, 0.5, '#ffb07a'], rigel: [5.24, -8.2, 0.13, '#bcd4ff'], bellatrix: [5.42, 6.35, 1.6, '#cfe0ff'],
+  saiph: [5.8, -9.67, 2.1, '#cfe0ff'], alnitak: [5.68, -1.94, 1.8, '#d6e4ff'], alnilam: [5.6, -1.2, 1.7, '#d6e4ff'], mintaka: [5.53, -0.3, 2.2, '#d6e4ff'],
+  dubhe: [11.06, 61.75, 1.8, '#ffe2b0'], merak: [11.03, 56.38, 2.4, '#f4f6ff'], phecda: [11.9, 53.69, 2.4, '#f4f6ff'], megrez: [12.26, 57.03, 3.3, '#f4f6ff'],
+  alioth: [12.9, 55.96, 1.8, '#f4f6ff'], mizar: [13.4, 54.93, 2.2, '#f4f6ff'], alkaid: [13.79, 49.31, 1.9, '#dde8ff'],
+  polaris: [2.53, 89.26, 2.0, '#fff4d8'],
+  caph: [0.15, 59.15, 2.3, '#fff6e0'], schedar: [0.68, 56.54, 2.2, '#ffd9a8'], navi: [0.95, 60.72, 2.4, '#dde8ff'], ruchbah: [1.43, 60.24, 2.7, '#f4f6ff'], segin: [1.91, 63.67, 3.4, '#dde8ff'],
+  vega: [18.62, 38.78, 0.03, '#dfe8ff'], altair: [19.85, 8.87, 0.77, '#f4f6ff'], deneb: [20.69, 45.28, 1.25, '#f4f6ff'],
+  sadr: [20.37, 40.26, 2.2, '#fff2d8'], albireo: [19.51, 27.96, 3.1, '#ffd6a0'], gienah: [20.77, 33.97, 2.5, '#ffe6c0'], deltacyg: [19.75, 45.13, 2.9, '#f4f6ff'],
+  antares: [16.49, -26.43, 1.0, '#ff8a5c'], graffias: [16.09, -19.8, 2.6, '#dde8ff'], dschubba: [16.0, -22.62, 2.3, '#dde8ff'], pisco: [15.98, -26.11, 2.9, '#dde8ff'],
+  alniyat: [16.35, -25.59, 2.9, '#dde8ff'], paikauhale: [16.6, -28.22, 2.8, '#dde8ff'], larawag: [16.84, -34.29, 2.3, '#ffd6a0'], mu1sco: [16.86, -38.05, 3.0, '#dde8ff'],
+  zeta2sco: [16.9, -42.36, 3.6, '#ffd6a0'], etasco: [17.2, -43.24, 3.3, '#f4f6ff'], sargas: [17.62, -43.0, 1.9, '#fff2d8'], iotasco: [17.79, -40.13, 3.0, '#fff2d8'],
+  kappasco: [17.71, -39.03, 2.4, '#dde8ff'], shaula: [17.56, -37.1, 1.6, '#dde8ff'],
+  acrux: [12.44, -63.1, 0.8, '#cfe0ff'], mimosa: [12.8, -59.69, 1.25, '#cfe0ff'], gacrux: [12.52, -57.11, 1.6, '#ffb07a'], imai: [12.25, -58.75, 2.8, '#dde8ff'],
+  alcyone: [3.79, 24.1, 2.9, '#dde8ff'], atlas: [3.82, 24.05, 3.6, '#dde8ff'], electra: [3.75, 24.11, 3.7, '#dde8ff'], maia: [3.76, 24.37, 3.9, '#dde8ff'],
+  merope: [3.77, 23.95, 4.1, '#dde8ff'], taygeta: [3.75, 24.47, 4.3, '#dde8ff'], pleione: [3.82, 24.14, 5.1, '#dde8ff'],
+  sirius: [6.75, -16.72, -1.46, '#e6efff'], canopus: [6.4, -52.7, -0.74, '#fff6e6'],
+  aldebaran: [4.6, 16.51, 0.85, '#ffb27a'],
+};
+const SKY_OBJECTS = {
+  // constellations: figure lines as pairs of star keys
+  orion: {
+    type: 'con', lines: [['betelgeuse', 'bellatrix'], ['betelgeuse', 'alnitak'], ['bellatrix', 'mintaka'], ['alnitak', 'alnilam'], ['alnilam', 'mintaka'], ['alnitak', 'saiph'], ['mintaka', 'rigel']],
+    name: 'オリオン座', sci: 'Orion', kind: '星座・冬の星座',
+    desc: '狩人オリオンの姿の星座。まん中に3つ並ぶ星（三つ星）が目印で、その両側の対角に、赤いベテルギウスと青白いリゲルが輝きます。日本では「鼓星（つづみぼし）」とも呼ばれました。',
+    size: '三つ星の長さ 約3°（月6つ分）', habitat: '冬の宵、南の空（日本）',
+    status: () => '三つ星をまん中に、砂時計のような形で並んでいます。',
+  },
+  hokuto: {
+    type: 'con', lines: [['dubhe', 'merak'], ['merak', 'phecda'], ['phecda', 'megrez'], ['megrez', 'dubhe'], ['megrez', 'alioth'], ['alioth', 'mizar'], ['mizar', 'alkaid']],
+    name: '北斗七星（おおぐま座）', sci: 'Big Dipper / Ursa Major', kind: '星座・春の星座',
+    desc: 'ひしゃくの形に並ぶ7つの星。おおぐま座のしっぽと背中の部分です。ひしゃくの先の2つの星（ドゥーベとメラク）を5倍のばすと、北極星が見つかります。',
+    size: 'はしからはしまで 約25°', habitat: '一年中、北の空（春の宵に高く昇る）',
+    status: () => 'ひしゃくの先が、北極星の方向を指しています。',
+  },
+  cassiopeia: {
+    type: 'con', lines: [['caph', 'schedar'], ['schedar', 'navi'], ['navi', 'ruchbah'], ['ruchbah', 'segin']],
+    name: 'カシオペヤ座', sci: 'Cassiopeia', kind: '星座・秋の星座',
+    desc: 'W（または M）の形に並ぶ5つの星。北斗七星と北極星をはさんで反対側にあり、秋から冬は北斗七星のかわりに北極星を探す目印になります。',
+    size: 'W のはば 約13°', habitat: '一年中、北の空（秋の宵に高く昇る）',
+    status: () => 'W の形で、北極星のまわりを回っています。',
+  },
+  cygnus: {
+    type: 'con', lines: [['deneb', 'sadr'], ['sadr', 'albireo'], ['gienah', 'sadr'], ['sadr', 'deltacyg']],
+    name: 'はくちょう座', sci: 'Cygnus', kind: '星座・夏の星座',
+    desc: '天の川の上を、翼を広げて飛ぶ白鳥の星座。十字の形から「北十字」とも呼ばれます。しっぽの星がデネブ、くちばしの星アルビレオは、望遠鏡で見ると金色と青の二重星です。',
+    size: '十字の長さ 約20°', habitat: '夏から秋の宵、頭の上（日本）',
+    status: () => '天の川にそって、南へ向かって飛んでいます。',
+  },
+  scorpius: {
+    type: 'con', lines: [['graffias', 'dschubba'], ['dschubba', 'pisco'], ['dschubba', 'antares'], ['alniyat', 'antares'], ['antares', 'paikauhale'], ['paikauhale', 'larawag'], ['larawag', 'mu1sco'], ['mu1sco', 'zeta2sco'], ['zeta2sco', 'etasco'], ['etasco', 'sargas'], ['sargas', 'iotasco'], ['iotasco', 'kappasco'], ['kappasco', 'shaula']],
+    name: 'さそり座', sci: 'Scorpius', kind: '星座・夏の星座',
+    desc: 'S 字に曲がったサソリの姿の星座。心臓の位置で赤いアンタレスが輝きます。釣り針のような形から、日本の漁師さんたちは「魚釣り星」とも呼びました。',
+    size: 'はしからはしまで 約30°', habitat: '夏の宵、南の低い空（日本）',
+    status: () => 'しっぽを南の地平線近くに下ろしています。',
+  },
+  crux: {
+    type: 'con', lines: [['acrux', 'gacrux'], ['mimosa', 'imai']],
+    name: 'みなみじゅうじ座（南十字星）', sci: 'Crux', kind: '星座・南天の星座',
+    desc: '88ある星座の中でいちばん小さな星座。十字の縦の線をのばすと、天の南極の方向がわかります。日本では沖縄など南の島で、春の夜に南の低い空に見られます。',
+    size: '十字の長さ 約6°', habitat: '南半球の空（日本では沖縄・八重山の春）',
+    status: () => '十字の形で、天の南極のまわりを回っています。',
+  },
+  subaru: {
+    type: 'con', lines: [['alcyone', 'atlas'], ['alcyone', 'electra'], ['electra', 'taygeta'], ['taygeta', 'maia'], ['maia', 'alcyone'], ['alcyone', 'merope'], ['atlas', 'pleione']],
+    name: 'すばる（プレアデス星団）', sci: 'Pleiades / M45', kind: '星団・おうし座',
+    desc: '青白い星が小さく集まった星団。目のよい人で6〜7個の星が見えます。平安時代の『枕草子』にも「星はすばる」と書かれ、自動車の名前にもなっています。',
+    size: '直径 約2°（満月4つ分）・距離 約440光年', habitat: '秋から冬の宵、東から南の空（日本）',
+    status: () => '小さな星が、ひとかたまりに集まって光っています。',
+  },
+  summer: {
+    type: 'con', dash: true, lines: [['vega', 'altair'], ['altair', 'deneb'], ['deneb', 'vega']],
+    name: '夏の大三角', sci: 'Summer Triangle', kind: '星の並び・夏',
+    desc: 'こと座のベガ、わし座のアルタイル、はくちょう座のデネブを結んだ大きな三角形。ベガは織姫星、アルタイルは彦星で、そのあいだを天の川が流れています。',
+    size: '一辺 約25〜40°', habitat: '夏の宵、頭の上（日本）',
+    status: () => '天の川をはさんで、織姫星と彦星が向かい合っています。',
+  },
+  // named bright stars (the key is also its star)
+  sirius: { type: 'star', con: null, name: 'シリウス', sci: 'Sirius（おおいぬ座 α）', kind: '恒星・おおいぬ座',
+    desc: '夜空でいちばん明るい星。冬の南の空で青白くまたたきます。オリオン座の三つ星を左下にのばすと見つかります。', size: '明るさ −1.5等・距離 約8.6光年', habitat: '冬の宵、南の空（日本）',
+    status: () => '夜空でいちばん明るく、ちらちらとまたたいています。' },
+  betelgeuse: { type: 'star', con: 'orion', name: 'ベテルギウス', sci: 'Betelgeuse（オリオン座 α）', kind: '恒星・赤色超巨星',
+    desc: 'オリオンの右肩で赤く輝く、とても大きな年老いた星。太陽のかわりに置くと、木星の軌道近くまで届くほどの大きさです。いつか超新星爆発を起こすと考えられています。', size: '明るさ 0〜1等（変わる）・距離 約550光年', habitat: '冬の宵、南の空（日本）',
+    status: () => 'オレンジ色がかった赤い光で輝いています。' },
+  rigel: { type: 'star', con: 'orion', name: 'リゲル', sci: 'Rigel（オリオン座 β）', kind: '恒星・青色超巨星',
+    desc: 'オリオンの左足で青白く輝く星。太陽の何万倍もの明るさを持つ、とても熱い星です。', size: '明るさ 0.1等・距離 約860光年', habitat: '冬の宵、南の空（日本）',
+    status: () => '青白い光で、ベテルギウスと対になって輝いています。' },
+  polaris: { type: 'star', con: null, name: '北極星（ポラリス）', sci: 'Polaris（こぐま座 α）', kind: '恒星・こぐま座',
+    desc: '天の北極のすぐ近くにあるため、一晩中ほとんど動かない星。昔から方角を知る目印として、船乗りや旅人に使われてきました。', size: '明るさ 2等・距離 約430光年', habitat: '一年中、真北の空',
+    status: () => 'ほかの星がめぐる中で、ひとつだけ動かずにいます。' },
+  vega: { type: 'star', con: 'summer', name: 'ベガ（織姫星）', sci: 'Vega（こと座 α）', kind: '恒星・こと座',
+    desc: '夏の夜空で頭の上に輝く白い星。七夕の織姫星です。約1万2千年後には、北極星のかわりに天の北極の近くに来ます。', size: '明るさ 0.0等・距離 約25光年', habitat: '夏の宵、頭の上（日本）',
+    status: () => '天の川の西岸で、彦星と向かい合っています。' },
+  altair: { type: 'star', con: 'summer', name: 'アルタイル（彦星）', sci: 'Altair（わし座 α）', kind: '恒星・わし座',
+    desc: '七夕の彦星。とても速く自転しているため、少しつぶれた形をしています。', size: '明るさ 0.8等・距離 約17光年', habitat: '夏の宵、南の高い空（日本）',
+    status: () => '天の川の東岸で、織姫星と向かい合っています。' },
+  deneb: { type: 'star', con: 'cygnus', name: 'デネブ', sci: 'Deneb（はくちょう座 α）', kind: '恒星・はくちょう座',
+    desc: '白鳥のしっぽで輝く星。遠くにあるのに明るく見える、太陽の数万倍も明るい星です。', size: '明るさ 1.3等・距離 約1,400〜2,600光年', habitat: '夏から秋の宵、頭の上（日本）',
+    status: () => '白鳥のしっぽで、白く輝いています。' },
+  antares: { type: 'star', con: 'scorpius', name: 'アンタレス', sci: 'Antares（さそり座 α）', kind: '恒星・赤色超巨星',
+    desc: 'サソリの心臓で赤く輝く星。「火星（アレス）に対抗するもの」という意味の名前で、日本では「赤星」「酒酔い星」とも呼ばれました。', size: '明るさ 1.0等・距離 約550光年', habitat: '夏の宵、南の低い空（日本）',
+    status: () => '赤い光で、ゆらゆらとまたたいています。' },
+  canopus: { type: 'star', con: null, name: 'カノープス（南極老人星）', sci: 'Canopus（りゅうこつ座 α）', kind: '恒星・りゅうこつ座',
+    desc: 'シリウスの次に明るい星。日本からは南の地平線すれすれにしか昇らず、見ると長生きできるという言い伝えから「南極老人星」と呼ばれてきました。', size: '明るさ −0.7等・距離 約310光年', habitat: '冬の宵、南の地平線近く（日本の南の地方）',
+    status: () => '南の地平線近くで、ひっそり輝いています。' },
+  aldebaran: { type: 'star', con: null, name: 'アルデバラン', sci: 'Aldebaran（おうし座 α）', kind: '恒星・おうし座',
+    desc: '牡牛の赤い目にあたるオレンジ色の星。名前は「後に続くもの」という意味で、すばるの後を追うように昇ってくることから名づけられました。', size: '明るさ 0.9等・距離 約65光年', habitat: '冬の宵、南の高い空（日本）',
+    status: () => 'すばるの後を追うように、オレンジ色に輝いています。' },
+};
+// which figure each part-star belongs to, for clicks on a star without a card of its own
+const STAR_CON = {};
+for (const [k, o] of Object.entries(SKY_OBJECTS)) if (o.type === 'con') for (const [a, b] of o.lines) { STAR_CON[a] ??= k; STAR_CON[b] ??= k; }
+const skyDirs = {};
+for (const [k, [ra, dec]] of Object.entries(SKY_STARS)) skyDirs[k] = skyVec(ra, dec);
+// Each figure keeps its real shape but is drawn smaller than in the real sky, so that a
+// whole constellation fits in the ring of sky around the planet (the Pleiades, a tiny
+// cluster, a little larger so it can be clicked).
+for (const [stars, k] of [
+  [['betelgeuse', 'rigel', 'bellatrix', 'saiph', 'alnitak', 'alnilam', 'mintaka'], 0.45],
+  [['dubhe', 'merak', 'phecda', 'megrez', 'alioth', 'mizar', 'alkaid'], 0.45],
+  [['caph', 'schedar', 'navi', 'ruchbah', 'segin'], 0.55],
+  [['vega', 'altair', 'deneb', 'sadr', 'albireo', 'gienah', 'deltacyg'], 0.4],
+  [['antares', 'graffias', 'dschubba', 'pisco', 'alniyat', 'paikauhale', 'larawag', 'mu1sco', 'zeta2sco', 'etasco', 'sargas', 'iotasco', 'kappasco', 'shaula'], 0.4],
+  [['acrux', 'mimosa', 'gacrux', 'imai'], 0.9],
+  [['alcyone', 'atlas', 'electra', 'maia', 'merope', 'taygeta', 'pleione'], 2],
+]) {
+  const c = new THREE.Vector3();
+  stars.forEach(s => c.add(skyDirs[s]));
+  c.normalize();
+  stars.forEach(s => { skyDirs[s].sub(c).multiplyScalar(k).add(c).normalize(); });
+}
+// The real sky, turned so that in the overview of the southern shore Orion stands upright
+// just beside the planet. Turned that way, the Southern Cross is the figure beside the
+// planet in the Okhotsk side's overview, fitting for this little planet's southern half.
+// (a: how far to the side of the view in degrees; u: how far up; roll: the turn about Orion.)
+const skyBase = Object.fromEntries(Object.entries(skyDirs).map(([k, v]) => [k, v.clone()]));
+function skyTurn2(a, u, roll) {
+  const fwd = VIEWS.shore.dir.clone().negate(), left = UP.clone().cross(fwd).normalize(), th = THREE.MathUtils.degToRad(a);
+  const b1 = fwd.multiplyScalar(Math.cos(th)).addScaledVector(left, Math.sin(th)).addScaledVector(UP, u).normalize();
+  const a1 = ['betelgeuse', 'rigel', 'bellatrix', 'saiph', 'alnilam'].reduce((c, k) => c.add(skyBase[k]), new THREE.Vector3()).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(a1, b1);
+  q.premultiply(new THREE.Quaternion().setFromAxisAngle(b1, roll));
+  return new THREE.Matrix4().makeRotationFromQuaternion(q);
+}
+{
+  const Q = skyTurn2(18, -0.06, THREE.MathUtils.degToRad(110));
+  for (const [k, v] of Object.entries(skyDirs)) v.copy(skyBase[k]).applyMatrix4(Q).normalize();
+}
+const skyGroupStars = new THREE.Group();
+starfield.add(skyGroupStars);
+{
+  // the named stars, sized by how bright they are
+  const keys = Object.keys(SKY_STARS), pos = new Float32Array(keys.length * 3), col = new Float32Array(keys.length * 3);
+  const layers = [[-2, 0.9, 5.2], [0.9, 1.9, 3.8], [1.9, 3.2, 2.8], [3.2, 9, 2]];
+  for (const [lo, hi, size] of layers) {
+    const ks = keys.filter(k => SKY_STARS[k][2] >= lo && SKY_STARS[k][2] < hi);
+    if (!ks.length) continue;
+    const p = new Float32Array(ks.length * 3), c = new Float32Array(ks.length * 3), cc = new THREE.Color();
+    ks.forEach((k, i) => { const v = skyDirs[k]; p.set([v.x * SKY_R, v.y * SKY_R, v.z * SKY_R], i * 3); cc.set(SKY_STARS[k][3]); c.set([cc.r, cc.g, cc.b], i * 3); });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    const pts = new THREE.Points(g, new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    pts.renderOrder = -1;
+    skyGroupStars.add(pts);
+  }
+}
+// faint figure lines for each constellation; the chosen one lights up
+const conLines = {};
+for (const [k, o] of Object.entries(SKY_OBJECTS)) {
+  if (o.type !== 'con') continue;
+  const p = [];
+  for (const [a, b] of o.lines) {
+    const va = skyDirs[a], vb = skyDirs[b];
+    // stop a little short of each star so the line does not run over it
+    const A = va.clone().lerp(vb, 0.06).normalize().multiplyScalar(SKY_R * 0.995), B = va.clone().lerp(vb, 0.94).normalize().multiplyScalar(SKY_R * 0.995);
+    p.push(A.x, A.y, A.z, B.x, B.y, B.z);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  const mat = o.dash ? new THREE.LineDashedMaterial({ color: '#e8d7a8', dashSize: 2, gapSize: 2, transparent: true, depthWrite: false })
+    : new THREE.LineBasicMaterial({ color: '#a9c4e8', transparent: true, depthWrite: false });
+  const l = new THREE.LineSegments(g, mat);
+  if (o.dash) l.computeLineDistances();
+  l.renderOrder = -1;
+  skyGroupStars.add(l);
+  conLines[k] = l;
+}
+const skyMark = new THREE.Sprite(new THREE.SpriteMaterial({ map: (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 3; g.beginPath(); g.arc(32, 32, 26, 0, TAU); g.stroke();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})(), transparent: true, depthWrite: false, sizeAttenuation: false }));
+skyMark.scale.setScalar(0.05); skyMark.visible = false; skyMark.renderOrder = -1;
+skyGroupStars.add(skyMark);
+let skySel = null, starAlpha = 1;
+function updateSkyLines(t) {
+  for (const [k, l] of Object.entries(conLines)) {
+    const on = skySel && (skySel === k || SKY_OBJECTS[skySel].con === k);
+    l.material.opacity = starAlpha * (on ? 0.75 + Math.sin(t * 2.5) * 0.15 : 0.16);
+  }
+  if (skyMark.visible) skyMark.material.opacity = starAlpha * (0.6 + Math.sin(t * 3) * 0.3);
+}
+// clicks and hovers: the nearest named star within a few pixels, or a figure line
+const skyP = new THREE.Vector3(), skyQ = new THREE.Vector3();
+function pickSky(e) {
+  if (!starfield.visible || starAlpha < 0.35 || pov) return null;
+  const r = renderer.domElement.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const toPx = (v, out) => {
+    out.copy(v).multiplyScalar(SKY_R).add(starfield.position).project(camera);
+    if (out.z > 1) return false;
+    out.set((out.x + 1) / 2 * r.width, (1 - out.y) / 2 * r.height, 0);
+    return true;
+  };
+  // stars hidden behind the planet cannot be clicked
+  const behind = (v) => { raycaster.set(camera.position, v); const d = raycaster.ray.distanceSqToPoint(PLANET_C); return d < (PR + 1) * (PR + 1) && v.dot(PLANET_C.clone().sub(camera.position)) > 0; };
+  let best = null, bestD = 14;
+  for (const [k, v] of Object.entries(skyDirs)) {
+    if (!toPx(v, skyP) || behind(v)) continue;
+    const d = Math.hypot(skyP.x - mx, skyP.y - my);
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  if (best) return { key: SKY_OBJECTS[best]?.type === 'star' ? best : STAR_CON[best] || null, star: best };
+  bestD = 7;
+  for (const [k, o] of Object.entries(SKY_OBJECTS)) {
+    if (o.type !== 'con') continue;
+    for (const [a, b] of o.lines) {
+      if (!toPx(skyDirs[a], skyP) || !toPx(skyDirs[b], skyQ) || behind(skyDirs[a])) continue;
+      const vx = skyQ.x - skyP.x, vy = skyQ.y - skyP.y, L2 = vx * vx + vy * vy || 1;
+      const u = clamp(((mx - skyP.x) * vx + (my - skyP.y) * vy) / L2, 0, 1);
+      const d = Math.hypot(skyP.x + vx * u - mx, skyP.y + vy * u - my);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+  }
+  return best ? { key: best, star: null } : null;
+}
+function selectSky(hit) {
+  if (!hit || !hit.key) return;
+  if (sel) deselect();
+  const o = SKY_OBJECTS[hit.key];
+  skySel = hit.key;
+  $('cardKind').textContent = o.kind;
+  $('cardName').textContent = o.name;
+  $('cardSci').textContent = o.sci;
+  $('cardDesc').textContent = o.desc;
+  $('cardSizeL').textContent = o.type === 'star' ? '明るさ' : '大きさ';
+  $('cardSize').textContent = o.size;
+  $('cardHabL').textContent = '見ごろ';
+  $('cardHabitat').textContent = o.habitat;
+  $('cardNow').textContent = o.status();
+  $('cardPov').hidden = true; $('cardBuy').hidden = true;
+  ui.card.hidden = false;
+  document.body.classList.add('has-card');
+  const markAt = hit.star || (o.type === 'star' ? hit.key : null);
+  skyMark.visible = !!markAt;
+  if (markAt) skyMark.position.copy(skyDirs[markAt]).multiplyScalar(SKY_R * 0.99);
+}
+function clearSky() { skySel = null; skyMark.visible = false; }
+
 function glowTex(stops) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -4933,7 +5201,9 @@ function updateDay(dt) {
   }
   const starA = 1 - inAir * smooth(-0.12, 0.15, e);
   starfield.visible = starA > 0.01;
-  starfield.children.forEach(p => { p.material.opacity = starA; });
+  starfield.children.forEach(p => { if (p.material) p.material.opacity = starA; });
+  skyGroupStars.children.forEach(p => { if (p.isPoints) p.material.opacity = starA; });
+  starAlpha = starA;
   sunGlow.material.opacity = 1 - inAir * 0.5;
   document.body.classList.toggle('dusk', bright < (document.body.classList.contains('dusk') ? 0.55 : 0.45));
   dayUiTimer -= dt;
@@ -5238,6 +5508,8 @@ function select(ind, fly) {
   selDir.set(0, 0, 0);
   sel = ind;
   const sp = SPECIES[ind.species];
+  clearSky();
+  $('cardSizeL').textContent = '大きさ'; $('cardHabL').textContent = 'すみか';
   $('cardKind').textContent = sp.kind + (ind.variantLabel ? `・${ind.variantLabel}` : '');
   $('cardName').textContent = sp.name;
   $('cardSci').textContent = sp.sci;
@@ -5278,6 +5550,7 @@ function deselect(back = false) {
   }
   homePose = null;
   sel = null;
+  clearSky();
   ui.card.hidden = true;
   document.body.classList.remove('has-card');
   ring.visible = false;
@@ -5323,16 +5596,20 @@ canvas.addEventListener('pointerup', (e) => {
   down = null;
   if (moved > 6 || dt > 600) return;
   const ind = pick(e, true);
-  if (ind) { ind.react = 2.4; select(ind, true); }
+  if (ind) { ind.react = 2.4; select(ind, true); return; }
+  // nothing alive under the pointer: perhaps a star or a constellation
+  const sky = pickSky(e);
+  if (sky && sky.key) selectSky(sky);
 });
 let hoverFrame = 0;
 canvas.addEventListener('pointermove', (e) => {
   if (pov || e.pointerType !== 'mouse' || e.buttons) { ui.tip.hidden = true; return; }
   if (++hoverFrame % 2) return;
-  const ind = pick(e, false);
-  stage.classList.toggle('hovering', !!ind);
-  if (ind) {
-    ui.tip.textContent = SPECIES[ind.species].name;
+  const ind = pick(e, false), sky = ind ? null : pickSky(e);
+  const name = ind ? SPECIES[ind.species].name : sky && sky.key ? SKY_OBJECTS[sky.key].name : null;
+  stage.classList.toggle('hovering', !!name);
+  if (name) {
+    ui.tip.textContent = name;
     ui.tip.style.left = e.clientX + 'px';
     ui.tip.style.top = e.clientY + 'px';
     ui.tip.hidden = false;
@@ -5485,6 +5762,7 @@ function frame() {
   poolDiscs.forEach((d, i) => { d.visible = tideY < POOLS[i].level - 0.005; });
   waterNormal.offset.set(waterPhase * 0.012, waterPhase * 0.008);
   updateDay(dt);
+  updateSkyLines(t);
   updateSeasons(dt);
 
   // creatures
@@ -5625,6 +5903,19 @@ window.__tidal = {
   goView, flip: () => { const o = sideOverview(side === 'shore' ? 'ice' : 'shore'); deselect(); flyTo(o.pos, o.target, 2, o.up); }, pov: (k) => enterPov(inds.find(i => i.species === k && !i.hidden)), exitPov,
   season(n) { yearT = SEASON_MID[n] / 12; seasonAnim = null; },
   get side() { return side; },
+  sky: (k, star) => selectSky({ key: k, star: star || null }), get skySel() { return skySel; }, SKY_OBJECTS,
+  skyPx(k) { const r = renderer.domElement.getBoundingClientRect(), v = skyDirs[k].clone().multiplyScalar(SKY_R).add(starfield.position).project(camera); return v.z > 1 ? null : [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; },
+  skyKeys: () => Object.keys(skyDirs),
+  skyScore(a, b, u, w, h, roll) {
+    const Q = skyTurn2(a, u, roll), cam = camera.clone(), out = [];
+    cam.aspect = w / h; cam.clearViewOffset(); cam.updateProjectionMatrix();
+    for (const [name, ks] of [['shore', Object.keys(skyBase)], ['ice', Object.keys(skyBase)]]) {
+      const pose = sideOverview(name);
+      cam.position.copy(pose.pos); cam.up.copy(pose.up); cam.lookAt(pose.target); cam.updateMatrixWorld();
+      out.push(Object.fromEntries(ks.map(k => [k, (() => { const v = skyBase[k].clone().applyMatrix4(Q).multiplyScalar(SKY_R).add(cam.position).project(cam); return v.z > 1 ? null : [(v.x + 1) / 2 * w, (1 - v.y) / 2 * h]; })()])));
+    }
+    return out;
+  },
   noPov: (i) => NO_POV.has(i.species) || !!i.staticPos,
   get rareNow() { return rareNow; },
   get wxNow() { return wxNow; },
