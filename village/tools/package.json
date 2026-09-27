@@ -1,0 +1,16 @@
+{
+  "name": "pokapoka-tools",
+  "private": true,
+  "type": "module",
+  "description": "開発用の道具（島のサーバーには いらない）。Meshy などの .glb を 島で使える大きさに かるくする。",
+  "scripts": {
+    "prep": "node prep-model.mjs"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "meshoptimizer": "^1.3.0",
+    "sharp": "^0.35.4"
+  }
+}

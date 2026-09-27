@@ -5,8 +5,17 @@ import {
   islandSDF, riverDist, pondDist, groundHeight, standHeight, walkable, onBridge,
   HOUSES, PATHS, BRIDGES, PLAZA, POND, PLACE, FRUITS, TOWN_TREE, BOARD, LAMPS, SPAWN, pathDist,
   INDOOR_X, ROOM, INTERIORS, FURNITURE, interiorAt, doorOf, roomEntry, atRoomExit, seatsNear, standSpot,
+  UNDER_X, TUNNEL_W, UNDER_SPOTS, UNDER_NODES, UNDER_EDGES, UNDER_ROOMS, CHEST, tunnelDist, surfaceExit, underEntry,
+  GEM_KINDS, GEM_SPOTS, gemPlan, gemDay, PICKAXE_SPOT,
+  PLOTS, PLOT_SIZE, PLOT_PRICE, PLOT_REFUND, setPlotOwned, plotOwned, inPlot, SHOP, SELL_PRICES,
+  FISH, BUGS, BUG_SPOTS, WHERE_NAMES, RANKS, rankOf, dexCount, DEX_TOTAL, waterAt, inHours,
+  ISO, TIDEPOOLS, critterCat, critterInfo, FISH_SPOTS, shadowWander,
 } from './world.js';
 import { RESIDENT, residentPose, residentLines } from './resident.js';
+import { NPCS } from './npcs.js';
+import { loadModel } from './models.js';
+import { makeCreature } from './creatures.js';
+import { PLACES, GUIDE_SYSTEM, guideUser, parseAnswer, offlineAnswer } from './guide.js';
 import { CURVE, curveY, curvify, toon, basic, blob, GEO, mesh, GRADIENT } from './gfx.js';
 import { makeVillager, MOMO_ACCENT } from './villager.js';
 import { Sound } from './audio.js';
@@ -409,7 +418,10 @@ function makeRoof(w, h, d, color) {
 }
 
 function buildHouses() {
-  for (const h of HOUSES) {
+  for (const h of HOUSES) scene.add(makeHouse(h));
+}
+function makeHouse(h) {
+  {
     const g = new THREE.Group();
     g.position.set(h.x, 0, h.z);
     g.add(mesh(GEO.box, toon('#cfc3a6'), 0, 0.12, 0, h.w + 0.5, 0.24, h.d + 0.5));
@@ -446,7 +458,7 @@ function buildHouses() {
     mail.add(mesh(GEO.box, toon('#8a6040'), 0, 0.45, 0, 0.1, 0.9, 0.1));
     mail.add(mesh(GEO.box, toon(h.roof), 0, 1.0, 0, 0.36, 0.3, 0.5));
     g.add(mail);
-    scene.add(g);
+    return g;
   }
 }
 
@@ -516,6 +528,24 @@ function buildRocks() {
     const b = blob(2.2 * r.s);
     b.position.set(r.x, groundHeight(r.x, r.z) + 0.02, r.z);
     scene.add(b);
+  }
+  // 砂浜の潮だまり：岩で かこまれた小さな水たまり（磯の生きものが いる）
+  const poolGeo = new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2);
+  const poolMat = toon('#7fd0d3', { transparent: true, opacity: 0.85 });
+  const edgeMat = toon('#e6d7b0');
+  const rnd = mulberry32(777);
+  for (const p of TIDEPOOLS) {
+    const y = groundHeight(p.x, p.z);
+    const edge = mesh(poolGeo, edgeMat, p.x, y + 0.02, p.z, 1.12, 1, 0.95);
+    scene.add(edge);
+    scene.add(mesh(poolGeo, poolMat, p.x, y + 0.035, p.z, 0.95, 1, 0.8));
+    for (let k = 0; k < 7; k++) {
+      const a = (k / 7) * Math.PI * 2 + rnd() * 0.5, rr = 1.15 + rnd() * 0.2, sc = 0.18 + rnd() * 0.2;
+      const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr * 0.85;
+      const m = mesh(geo, toon(k % 2 ? '#8f8a80' : '#7b776e'), x, groundHeight(x, z) + sc * 0.4, z, sc, sc * 0.7, sc * 0.9);
+      m.rotation.y = rnd() * 6;
+      scene.add(m);
+    }
   }
 }
 
@@ -729,6 +759,14 @@ function buildInteriors() {
     g.add(mesh(GEO.cyl, toon(th.rug), 0.6, 0.02, 0.6, 2.2, 0.04, 1.6));
     g.add(mesh(GEO.cyl, toon('#ffffff', { transparent: true, opacity: 0.35 }), 0.6, 0.045, 0.6, 1.7, 0.02, 1.2));
     g.add(mesh(GEO.box, toon('#b0763f'), 0, 0.02, D / 2 - 0.35, 1.7, 0.04, 0.6));
+    const hatchSpot = UNDER_SPOTS.find((sp) => sp.kind === 'hatch' && sp.room === r.i);
+    if (hatchSpot) {
+      // 床の扉（地下通路への入り口）
+      const hx = hatchSpot.hatch.x, hz = hatchSpot.hatch.z;
+      g.add(mesh(GEO.box, toon('#6d4a2b'), hx, 0.02, hz, 1.25, 0.04, 1.25));
+      for (let k = -1; k <= 1; k++) g.add(mesh(GEO.box, toon('#9c6b3e'), hx + k * 0.37, 0.05, hz, 0.33, 0.04, 1.1));
+      g.add(mesh(new THREE.TorusGeometry(0.12, 0.025, 6, 14).rotateX(Math.PI / 2), toon('#d9b24a'), hx, 0.08, hz + 0.3));
+    }
     for (const [kind, fx, fz] of FURNITURE) {
       const f = buildFurniture(kind, th);
       f.position.set(fx, 0, fz);
@@ -737,6 +775,1190 @@ function buildInteriors() {
     }
     scene.add(g);
   }
+}
+
+// =====================================================================
+// 地下通路
+// =====================================================================
+function glowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.35)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const GLOW_TEX = glowTexture();
+function glow(color, size, opacity = 0.8) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sp.scale.setScalar(size);
+  return sp;
+}
+const chestLid = { mesh: null, open: 0, target: 0 };
+const shafts = []; // はしごの上からさす光。MOMO より手前（カメラ側）にあるときはうすくする
+const gemObjs = [];
+const gemMinedUntil = new Map(); // spot -> この端末の時計での時刻（ms）
+let hasPickaxe = store.get('pickaxe', false);
+let pickaxeOnRack = null;
+// 今日の宝石を岩に出す（掘られたばかりの岩は出さない）
+function refreshGems() {
+  const day = gemDay(), now = Date.now();
+  gemObjs.forEach((o, i) => {
+    const plan = gemPlan(i, day);
+    if (o.kind !== plan.kind) {
+      const c = GEM_KINDS.find((k) => k.key === plan.kind).color;
+      o.mat.color.set(c); o.mat.emissive.set(c); o.glowMat.color.set(c);
+      o.kind = plan.kind;
+    }
+    o.visible = plan.active && !((gemMinedUntil.get(i) || 0) > now);
+    o.crystals.visible = o.visible;
+  });
+}
+// 火花・きらきら
+const sparks = [];
+const SPARK_GEO = new THREE.SphereGeometry(0.05, 6, 4);
+function spawnSparks(x, y, z, color, n = 8, speed = 3) {
+  for (let k = 0; k < n; k++) {
+    const m = new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({ color, transparent: true }));
+    m.position.set(x, y, z);
+    const a = Math.random() * Math.PI * 2, up = 0.5 + Math.random();
+    sparks.push({ m, vx: Math.cos(a) * speed * Math.random(), vy: up * speed, vz: Math.sin(a) * speed * Math.random(), life: 0.5 + Math.random() * 0.3, max: 0.8 });
+    scene.add(m);
+  }
+}
+function updateSparks(dt) {
+  for (let k = sparks.length - 1; k >= 0; k--) {
+    const sp = sparks[k];
+    sp.life -= dt;
+    if (sp.life <= 0) { scene.remove(sp.m); sp.m.material.dispose(); sparks.splice(k, 1); continue; }
+    sp.vy -= 9 * dt;
+    sp.m.position.x += sp.vx * dt; sp.m.position.y += sp.vy * dt; sp.m.position.z += sp.vz * dt;
+    sp.m.material.opacity = sp.life / sp.max;
+  }
+}
+function gemWorldPos(i) { const sp = GEM_SPOTS[i]; return { x: UNDER_X + sp.x, z: sp.z }; }
+let swingCooldown = 0;
+function mineGem(i) {
+  if (!hasPickaxe) { toast('ピッケルが必要みたい。古い井戸の下に あったような…'); sound.click(); return; }
+  if (performance.now() < swingCooldown) return;
+  swingCooldown = performance.now() + 480;
+  const g = gemWorldPos(i);
+  me.r = Math.atan2(g.x - me.x, g.z - me.z);
+  me.v.swing();
+  setTimeout(() => { sound.clink(); spawnSparks(g.x, 0.7, g.z + 0.3, '#ffe9a8', 7); }, 230);
+  net.send({ t: 'hit', i });
+}
+function buildUnderground() {
+  const g = new THREE.Group();
+  g.position.set(UNDER_X, 0, 0);
+  scene.add(g);
+  const X0 = -42, X1 = 44, Z0 = -42, Z1 = 46;
+  // 床：通路は石だたみ、それ以外は暗い土
+  const S = 1024, cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const cx = cv.getContext('2d');
+  const img = cx.createImageData(S, S);
+  const rnd = mulberry32(21);
+  for (let py = 0; py < S; py++) {
+    const z = Z0 + ((py + 0.5) / S) * (Z1 - Z0);
+    for (let px = 0; px < S; px++) {
+      const x = X0 + ((px + 0.5) / S) * (X1 - X0);
+      const d = tunnelDist(x, z), n = rnd();
+      let c;
+      if (d < 0) {
+        const cell = ((Math.floor(x * 1.1) + Math.floor(z * 1.1)) & 1) ? 0.95 : 1;
+        const edge = smoothstep(-0.9, 0, d);
+        c = [118 * cell - edge * 38 + n * 14, 104 * cell - edge * 36 + n * 12, 92 * cell - edge * 34 + n * 10];
+      } else c = [32 + n * 8, 26 + n * 6, 22 + n * 6];
+      const o = (py * S + px) * 4;
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, Z1 - Z0).rotateX(-Math.PI / 2), curvify(new THREE.MeshLambertMaterial({ map: tex })));
+  floor.position.set((X0 + X1) / 2, 0, (Z0 + Z1) / 2);
+  g.add(floor);
+
+  // 岩の壁：通路と部屋のふちに岩をならべる
+  const rocks = [];
+  const addRock = (x, z) => { if (tunnelDist(x, z) > 0.25 && tunnelDist(x, z) < 1.6) rocks.push([x, z]); };
+  for (const [a, b] of UNDER_EDGES) {
+    const [ax, az] = UNDER_NODES[a], [bx, bz] = UNDER_NODES[b];
+    const len = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
+    for (let t = 0; t < len; t += 1.25) {
+      for (const side of [-1, 1]) {
+        const off = TUNNEL_W + 0.75 + (rnd() - 0.5) * 0.4;
+        addRock(ax + ux * t - uz * off * side, az + uz * t + ux * off * side);
+      }
+    }
+  }
+  for (const [k, r] of Object.entries(UNDER_ROOMS)) {
+    const [nx, nz] = UNDER_NODES[k];
+    const n = Math.ceil((2 * Math.PI * (r + 0.8)) / 1.2);
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; addRock(nx + Math.cos(a) * (r + 0.8), nz + Math.sin(a) * (r + 0.8)); }
+  }
+  const rockMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), toon('#ffffff'), rocks.length);
+  const dummy = new THREE.Object3D(), col = new THREE.Color();
+  const rockColors = ['#6d6258', '#5f564e', '#776a5c', '#5a5360'];
+  rocks.forEach(([x, z], i) => {
+    // カメラ側（通路より手前）の岩は低くして、通路が見えるようにする
+    const near = tunnelDist(x, z - 1.3) < 0 || tunnelDist(x, z - 2.2) < 0;
+    const sz = near ? 0.55 + rnd() * 0.25 : 0.7 + rnd() * 0.35;
+    dummy.position.set(x, near ? 0.05 : 0.45 + rnd() * 0.3, z);
+    dummy.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+    dummy.scale.set(sz, near ? 0.35 + rnd() * 0.25 : 1.1 + rnd() * 0.9, sz);
+    dummy.updateMatrix();
+    rockMesh.setMatrixAt(i, dummy.matrix);
+    rockMesh.setColorAt(i, col.set(rockColors[i % rockColors.length]));
+  });
+  rockMesh.frustumCulled = false;
+  g.add(rockMesh);
+
+  // 坑道の木の柱と、ランタン
+  const wood = toon('#8a6038'), woodDark = toon('#6d4a2b');
+  let beamN = 0;
+  for (const [a, b] of UNDER_EDGES) {
+    const [ax, az] = UNDER_NODES[a], [bx, bz] = UNDER_NODES[b];
+    const len = Math.hypot(bx - ax, bz - az);
+    const ang = Math.atan2(bx - ax, bz - az);
+    for (let t = 5; t < len - 3; t += 7) {
+      const x = ax + (bx - ax) * (t / len), z = az + (bz - az) * (t / len);
+      const beam = new THREE.Group();
+      beam.position.set(x, 0, z);
+      beam.rotation.y = ang;
+      for (const sx of [-1, 1]) beam.add(mesh(GEO.box, wood, sx * (TUNNEL_W - 0.1), 1.1, 0, 0.22, 2.2, 0.22));
+      beam.add(mesh(GEO.box, woodDark, 0, 2.25, 0, TUNNEL_W * 2 + 0.3, 0.22, 0.26));
+      if (beamN++ % 2 === 0) {
+        beam.add(mesh(GEO.cyl, woodDark, 0.5, 2.0, 0, 0.015, 0.3, 0.015));
+        beam.add(mesh(GEO.sphereLo, basic('#ffd27a'), 0.5, 1.8, 0, 0.12, 0.15, 0.12));
+        const gl = glow('#ffb347', 2.6, 0.7);
+        gl.position.set(0.5, 1.8, 0);
+        beam.add(gl);
+      }
+      g.add(beam);
+    }
+  }
+  // 光る水晶
+  const crystalColors = ['#8fe3ff', '#c7a6ff', '#9ff0da'];
+  const crystal = (x, z, k) => {
+    const cg = new THREE.Group();
+    cg.position.set(x, 0, z);
+    const c = crystalColors[k % crystalColors.length];
+    for (let i = 0; i < 3; i++) {
+      const m = mesh(new THREE.ConeGeometry(0.16, 0.9, 6), basic(c), (i - 1) * 0.18, 0.4, (i % 2) * 0.12, 1, 0.7 + i * 0.3, 1);
+      m.rotation.z = (i - 1) * 0.35;
+      cg.add(m);
+    }
+    const gl = glow(c, 2.2, 0.55);
+    gl.position.y = 0.6;
+    cg.add(gl);
+    g.add(cg);
+  };
+  let ck = 0;
+  for (const [k, r] of Object.entries(UNDER_ROOMS)) {
+    const [nx, nz] = UNDER_NODES[k];
+    for (const a of [0.8, 2.6, 4.2]) {
+      const x = nx + Math.cos(a + ck) * (r - 0.35), z = nz + Math.sin(a + ck) * (r - 0.35);
+      if (tunnelDist(x, z) > -0.2 && tunnelDist(x, z) < 0.6) crystal(x, z, ck);
+      ck++;
+    }
+  }
+  // はしごと、上からさしこむ光
+  for (const sp of UNDER_SPOTS) {
+    const lg = new THREE.Group();
+    lg.position.set(sp.x, 0, sp.z);
+    for (const sx of [-1, 1]) lg.add(mesh(GEO.box, wood, sx * 0.32, 2.2, 0, 0.09, 4.4, 0.09));
+    for (let y = 0.35; y < 4.3; y += 0.45) lg.add(mesh(GEO.box, woodDark, 0, y, 0, 0.64, 0.06, 0.07));
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.85, 1.2, 4.6, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: sp.kind === 'hatch' ? '#ffd9a0' : '#fff6d6', transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
+    );
+    shaft.position.y = 2.3;
+    lg.add(shaft);
+    shafts.push({ mat: shaft.material, z: sp.z });
+    lg.add(mesh(GEO.cyl, basic('#f3e2b8'), 0, 0.01, 0, 1.1, 0.01, 1.1));
+    g.add(lg);
+  }
+  // 宝石の岩
+  GEM_SPOTS.forEach((sp, i) => {
+    const gg = new THREE.Group();
+    gg.position.set(sp.x, 0, sp.z);
+    gg.rotation.y = sp.face;
+    gg.add(mesh(GEO.blobby, toon('#4d4552'), 0, 0.45, -0.15, 0.62, 0.7, 0.5));
+    const crystals = new THREE.Group();
+    const mat = curvify(new THREE.MeshToonMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.45, gradientMap: GRADIENT }));
+    const oct = new THREE.OctahedronGeometry(0.15, 0);
+    [[-0.22, 0.55, 0.28, 0.5, 1], [0.05, 0.8, 0.3, -0.3, 1.25], [0.25, 0.45, 0.3, -0.7, 0.9], [-0.05, 0.3, 0.38, 0.9, 0.8]].forEach(([x, y, z, rz, k]) => {
+      const c = new THREE.Mesh(oct, mat);
+      c.position.set(x, y, z);
+      c.scale.set(k, k * 1.7, k);
+      c.rotation.set(0.5, 0, rz);
+      crystals.add(c);
+    });
+    const gl = glow('#ffffff', 1.8, 0.5);
+    gl.position.set(0, 0.6, 0.35);
+    crystals.add(gl);
+    gg.add(crystals);
+    g.add(gg);
+    gemObjs.push({ sp, crystals, mat, glowMat: gl.material, kind: null, visible: false });
+  });
+  // 古い井戸の下の部屋に立てかけてあるピッケル
+  const rack = new THREE.Group();
+  rack.position.set(PICKAXE_SPOT.x, 0, PICKAXE_SPOT.z);
+  rack.add(mesh(GEO.box, toon('#7a5230'), 0, 0.5, -0.1, 0.5, 1.0, 0.08));
+  rack.add(mesh(GEO.box, toon('#f3e2b8'), 0, 0.72, -0.05, 0.36, 0.2, 0.02));
+  const rackPick = new THREE.Group();
+  rackPick.position.set(0, 0.05, 0.08);
+  rackPick.rotation.set(-0.25, 0, 0.25);
+  rackPick.add(mesh(GEO.cyl, toon('#9c6b3e'), 0, 0.42, 0, 0.035, 0.84, 0.035));
+  rackPick.add(mesh(GEO.box, toon('#8d96a3'), 0, 0.84, 0, 0.42, 0.08, 0.1));
+  for (const sx of [-1, 1]) {
+    const tip = mesh(GEO.cone, toon('#b8c0cb'), sx * 0.3, 0.8, 0, 0.055, 0.22, 0.055);
+    tip.rotation.z = sx > 0 ? -1.9 : 1.9;
+    rackPick.add(tip);
+  }
+  rack.add(rackPick);
+  const rg = glow('#fff1b0', 1.6, 0.35);
+  rg.position.y = 0.6;
+  rackPick.add(rg);
+  g.add(rack);
+  pickaxeOnRack = rackPick;
+  rackPick.visible = !hasPickaxe;
+
+  // 宝箱の部屋
+  const chest = new THREE.Group();
+  chest.position.set(CHEST.x, 0, CHEST.z);
+  chest.add(mesh(GEO.box, toon('#a0662f'), 0, 0.35, 0, 1.3, 0.7, 0.8));
+  chest.add(mesh(GEO.box, toon('#e4b43c'), 0, 0.35, 0.41, 1.34, 0.12, 0.02));
+  const lid = new THREE.Group();
+  lid.position.set(0, 0.7, -0.4);
+  lid.add(mesh(GEO.box, toon('#b5773a'), 0, 0.18, 0.4, 1.34, 0.36, 0.84));
+  lid.add(mesh(GEO.box, toon('#e4b43c'), 0, 0.18, 0.83, 0.2, 0.28, 0.04));
+  chest.add(lid);
+  chest.add(mesh(GEO.sphereLo, basic('#ffe27a'), 0, 0.72, 0, 0.5, 0.12, 0.3));
+  const cg = glow('#ffd35a', 3.2, 0.45);
+  cg.position.y = 0.9;
+  chest.add(cg);
+  chest.add(blob(2));
+  g.add(chest);
+  chestLid.mesh = lid;
+}
+
+// 地上の入り口（井戸・ほらあな）
+function buildEntrances() {
+  for (const sp of UNDER_SPOTS) {
+    if (sp.kind === 'hatch') continue;
+    const g = new THREE.Group();
+    g.position.set(sp.x, groundHeight(sp.x, sp.z), sp.z);
+    if (sp.kind === 'well') {
+      const stone = toon('#b8b0a2');
+      g.add(mesh(new THREE.CylinderGeometry(1.0, 1.08, 0.8, 22, 1, true), toon('#b8b0a2', { side: THREE.DoubleSide }), 0, 0.4, 0));
+      g.add(mesh(new THREE.TorusGeometry(1.0, 0.12, 8, 24).rotateX(Math.PI / 2), stone, 0, 0.8, 0));
+      g.add(mesh(GEO.cyl, basic('#121016'), 0, 0.3, 0, 0.92, 0.02, 0.92));
+      for (const sx of [-1, 1]) g.add(mesh(GEO.box, toon('#8a5a32'), sx * 1.0, 1.25, 0, 0.14, 2.1, 0.14));
+      const roof = makeRoof(2.8, 0.8, 1.5, '#7c5a3a');
+      roof.position.y = 2.25;
+      g.add(roof);
+      g.add(mesh(GEO.cyl, toon('#8a5a32'), 0, 1.85, 0, 0.06, 2.1, 0.06).rotateZ(Math.PI / 2));
+      g.add(mesh(GEO.cyl, toon('#c9a26b'), 0, 1.3, 0, 0.012, 1.0, 0.012));
+      g.add(mesh(GEO.cyl, toon('#9c774a'), 0, 0.72, 0, 0.18, 0.22, 0.18));
+      g.add(blob(3.2));
+    } else {
+      const beach = sp.key === 'beach';
+      const rock = (c) => toon(beach ? c[1] : c[0]);
+      const parts = [
+        [-1.05, 0.6, -0.3, 1.0, 1.3, 0.9, ['#8f877c', '#c9b99a']],
+        [1.05, 0.6, -0.3, 1.0, 1.25, 0.95, ['#978e82', '#d2c2a2']],
+        [0, 1.45, -0.45, 1.5, 0.75, 0.95, ['#a39a8d', '#dccdae']],
+        [-0.3, 0.5, -1.2, 1.3, 1.1, 0.9, ['#857d72', '#c1b193']],
+      ];
+      for (const [x, y, z, sx, sy, sz, c] of parts) {
+        const m = mesh(GEO.blobby, rock(c), x, y, z, sx, sy, sz);
+        m.rotation.y = x;
+        g.add(m);
+      }
+      const hole = new THREE.Mesh(new THREE.CircleGeometry(0.8, 24), basic('#0e0b0a'));
+      hole.position.set(0, 0.72, 0.05);
+      hole.scale.set(0.85, 1, 1);
+      g.add(hole);
+      g.add(mesh(GEO.cyl, basic('#0e0b0a'), 0, 0.02, 0.2, 0.75, 0.02, 0.55));
+      g.add(blob(3.6));
+    }
+    scene.add(g);
+  }
+}
+
+// =====================================================================
+// 売り地と、よろず屋
+// =====================================================================
+function signTexture(lines, bg = '#f6ead0', ink = '#6b4f2a') {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0, 0, 256, 128);
+  g.strokeStyle = 'rgba(107,79,42,0.35)'; g.lineWidth = 6; g.strokeRect(3, 3, 250, 122);
+  g.fillStyle = ink; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const font = '"M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", sans-serif';
+  if (lines.length === 1) { g.font = `800 ${lines[0].length > 6 ? 30 : 40}px ${font}`; g.fillText(lines[0], 128, 66); }
+  else { g.font = `800 34px ${font}`; g.fillText(lines[0], 128, 46); g.font = `700 26px ${font}`; g.fillText(lines[1], 128, 90); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const plotObjs = []; // i -> { stakes, sign material, house, owner }
+const plotInfo = PLOTS.map(() => ({ owner: null, color: 0 }));
+function buildPlots() {
+  for (const p of PLOTS) {
+    const g = new THREE.Group();
+    g.position.set(p.x, 0, p.z);
+    // 空き地のしるし：四すみのくいと、なわ
+    const stakes = new THREE.Group();
+    const h = PLOT_SIZE / 2;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) stakes.add(mesh(GEO.box, toon('#a8743f'), sx * h, 0.3, sz * h, 0.12, 0.6, 0.12));
+    for (const [x, z, w, d] of [[0, -h, PLOT_SIZE, 0.04], [0, h, PLOT_SIZE, 0.04], [-h, 0, 0.04, PLOT_SIZE], [h, 0, 0.04, PLOT_SIZE]]) {
+      stakes.add(mesh(GEO.box, toon('#e7d3a0'), x, 0.48, z, w, 0.03, d));
+    }
+    g.add(stakes);
+    scene.add(g);
+    // 看板
+    const sign = new THREE.Group();
+    sign.position.set(p.sign.x, 0, p.sign.z);
+    sign.add(mesh(GEO.box, toon('#8a5a32'), 0, 0.55, 0, 0.1, 1.1, 0.1));
+    const mat = curvify(new THREE.MeshBasicMaterial({ map: signTexture(['売り地', `${PLOT_PRICE.toLocaleString('ja-JP')} ポカ`]) }));
+    sign.add(mesh(GEO.box, toon('#9c6b3e'), 0, 1.15, -0.02, 1.25, 0.66, 0.06));
+    sign.add(mesh(new THREE.PlaneGeometry(1.15, 0.575), mat, 0, 1.15, 0.015));
+    sign.add(blob(0.9));
+    scene.add(sign);
+    plotObjs.push({ stakes, mat, house: null, owner: undefined, color: undefined });
+  }
+}
+// サーバーから届いた持ち主の一覧を島に反映する：[番号, 持ち主の名前 or null, 色]
+function applyPlots(list) {
+  for (const [i, owner, color] of list || []) {
+    const o = plotObjs[i], p = PLOTS[i];
+    if (!o) continue;
+    plotInfo[i] = { owner, color };
+    setPlotOwned(i, !!owner);
+    const room = INTERIORS[HOUSES.length + i];
+    if (room) room.house.name = owner ? `${owner}の家` : 'だれかの家';
+    if (o.owner === owner && o.color === color) continue;
+    o.owner = owner; o.color = color;
+    o.stakes.visible = !owner;
+    o.mat.map.dispose();
+    o.mat.map = signTexture(owner ? [`${owner}`, 'の家'] : ['売り地', `${PLOT_PRICE.toLocaleString('ja-JP')} ポカ`]);
+    o.mat.needsUpdate = true;
+    if (o.house) { scene.remove(o.house); o.house = null; }
+    if (owner) {
+      o.house = makeHouse({ ...p.house, roof: MOMO_ACCENT[color] || MOMO_ACCENT[0], wall: '#fffaf0' });
+      scene.add(o.house);
+    }
+  }
+  // 自分がいる場所に家が建ったら、手前に出す
+  if (me && layerOf(me.x) === 'surface' && !walkable(me.x, me.z)) {
+    const p = PLOTS.find((q) => Math.abs(me.x - q.house.x) < q.house.w / 2 + 0.5 && Math.abs(me.z - q.house.z) < q.house.d / 2 + 0.5);
+    if (p) { me.x = p.x; me.z = p.z + PLOT_SIZE / 2 + 0.6; }
+  }
+}
+function applyMe(v) {
+  if (!v) return;
+  pocket = { coins: v.coins || 0, fruit: v.fruit || {}, gems: v.gems || {}, fish: v.fish || {}, bugs: v.bugs || {}, iso: v.iso || {}, dex: { fish: {}, bug: {}, iso: {}, gem: {}, ...v.dex } };
+  if (Number.isInteger(v.rank) && me) setRank(me, v.rank);
+  myPlot = Number.isInteger(v.plot) ? v.plot : null;
+  renderPocket();
+  renderShop();
+  if (plotModalFor !== null) renderPlotModal(plotModalFor);
+}
+
+// 土地の看板を調べたとき
+let plotModalFor = null, releaseArmed = false;
+function openPlotModal(i) {
+  plotModalFor = i; releaseArmed = false;
+  renderPlotModal(i);
+  openModal('#plotModal');
+}
+function renderPlotModal(i) {
+  const info = plotInfo[i];
+  const mine = myPlot === i;
+  const btn = $('#plotAction');
+  btn.hidden = false; btn.disabled = false;
+  $('#plotTitle').textContent = info.owner ? (mine ? 'あなたの土地' : `${info.owner}さんの土地`) : `売り地 No.${i + 1}`;
+  if (mine) {
+    $('#plotText').textContent = 'あなたの家が建っています。しばらく（30日）島に来ないと、空き地にもどります。';
+    btn.textContent = releaseArmed ? '本当に手放す' : `土地を手放す（${Math.floor(PLOT_PRICE * PLOT_REFUND).toLocaleString('ja-JP')} ポカもどる）`;
+    btn.classList.toggle('danger', true);
+  } else if (info.owner) {
+    $('#plotText').textContent = `${info.owner}さんの家が建っています。ドアから遊びに行けます。`;
+    btn.hidden = true;
+  } else {
+    btn.classList.toggle('danger', false);
+    btn.textContent = `この土地を ${PLOT_PRICE.toLocaleString('ja-JP')} ポカで買う`;
+    let note = `買うと、ここに あなたの家が建ちます。土地は ひとり ひとつまでです。いまのポカ：${pocket.coins.toLocaleString('ja-JP')}`;
+    if (!serverMode()) { note = '土地は、みんなの島（公開中のサーバー）でだけ買えます。'; btn.disabled = true; }
+    else if (myPlot !== null) { note = `もう No.${myPlot + 1} の土地を持っています。土地は ひとり ひとつまでです。`; btn.disabled = true; }
+    else if (pocket.coins < PLOT_PRICE) { note += `（あと ${(PLOT_PRICE - pocket.coins).toLocaleString('ja-JP')} ポカ）`; btn.disabled = true; }
+    $('#plotText').textContent = note;
+  }
+}
+$('#plotAction').addEventListener('click', () => {
+  const i = plotModalFor;
+  if (i === null || !serverMode()) return;
+  if (myPlot === i) {
+    if (!releaseArmed) { releaseArmed = true; renderPlotModal(i); return; }
+    net.send({ t: 'releasePlot' });
+  } else {
+    net.send({ t: 'buyPlot', i });
+  }
+  $('#plotAction').disabled = true;
+});
+function onPlotResult(msg) {
+  closeModals();
+  plotModalFor = null;
+  if (msg.action === 'buy') {
+    if (!msg.error) { toast('土地を買いました！ あなたの家が建ちました'); sound.sparkle(); me.v.hop(); }
+    else toast({ taken: 'ほかの人が先に買いました', not_enough: 'ポカが足りません', already_own: '土地は ひとり ひとつまでです' }[msg.error] || '買えませんでした');
+  } else if (msg.refund) {
+    toast(`土地を手放しました（${msg.refund.toLocaleString('ja-JP')} ポカもどりました）`);
+  }
+}
+
+// よろず屋：果物や宝石を ぜんぶ売る
+function buildShop() {
+  const g = new THREE.Group();
+  g.position.set(SHOP.x, groundHeight(SHOP.x, SHOP.z), SHOP.z);
+  const wood = toon('#b98555'), woodDark = toon('#8f623b');
+  g.add(mesh(GEO.box, wood, 0, 0.55, 0.15, 2.5, 1.1, 0.9));
+  g.add(mesh(GEO.box, toon('#f6ead0'), 0, 1.13, 0.15, 2.6, 0.08, 1.0));
+  for (const sx of [-1, 1]) g.add(mesh(GEO.box, woodDark, sx * 1.2, 1.4, -0.35, 0.12, 2.8, 0.12));
+  // しましまの屋根
+  for (let k = 0; k < 6; k++) {
+    const m = mesh(GEO.box, toon(k % 2 ? '#fdfdf8' : '#e2574c'), -1.25 + 0.5 * k + 0.25, 2.75, 0.1, 0.5, 0.08, 1.5);
+    m.rotation.x = 0.28;
+    g.add(m);
+  }
+  const mat = curvify(new THREE.MeshBasicMaterial({ map: signTexture(['よろず屋', '買い取り']) }));
+  g.add(mesh(new THREE.PlaneGeometry(1.4, 0.7), mat, 0, 2.2, -0.28));
+  // 台の上の品もの
+  g.add(mesh(GEO.sphereLo, toon('#ffa7a0'), -0.7, 1.28, 0.2, 0.16));
+  g.add(mesh(GEO.sphereLo, toon('#e8423b'), -0.4, 1.28, 0.3, 0.15));
+  g.add(mesh(new THREE.OctahedronGeometry(0.15), toon('#4f8cff'), 0.5, 1.32, 0.25, 1, 1.5, 1));
+  g.add(mesh(new THREE.OctahedronGeometry(0.13), toon('#b77cf0'), 0.8, 1.3, 0.1, 1, 1.5, 1));
+  g.add(blob(3.2));
+  scene.add(g);
+}
+function renderShop() {
+  const list = $('#shopList');
+  if (!list) return;
+  list.textContent = '';
+  const rows = [];
+  for (const [key, n] of Object.entries(pocket.fruit || {})) if (n && SELL_PRICES.fruit[key]) rows.push({ what: 'fruit', key, n, name: FRUITS[key].name, color: FRUITS[key].color, price: SELL_PRICES.fruit[key] });
+  for (const k of GEM_KINDS) { const n = pocket.gems?.[k.key]; if (n) rows.push({ what: 'gem', key: k.key, n, name: k.name, color: k.color, price: SELL_PRICES.gem[k.key] }); }
+  for (const f of FISH) { const n = pocket.fish?.[f.key]; if (n) rows.push({ what: 'fish', key: f.key, n, name: f.name, color: '#6cb7d9', price: f.price }); }
+  for (const b of BUGS) { const n = pocket.bugs?.[b.key]; if (n) rows.push({ what: 'bug', key: b.key, n, name: b.name, color: '#8fc45a', price: b.price }); }
+  for (const b of ISO) { const n = pocket.iso?.[b.key]; if (n) rows.push({ what: 'iso', key: b.key, n, name: b.name, color: '#e2857a', price: b.price }); }
+  $('#shopEmpty').hidden = rows.length > 0;
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'shoprow';
+    const dot = document.createElement('i');
+    dot.style.background = r.color;
+    if (r.what === 'gem') dot.className = 'gemdot';
+    const name = document.createElement('span');
+    name.className = 'nm';
+    name.textContent = `${r.name} ×${r.n}`;
+    const price = document.createElement('span');
+    price.className = 'pr';
+    price.textContent = `${(r.price * r.n).toLocaleString('ja-JP')} ポカ`;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'ぜんぶ売る';
+    b.addEventListener('click', () => sellItem(r.what, r.key));
+    row.append(dot, name, price, b);
+    list.appendChild(row);
+  }
+  $('#shopCoins').textContent = pocket.coins.toLocaleString('ja-JP');
+  // はじめての人への道具
+  const tools = $('#shopTools');
+  tools.textContent = '';
+  for (const [k, name] of [['rod', 'つりざお'], ['net', '虫とりあみ']]) {
+    if (hasTool(k)) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${name}を もらう`;
+    b.addEventListener('click', () => { store.set(k, true); toast(`${name}を もらった！`); sound.coins(); renderShop(); });
+    tools.appendChild(b);
+  }
+  $('#shopToolsBox').hidden = !tools.children.length;
+}
+function sellItem(what, key) {
+  if (serverMode()) { net.send({ t: 'sell', what, key }); return; }
+  const bag = { fruit: pocket.fruit, gem: pocket.gems, fish: pocket.fish, bug: pocket.bugs, iso: pocket.iso }[what];
+  const gained = (bag[key] || 0) * SELL_PRICES[what][key];
+  delete bag[key];
+  pocket.coins += gained;
+  savePocket();
+  renderPocket();
+  renderShop();
+  if (gained) { toast(`${gained.toLocaleString('ja-JP')} ポカで 売れました！`); sound.coins(); }
+}
+
+// =====================================================================
+// 虫・魚つり・図鑑
+// =====================================================================
+// 島の中の生き物は、セル調で地面といっしょに曲がるマテリアル
+function sceneM(c, o = {}) {
+  const { glow: g, ...rest } = o;
+  return g ? basic(c) : toon(c, rest);
+}
+const hasTool = (k) => store.get(k, false);
+const bugObjs = new Map(); // id -> { g, key, sp, flyer, wings, t0, fleeT }
+const TREE_Q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 1).normalize(), Math.PI);
+function applyBugs(list, fled = []) {
+  const alive = new Set();
+  for (const [id, key, spot] of list || []) {
+    alive.add(id);
+    if (bugObjs.has(id)) continue;
+    const sp = BUG_SPOTS[spot];
+    const c = sp && makeCreature(critterCat(key), key, sceneM);
+    if (!c) continue;
+    const g = new THREE.Group();
+    g.add(c.group);
+    const beach = sp.hab === 'shore' || sp.hab === 'pool';
+    c.group.scale.setScalar(beach ? 1.5 : 2.4);
+    if (sp.hab === 'tree' && !c.flyer) c.group.quaternion.copy(TREE_Q); // 幹にとまる
+    else c.group.rotation.y = Math.random() * 6.28;
+    if (c.glow) { const gl = glow(c.glow, 1.4, 0.8); c.group.add(gl); }
+    g.position.set(sp.x, groundHeight(sp.x, sp.z) + sp.y, sp.z);
+    scene.add(g);
+    bugObjs.set(id, { g, c, key, sp, flyer: !!c.flyer, t0: Math.random() * 10, fleeT: 0 });
+  }
+  for (const [id, o] of bugObjs) {
+    if (alive.has(id) || o.fleeT) continue;
+    if (fled.includes(id)) o.fleeT = 0.9; // 飛んでにげる
+    else { scene.remove(o.g); bugObjs.delete(id); }
+  }
+}
+function bugPos(o) { return o.g.position; }
+function updateBugs(dt, now) {
+  for (const [id, o] of bugObjs) {
+    const base = o.sp, t = now + o.t0;
+    if (o.fleeT) {
+      o.fleeT -= dt;
+      if (o.c.walker) {
+        // カニ・ヤドカリは 空へは にげない。プレイヤーと はんたいへ走って、砂にもぐる
+        const p = o.g.position, dx = p.x - me.x, dz = p.z - me.z, d = Math.hypot(dx, dz) || 1;
+        p.x += (dx / d) * dt * 4; p.z += (dz / d) * dt * 4; p.y -= dt * 0.35;
+      } else { o.g.position.y += dt * 5; o.g.position.x += dt * 2; }
+      if (o.fleeT <= 0) { scene.remove(o.g); bugObjs.delete(id); }
+      continue;
+    }
+    if (o.flyer) {
+      o.g.position.set(base.x + Math.sin(t * 0.7) * 0.8, groundHeight(base.x, base.z) + base.y + 0.3 + Math.sin(t * 2.1) * 0.25, base.z + Math.cos(t * 0.5) * 0.6);
+      o.c.group.rotation.y = Math.atan2(Math.cos(t * 0.7), -Math.sin(t * 0.5));
+      for (const w of o.c.wings || []) w.rotation.z = w.userData.side * Math.sin(t * 24) * 0.7;
+    } else if (o.c.walker) {
+      // カニ・ヤドカリ：よこに ちょこちょこ歩く
+      const s = Math.sin(t * 0.6), x = base.x + s * 0.9, z = base.z + Math.sin(t * 0.37) * 0.35;
+      o.g.position.set(x, groundHeight(x, z) + base.y, z);
+      const step = Math.abs(Math.cos(t * 0.6)) > 0.25;
+      for (const L of o.c.legs) L.root.rotation.y = L.base + (step ? Math.sin(t * 14 + L.phase) * 0.25 : 0);
+    } else if (o.c.swimmer) {
+      // クリオネ：潮だまりの上で、はねを ぱたぱた
+      o.g.position.y = groundHeight(base.x, base.z) + 0.35 + Math.sin(t * 1.6) * 0.08;
+      for (const w of o.c.wings) w.rotation.z = w.userData.side * Math.sin(t * 7) * 0.6;
+      o.c.group.rotation.y += dt * 0.4;
+    } else if (o.c.sway) {
+      o.c.sway(t);
+    } else if (base.hab !== 'tree' && base.hab !== 'pool') {
+      o.c.group.rotation.y += Math.sin(t * 0.8) * dt * 0.6;
+    }
+  }
+}
+function nearestBug(range) {
+  let best = null, bd = range;
+  for (const [id, o] of bugObjs) {
+    if (o.fleeT) continue;
+    const p = bugPos(o), d = Math.hypot(p.x - me.x, p.z - me.z);
+    if (d < bd) { bd = d; best = id; }
+  }
+  return best;
+}
+function bugPrompt(key) {
+  const info = key && critterInfo(key);
+  if (info && critterCat(key) === 'iso') return `${info.name}を ひろう`;
+  return hasTool('net') ? `${info?.name || '虫'}を つかまえる` : `${info && info.hab === 'shore' ? info.name : '虫'}がいる…（あみが ほしい）`;
+}
+function tryCatchBug(id) {
+  const o = bugObjs.get(id);
+  const byHand = o && critterCat(o.key) === 'iso'; // 磯の生きものは 手で ひろう
+  if (!byHand && !hasTool('net')) { toast('あみが あれば つかまえられそう…（よろず屋で もらえるよ）'); sound.click(); return; }
+  if (performance.now() < swingCooldown) return;
+  swingCooldown = performance.now() + 550;
+  if (o) me.r = Math.atan2(bugPos(o).x - me.x, bugPos(o).z - me.z);
+  if (byHand) sound.pop(); else { me.v.swing('net'); sound.rustle(); }
+  net.send({ t: 'catch', id, x: me.x, z: me.z });
+}
+
+// ---- 魚の影 ----
+// 影はサーバーが出す（どの魚かは つりあげるまで ひみつ。わかるのは大きさだけ）。
+// ふだんは決まった道すじを泳ぎ、ウキが近くに落ちると よってくる。
+const shadowObjs = new Map(); // id -> { g, sp, sz, seed, len, x, z, head, hook, fleeT }
+const shadowGeo = (() => {
+  // 頭が +z を向いた魚のかたち（平ら）
+  const sh = new THREE.Shape();
+  sh.moveTo(0, -0.5);
+  sh.bezierCurveTo(0.2, -0.46, 0.22, 0.05, 0.07, 0.3);
+  sh.lineTo(0.17, 0.5); sh.lineTo(-0.17, 0.5); sh.lineTo(-0.07, 0.3);
+  sh.bezierCurveTo(-0.22, 0.05, -0.2, -0.46, 0, -0.5);
+  return new THREE.ShapeGeometry(sh, 10).rotateX(-Math.PI / 2);
+})();
+const shadowMat = basic('#0e2230', { transparent: true, opacity: 0.55, depthWrite: false });
+function applyShadows(list, fled = []) {
+  const alive = new Set();
+  const now = performance.now() / 1000;
+  for (const [id, sz, spot] of list || []) {
+    alive.add(id);
+    if (shadowObjs.has(id)) continue;
+    const sp = FISH_SPOTS[spot];
+    if (!sp) continue;
+    const len = 0.5 + sz * 0.26; // 影の長さ（sz 1 → 0.76、6 → 2.06）
+    const g = new THREE.Mesh(shadowGeo, shadowMat);
+    g.scale.set(len, 1, len);
+    g.renderOrder = 1;
+    const seed = (hashStr(id) % 1000) / 100;
+    const p = shadowWander(sp, seed, now);
+    g.position.set(p.x, WATER_Y + 0.03, p.z);
+    scene.add(g);
+    shadowObjs.set(id, { g, sp, sz, seed, len, x: p.x, z: p.z, head: 0, hook: false, fleeT: 0, jerk: 0 });
+  }
+  for (const [id, o] of shadowObjs) {
+    if (alive.has(id) || o.fleeT) continue;
+    if (fled.includes(id)) o.fleeT = 0.8; // すーっと にげる
+    else { scene.remove(o.g); shadowObjs.delete(id); }
+  }
+}
+function updateShadows(dt, now) {
+  for (const [id, o] of shadowObjs) {
+    if (o.fleeT) {
+      o.fleeT -= dt;
+      o.x += Math.sin(o.head) * dt * 6; o.z += Math.cos(o.head) * dt * 6;
+      o.g.scale.setScalar(o.len * Math.max(0.05, o.fleeT / 0.8)).setY(1);
+      o.g.position.set(o.x, WATER_Y + 0.03, o.z);
+      if (o.fleeT <= 0) { scene.remove(o.g); shadowObjs.delete(id); }
+      continue;
+    }
+    if (o.reel) { // つりざおと ひっぱりあい中（動きは updateReel が決める）
+      o.g.position.set(o.x, WATER_Y + 0.03, o.z);
+      o.g.rotation.y = o.head + Math.sin(now * 21) * 0.5;
+      continue;
+    }
+    // 行きたい場所：ウキ（口がウキにとどくところ）か、ふだんの道すじ
+    let tx, tz, speed;
+    if (o.hook && fishing) {
+      const b = fishing.bob.position, d = Math.hypot(b.x - o.x, b.z - o.z) || 1;
+      tx = b.x - ((b.x - o.x) / d) * o.len * 0.5; tz = b.z - ((b.z - o.z) / d) * o.len * 0.5;
+      speed = 0.7;
+    } else {
+      const p = shadowWander(o.sp, o.seed, now);
+      tx = p.x; tz = p.z; speed = 1.4;
+    }
+    const dx = tx - o.x, dz = tz - o.z, dist = Math.hypot(dx, dz);
+    const step = Math.min(dist, speed * dt);
+    if (dist > 0.001) {
+      o.x += (dx / dist) * step; o.z += (dz / dist) * step;
+      if (dist > 0.02) {
+        let want = Math.atan2(dx, dz);
+        if (o.hook && fishing) want = Math.atan2(fishing.bob.position.x - o.x, fishing.bob.position.z - o.z);
+        let dh = want - o.head; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+        o.head += dh * Math.min(1, dt * 3);
+      }
+    }
+    o.arrived = !!o.hook && dist < 0.06;
+    o.jerk = Math.max(0, o.jerk - dt * 3);
+    const j = o.jerk * 0.12;
+    o.g.position.set(o.x + Math.sin(o.head) * j, WATER_Y + 0.03, o.z + Math.cos(o.head) * j);
+    o.g.rotation.y = o.head + Math.sin(now * (o.hook ? 9 : 5) + o.seed) * 0.08;
+  }
+}
+
+// ---- 魚つり ----
+// ウキを投げる → 近くの影が よってくる → ツンツン（まだ）→ ぐっと しずむ（いま！）
+let fishing = null; // { phase, bob, line, cp, fish, state, nibbles, biteAt, until, idleUntil, dip }
+const BOB_Y = WATER_Y + 0.03;
+function castPoint() {
+  for (const turn of [0, 0.35, -0.35, 0.7, -0.7]) {
+    const r = me.r + turn, fx = Math.sin(r), fz = Math.cos(r);
+    for (const d of [3.0, 2.6, 3.4, 2.2, 3.8]) {
+      const x = me.x + fx * d, z = me.z + fz * d;
+      if (waterAt(x, z)) return { x, z, r };
+    }
+  }
+  return null;
+}
+function canFishHere() { return layerOf(me.x) === 'surface' && !!castPoint(); }
+function startFishing() {
+  if (!hasTool('rod')) { toast('つりざおが あれば つりができそう…（よろず屋で もらえるよ）'); sound.click(); return; }
+  const cp = castPoint();
+  if (!cp) { toast('水のほうを向いて つりをしよう'); return; }
+  me.r = cp.r;
+  me.v.hold('rod');
+  sound.cast();
+  const bob = new THREE.Group();
+  bob.add(mesh(GEO.sphereLo, toon('#f4f1ea'), 0, 0.05, 0, 0.11, 0.08, 0.11));
+  bob.add(mesh(GEO.sphereLo, toon('#e2574c'), 0, 0.1, 0, 0.1, 0.07, 0.1));
+  bob.position.set(cp.x, BOB_Y, cp.z);
+  scene.add(bob);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: '#f5f5f0', transparent: true, opacity: 0.8 }));
+  line.frustumCulled = false;
+  scene.add(line);
+  const now = performance.now() / 1000;
+  fishing = { phase: 'wait', bob, line, cp, fish: null, state: null, nibbles: [], biteAt: 0, dip: 0.3, until: 0, idleUntil: now + 12 };
+}
+function releaseFish(spook) {
+  if (!fishing || !fishing.fish) return;
+  const o = shadowObjs.get(fishing.fish);
+  if (o) {
+    o.hook = false;
+    if (spook) { o.fleeT = 0.8; o.head += Math.PI; net.send({ t: 'spook', id: fishing.fish, x: me.x, z: me.z }); }
+  }
+  fishing.fish = null;
+}
+function endFishing(msg, spook = false) {
+  if (!fishing) return;
+  releaseFish(spook);
+  scene.remove(fishing.bob); scene.remove(fishing.line);
+  fishing.line.geometry.dispose();
+  fishing = null;
+  me.v.hold(null);
+  me.v.setRodPull(0);
+  me.v.strain(0);
+  if (msg) toast(msg);
+}
+function fishingAction() {
+  if (!fishing) return false;
+  if (fishing.phase === 'reel') return true; // ひっぱりあい中は ボタンを受けつけない
+  if (fishing.phase === 'bite') {
+    // あわせた！ ここから ひっぱりあい（大きい魚ほど長い）
+    const f = fishing, o = shadowObjs.get(f.fish);
+    f.phase = 'reel';
+    f.reelT0 = performance.now() / 1000;
+    f.reelDur = 1.5 + (o ? o.sz : 3) * 0.2;
+    f.reelFrom = { x: f.bob.position.x, z: f.bob.position.z };
+    f.nextSplash = 0;
+    f.caughtMsg = null;
+    if (o) o.reel = true;
+    sound.splash();
+    net.send({ t: 'fish', id: f.fish, x: me.x, z: me.z });
+  } else if (fishing.phase === 'wait') {
+    if (fishing.fish && fishing.state === 'nibble') endFishing('はやすぎた… にげられちゃった', true);
+    else if (fishing.fish) endFishing('あっ… 魚が びっくりして にげちゃった', true);
+    else endFishing(); // なにも よってきていないので、そのまま ひきあげる
+  }
+  return true;
+}
+const tipV = new THREE.Vector3();
+function updateFishing(now) {
+  if (!fishing) return;
+  const f = fishing;
+  if (f.phase === 'reel') { updateReel(f, now); return; }
+  if (f.phase === 'wait') {
+    const o = f.fish && shadowObjs.get(f.fish);
+    if (f.fish && (!o || o.fleeT)) { f.fish = null; f.state = null; f.idleUntil = now + 8; } // ほかの人に つられた・時間で いなくなった
+    if (!f.fish) {
+      // ウキのまわりの影を よぶ
+      let best = null, bd = 2.8;
+      for (const [id, s] of shadowObjs) {
+        if (s.fleeT || s.hook) continue;
+        const d = Math.hypot(s.x - f.bob.position.x, s.z - f.bob.position.z);
+        if (d < bd) { bd = d; best = id; }
+      }
+      if (best) { f.fish = best; f.state = 'approach'; shadowObjs.get(best).hook = true; }
+      else if (now > f.idleUntil) { endFishing('なにも かからない… 魚の影の ちかくに なげてみよう'); return; }
+    } else if (f.state === 'approach' && o.arrived) {
+      f.state = 'nibble';
+      let t = now + 0.6;
+      f.nibbles = [];
+      for (let k = 0, n = 1 + Math.floor(Math.random() * 4); k < n; k++) { t += 0.7 + Math.random() * 0.8; f.nibbles.push(t); }
+      f.biteAt = t + 0.6 + Math.random() * 1.2;
+    } else if (f.state === 'nibble') {
+      if (f.nibbles.length && now > f.nibbles[0]) { f.nibbles.shift(); f.dip = 0.22; o.jerk = 1; sound.nibble(); }
+      if (now > f.biteAt) {
+        f.phase = 'bite'; f.until = now + 0.95; f.dip = 1; o.jerk = 1;
+        sound.splash();
+        doEmote(me, 'wow');
+      }
+    }
+  } else if (f.phase === 'bite' && now > f.until) {
+    endFishing('にげられた…', true);
+    return;
+  }
+  f.dip = Math.max(0, f.dip - 0.02);
+  const sink = f.phase === 'bite' ? 0.28 : f.dip * 0.5;
+  f.bob.position.y = BOB_Y - sink + Math.sin(now * 3) * 0.02;
+  me.v.setRodPull(f.phase === 'bite' ? 1 : f.dip);
+  drawLine(f);
+}
+function drawLine(f) {
+  me.v.rodTip(tipV);
+  tipV.y -= curveY(tipV.z);
+  const pos = f.line.geometry.attributes.position;
+  pos.setXYZ(0, tipV.x, tipV.y, tipV.z);
+  pos.setXYZ(1, f.bob.position.x, f.bob.position.y + 0.1 - curveY(f.bob.position.z), f.bob.position.z);
+  pos.needsUpdate = true;
+}
+// ひっぱりあい：MOMO は うしろに ふんばり、魚は あばれながら 岸へ よってくる
+function updateReel(f, now) {
+  const p = Math.min(1, (now - f.reelT0) / f.reelDur);
+  me.v.strain(Math.min(1, p * 5));
+  me.v.setRodPull(1);
+  const k = p * 0.55;
+  const bx = lerp(f.reelFrom.x, me.x, k) + Math.sin(now * 9.1) * 0.22;
+  const bz = lerp(f.reelFrom.z, me.z, k) + Math.sin(now * 6.3) * 0.22;
+  f.bob.position.set(bx, BOB_Y - 0.22 + Math.abs(Math.sin(now * 13)) * 0.12, bz);
+  const o = shadowObjs.get(f.fish);
+  if (o) {
+    o.x = bx + Math.sin(now * 11) * 0.3; o.z = bz + Math.cos(now * 8) * 0.3;
+    o.head = Math.atan2(f.reelFrom.x - me.x, f.reelFrom.z - me.z) + Math.sin(now * 5) * 0.8;
+  }
+  if (now > f.nextSplash) {
+    spawnSplash(bx, bz, 0.7 + (o ? o.sz : 3) * 0.15);
+    if (Math.random() < 0.45) sound.splash();
+    f.nextSplash = now + 0.22 + Math.random() * 0.12;
+  }
+  drawLine(f);
+  if (p < 1) return;
+  // つりあげた！ 魚が 水から とびだす
+  const from = { x: bx, z: bz };
+  if (o) { scene.remove(o.g); shadowObjs.delete(f.fish); }
+  f.fish = null;
+  spawnSplash(bx, bz, 2.2);
+  sound.splash();
+  landing = { from, msg: f.caughtMsg, waitUntil: now + 4, obj: null, t1: 0 };
+  endFishing();
+}
+// 水しぶきの輪
+const splashGeo = new THREE.RingGeometry(0.72, 1, 28).rotateX(-Math.PI / 2);
+const splashes = [];
+function spawnSplash(x, z, s = 1) {
+  const m = new THREE.Mesh(splashGeo, curvify(new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false })));
+  m.position.set(x, WATER_Y + 0.05, z);
+  m.scale.setScalar(0.2 * s);
+  scene.add(m);
+  splashes.push({ m, t0: performance.now() / 1000, s });
+}
+function updateSplashes(now) {
+  for (let i = splashes.length - 1; i >= 0; i--) {
+    const sp = splashes[i], a = (now - sp.t0) / 0.65;
+    if (a >= 1) { scene.remove(sp.m); sp.m.material.dispose(); splashes.splice(i, 1); continue; }
+    sp.m.scale.setScalar((0.2 + a * 0.9) * sp.s);
+    sp.m.material.opacity = 0.85 * (1 - a);
+  }
+}
+// 水から とびだして、頭の上へ
+let landing = null; // { from, msg, waitUntil, obj, t1 }
+function updateLanding(now) {
+  const L = landing;
+  if (!L) return;
+  if (!L.msg) { if (now > L.waitUntil) { landing = null; toast('にげられた…'); } return; }
+  if (!L.msg.key) { landing = null; toast('にげられた…'); return; }
+  if (!L.obj) {
+    const c = makeCreature('fish', L.msg.key, sceneM);
+    L.obj = new THREE.Group();
+    if (c) { c.group.scale.setScalar(1.3); c.group.rotation.y = Math.PI / 2; L.obj.add(c.group); }
+    scene.add(L.obj);
+    L.t1 = now;
+  }
+  const q = Math.min(1, (now - L.t1) / 0.75);
+  const topY = standHeight(me.x, me.z) + 2.9;
+  L.obj.position.set(lerp(L.from.x, me.x, q), lerp(WATER_Y, topY, q) + Math.sin(q * Math.PI) * 1.8, lerp(L.from.z, me.z, q));
+  L.obj.rotation.z = Math.sin(q * 18) * 0.5 * (1 - q);
+  if (q < 1) return;
+  scene.remove(L.obj);
+  landing = null;
+  applyCatch(L.msg);
+}
+
+// ---- 図鑑 ----
+const flatCache = new Map();
+function flatM(c, o = {}) { // 図鑑の絵用（地面といっしょに曲げない）
+  const { glow: g, ...rest } = o;
+  const key = c + JSON.stringify(rest) + (g ? 'g' : '');
+  if (!flatCache.has(key)) flatCache.set(key, g ? new THREE.MeshBasicMaterial({ color: c }) : new THREE.MeshToonMaterial({ color: c, gradientMap: GRADIENT, ...rest }));
+  return flatCache.get(key);
+}
+let portrait = null;
+const thumbs = new Map();
+function thumb(cat, key, shown) {
+  const id = `${cat}:${key}:${shown ? 1 : 0}`;
+  if (thumbs.has(id)) return thumbs.get(id);
+  if (!portrait) {
+    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    r.setSize(160, 160);
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight(0xffffff, 0xb8a888, 1.6));
+    const l = new THREE.DirectionalLight(0xffffff, 1.6); l.position.set(2, 4, 3); sc.add(l);
+    portrait = { r, sc, cam: new THREE.PerspectiveCamera(30, 1, 0.01, 50), dark: new THREE.MeshBasicMaterial({ color: '#b9aa8f' }) };
+  }
+  const { r, sc, cam } = portrait;
+  let obj;
+  if (cat === 'gem') {
+    obj = new THREE.Group();
+    const c = GEM_KINDS.find((k) => k.key === key).color;
+    const m = new THREE.MeshToonMaterial({ color: c, emissive: c, emissiveIntensity: 0.35, gradientMap: GRADIENT });
+    [[0, 0.1, 0, 1.3], [-0.2, -0.05, 0.05, 0.9], [0.22, -0.08, -0.02, 0.8]].forEach(([x, y, z, k]) => {
+      const o = new THREE.Mesh(new THREE.OctahedronGeometry(0.15), m); o.position.set(x, y, z); o.scale.set(k, k * 1.6, k); o.rotation.z = x * 2; obj.add(o);
+    });
+  } else {
+    obj = makeCreature(cat, key, flatM).group;
+    if (cat === 'fish') obj.rotation.y = key === 'madako' ? 0.5 : Math.PI / 2 - 0.35;
+    else if (cat === 'iso' || key === 'isogani' || key === 'yadokari') obj.rotation.set(0.55, 0.6, 0);
+    else obj.rotation.set(0.9, 0.5, 0);
+  }
+  sc.add(obj);
+  sc.overrideMaterial = shown ? null : portrait.dark;
+  // 大きさをそろえて まん中に
+  const box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+  const rad = Math.max(size.x, size.y, size.z) * 0.62;
+  cam.position.set(center.x, center.y + rad * 0.5, center.z + rad / Math.tan((15 * Math.PI) / 180) * 1.05);
+  cam.lookAt(center);
+  r.render(sc, cam);
+  const url = r.domElement.toDataURL();
+  sc.remove(obj);
+  thumbs.set(id, url);
+  return url;
+}
+let dexTab = 'fish';
+const DEX_CATS = ['fish', 'bug', 'iso', 'gem'];
+function hoursText(h) {
+  if (h.length === 1 && h[0][0] === 0 && h[0][1] === 24) return '一日中';
+  return h.map(([a, b]) => `${a}時〜${b}時`).join('・');
+}
+function renderDex() {
+  const dex = pocket.dex || {};
+  const n = dexCount(dex), total = DEX_TOTAL();
+  const rk = rankOf(dex);
+  $('#dexRank').textContent = `${rk.mark} ${rk.name}`;
+  $('#dexCount').textContent = `${n} / ${total}（${Math.floor(rk.pct)}%）`;
+  $('#dexBar').style.width = `${(n / total) * 100}%`;
+  const next = RANKS[rk.i + 1];
+  $('#dexNext').textContent = next ? `あと ${Math.max(1, Math.ceil((next.min / 100) * total) - n)}種類で ${next.mark} ${next.name}` : 'すべて そろえました！';
+  const lists = { fish: FISH, bug: BUGS, iso: ISO, gem: GEM_KINDS };
+  for (const cat of DEX_CATS) {
+    const got = lists[cat].filter((x) => dex[cat]?.[x.key]).length;
+    $(`#dexTab-${cat} b`).textContent = `${got}/${lists[cat].length}`;
+    $(`#dexTab-${cat}`).classList.toggle('on', cat === dexTab);
+  }
+  const grid = $('#dexGrid');
+  grid.textContent = '';
+  for (const x of lists[dexTab]) {
+    const has = !!dex[dexTab]?.[x.key];
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'dexcell' + (has ? '' : ' unknown');
+    const img = document.createElement('img');
+    img.alt = has ? x.name : 'まだ見つけていない';
+    img.src = thumb(dexTab, x.key, has);
+    const nm = document.createElement('span');
+    nm.textContent = has ? x.name : '？？？';
+    cell.append(img, nm);
+    cell.addEventListener('click', () => {
+      if (!has) { $('#dexInfo').textContent = dexTab === 'gem' ? 'どこかの宝石の岩で ほれるみたい…' : `${WHERE_NAMES[x.where || x.hab]}で 見つかるかも…`; return; }
+      const where = dexTab === 'gem' ? '地下の宝石の岩' : `${WHERE_NAMES[x.where || x.hab]}・${hoursText(x.h)}`;
+      const price = SELL_PRICES[dexTab]?.[x.key];
+      $('#dexInfo').textContent = `${x.name}：${where}・よろず屋で ${price.toLocaleString('ja-JP')} ポカ`;
+    });
+    grid.appendChild(cell);
+  }
+}
+function openDex() { renderDex(); $('#dexInfo').textContent = 'マスをおすと、くわしく見られます。'; openModal('#dexModal'); }
+$('#dexBtn').addEventListener('click', openDex);
+for (const cat of DEX_CATS) $(`#dexTab-${cat}`).addEventListener('click', () => { dexTab = cat; renderDex(); sound.click(); });
+
+// ---- つかまえた！ ----
+let localFirst = false;
+function addLocalDex(cat, key) {
+  localFirst = !pocket.dex[cat][key];
+  if (localFirst) pocket.dex[cat][key] = Date.now();
+  return localFirst;
+}
+let trophy = null; // 頭の上にかかげる生き物
+function onCaught(msg) {
+  // つりは、ひっぱりあいと ジャンプが おわってから見せる
+  if (msg.kind === 'fish' && fishing && fishing.phase === 'reel') { fishing.caughtMsg = msg; return; }
+  if (msg.kind === 'fish' && landing && !landing.msg) { landing.msg = msg; return; }
+  applyCatch(msg);
+}
+function applyCatch(msg) {
+  const cat = msg.kind;
+  if (!msg.key) { toast(cat === 'fish' ? 'なにも つれなかった…' : cat === 'iso' ? 'とどかなかった…' : 'にげられた…'); return; }
+  const info = cat === 'fish' ? FISH.find((x) => x.key === msg.key) : critterInfo(msg.key);
+  if (!info) return;
+  let first = !!msg.first;
+  const before = me.rank || 0;
+  if (!serverMode()) {
+    const bag = { fish: pocket.fish, bug: pocket.bugs, iso: pocket.iso }[cat];
+    if (!bag) return;
+    bag[msg.key] = (bag[msg.key] || 0) + 1;
+    first = addLocalDex(cat, msg.key);
+    savePocket();
+    renderPocket();
+    const r = rankOf(pocket.dex).i;
+    setRank(me, r);
+    net.send({ t: 'rank', rank: r });
+  }
+  // 頭の上に かかげる
+  if (trophy) scene.remove(trophy.g);
+  const c = makeCreature(cat, msg.key, sceneM);
+  if (c) {
+    const g = new THREE.Group();
+    g.add(c.group);
+    c.group.scale.setScalar(cat === 'fish' ? 1.3 : cat === 'iso' || c.walker ? 1.8 : 3.2);
+    if (cat === 'fish') c.group.rotation.y = Math.PI / 2;
+    scene.add(g);
+    trophy = { g, until: performance.now() / 1000 + 2.8 };
+  }
+  me.v.hop();
+  sound.sparkle();
+  showCatchCard(cat, msg.key, info, first);
+  setTimeout(() => {
+    const now = me.rank || 0;
+    if (now > before) { toast(`🎉 ランクアップ！ ${RANKS[now].mark} ${RANKS[now].name} になった！`); sound.coins(); }
+  }, 1800);
+}
+// つかまえたものの絵を、カードで大きく見せる
+let cardTimer = 0;
+function showCatchCard(cat, key, info, first) {
+  const verb = cat === 'fish' ? 'つりあげた' : cat === 'iso' ? 'ひろった' : 'つかまえた';
+  $('#ccImg').src = thumb(cat, key, true);
+  $('#ccImg').alt = info.name;
+  $('#ccTitle').textContent = `${info.name}を ${verb}！`;
+  const where = WHERE_NAMES[info.where || info.hab] || '';
+  const size = cat === 'fish' && info.sz ? `　大きさ ${'●'.repeat(info.sz)}${'○'.repeat(6 - info.sz)}` : '';
+  $('#ccSub').textContent = `${where}${size}　よろず屋で ${info.price.toLocaleString('ja-JP')} ポカ`;
+  $('#ccNew').hidden = !first;
+  const card = $('#catchCard');
+  card.hidden = false;
+  card.classList.remove('pop'); void card.offsetWidth; card.classList.add('pop');
+  clearTimeout(cardTimer);
+  cardTimer = setTimeout(closeCatchCard, 4500);
+}
+function closeCatchCard() { clearTimeout(cardTimer); $('#catchCard').hidden = true; }
+$('#catchCard').addEventListener('click', closeCatchCard);
+function updateTrophy(now) {
+  if (!trophy) return;
+  if (now > trophy.until) { scene.remove(trophy.g); trophy = null; return; }
+  trophy.g.position.set(me.x, standHeight(me.x, me.z) + 2.9 + Math.sin(now * 3) * 0.05, me.z);
+  trophy.g.rotation.y = Math.sin(now * 1.5) * 0.4;
+}
+
+// =====================================================================
+// 島ナビ：わからないことを AI に聞く
+// =====================================================================
+// みんなの島（サーバー）では サーバーが Claude に聞く（鍵がなければ キーワードで答える）。
+// claude.ai のページ版では、見ている人の Claude に聞く（sample）。どちらもなければ キーワードで答える。
+let sampleFn = null;
+(async () => { try { sampleFn = window.claude ? await window.claude.use('sample') : null; } catch { sampleFn = null; } })();
+const askWait = new Map();
+let askSeq = 0;
+async function askNavi(q) {
+  const layerX = layerOf(me.x) === 'under' ? me.x - UNDER_X : me.x;
+  const ctx = { where: whereName(me.x, me.z), x: layerX, z: me.z, hour: new Date().getHours() };
+  if (serverMode()) {
+    const id = String(++askSeq);
+    net.send({ t: 'ask', id, q, where: ctx.where });
+    return new Promise((resolve) => {
+      askWait.set(id, resolve);
+      setTimeout(() => { if (askWait.delete(id)) resolve({ ...offlineAnswer(q), offline: true }); }, 50000);
+    });
+  }
+  if (sampleFn) {
+    try {
+      const r = await sampleFn.json([{ role: 'user', content: `${GUIDE_SYSTEM}\n\n${guideUser(q, ctx)}` }], { modelTier: 'quick', cache: false });
+      return parseAnswer(JSON.stringify(r));
+    } catch (e) {
+      if (e && e.code === 'not_granted') sampleFn = null; // ことわられたら キーワードで答える
+      return { ...offlineAnswer(q), offline: true };
+    }
+  }
+  return { ...offlineAnswer(q), offline: true };
+}
+function askBubble(cls, text) {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = text;
+  $('#askLog').appendChild(d);
+  $('#askLog').scrollTop = $('#askLog').scrollHeight;
+  return d;
+}
+let asking = false;
+async function submitAsk(text) {
+  const q = String(text || '').trim().slice(0, 120);
+  if (!q || asking || !me) return;
+  asking = true;
+  $('#askSend').disabled = true;
+  $('#askInput').value = '';
+  askBubble('askq', q);
+  const b = askBubble('aska thinking', 'かんがえ中…');
+  me.v.talk(1.5);
+  const r = await askNavi(q);
+  b.classList.remove('thinking');
+  b.textContent = r.answer;
+  if (r.place) {
+    const m = markPlace(r.place);
+    if (m) { const pin = document.createElement('span'); pin.className = 'pin'; pin.textContent = `📍 地図に「${m.name}」の しるしを つけたよ`; b.appendChild(pin); }
+  }
+  if (r.offline) $('#askNote').textContent = 'いまは AI に つながらないので、かんたんな答えだけ 出しています。';
+  $('#askLog').scrollTop = $('#askLog').scrollHeight;
+  me.v.talk(2.2);
+  sound.speak(r.answer.slice(0, 28), 1.3, 0.5, true);
+  asking = false;
+  $('#askSend').disabled = false;
+}
+$('#askForm').addEventListener('submit', (e) => { e.preventDefault(); submitAsk($('#askInput').value); });
+for (const c of document.querySelectorAll('#askChips button')) c.addEventListener('click', () => submitAsk(c.textContent));
+function openAsk() { openModal('#askModal'); setTimeout(() => $('#askInput').focus(), 60); }
+$('#askBtn').addEventListener('click', openAsk);
+
+// 島ナビの しるし（地図のピンと、島の上の ぴょこぴょこ マーク）
+let guideMark = null; // { x, z, name, until, obj, follow }
+function markPlace(key) {
+  const p = PLACES[key];
+  if (!p) return null;
+  const mx = layerOf(me.x) === 'under' ? me.x - UNDER_X : me.x;
+  let x = p.x, z = p.z, follow = false;
+  const nearest = (list) => list.reduce((b, c) => (Math.hypot(c.x - mx, c.z - me.z) < Math.hypot(b.x - mx, b.z - me.z) ? c : b));
+  if (p.near === 'tidepool') ({ x, z } = nearest(TIDEPOOLS));
+  if (p.near === 'plot') ({ x, z } = nearest(PLOTS.filter((q) => !plotInfo[q.i]?.owner).length ? PLOTS.filter((q) => !plotInfo[q.i]?.owner) : PLOTS));
+  if (p.near === 'resident' && resident) { x = resident.x; z = resident.z; follow = true; }
+  if (guideMark) scene.remove(guideMark.obj);
+  const obj = new THREE.Group();
+  const tip = mesh(GEO.cone, toon('#ff5a3c'), 0, 0, 0, 0.45, 0.8, 0.45);
+  tip.rotation.x = Math.PI; // 下向き
+  obj.add(tip);
+  obj.add(mesh(GEO.sphereLo, toon('#ff5a3c'), 0, 0.55, 0, 0.42, 0.42, 0.42));
+  obj.add(mesh(GEO.sphereLo, basic('#ffffff'), 0, 0.58, 0.3, 0.16, 0.16, 0.16));
+  scene.add(obj);
+  guideMark = { x, z, name: p.name, until: performance.now() / 1000 + 180, obj, follow };
+  return guideMark;
+}
+function updateGuideMark(now) {
+  const m = guideMark;
+  if (!m) return;
+  if (m.follow && resident) { m.x = resident.x; m.z = resident.z; }
+  const onSurface = layerOf(me.x) === 'surface';
+  if (now > m.until || (onSurface && Math.hypot(me.x - m.x, me.z - m.z) < 2.5)) {
+    if (now <= m.until) { toast(`📍 ${m.name}に ついたよ！`); sound.sparkle(); }
+    scene.remove(m.obj);
+    guideMark = null;
+    return;
+  }
+  m.obj.visible = onSurface;
+  m.obj.position.set(m.x, groundHeight(m.x, m.z) + 2.6 + Math.abs(Math.sin(now * 3)) * 0.5, m.z);
+  m.obj.rotation.y = now * 1.5;
 }
 
 // =====================================================================
@@ -820,7 +2042,7 @@ function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   wrap.className = 'tagwrap';
   const tag = document.createElement('div');
   tag.className = 'nametag' + (isMe ? ' me' : npc ? ' npc' : '');
-  tag.textContent = name;
+  tag.textContent = npc ? name : `${RANKS[0].mark} ${name}`;
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   const who = document.createElement('span');
@@ -842,6 +2064,13 @@ function createPerson(id, name, look, x, z, r, isMe, npc = false) {
   };
   if (!npc) people.set(id, p);
   return p;
+}
+// ランクのマークは、名前の横にいつも出す
+function setRank(p, r) {
+  const rank = RANKS[Math.max(0, Math.min(RANKS.length - 1, Number(r) || 0))];
+  p.rank = RANKS.indexOf(rank);
+  p.tag.textContent = `${rank.mark} ${p.name}`;
+  p.tag.title = `ランク：${rank.name}`;
 }
 function removePerson(id) {
   const p = people.get(id);
@@ -912,20 +2141,35 @@ function toast(text) {
 // =====================================================================
 // ポケット（果物とポカは、この端末に保存）
 // =====================================================================
-const pocket = store.get('pocket', { fruit: {}, coins: 0 });
+// サーバーにつながっているときは、ポケットの中身はサーバーが持っている（端末では書きかえられない）。
+// ひとりモード・claude.ai のページ版では、この端末に保存する。
+let pocket = store.get('pocket', { fruit: {}, coins: 0 });
 if (!Number.isFinite(pocket.coins)) pocket.coins = Number(pocket.bells) || 0;
+if (!pocket.gems || typeof pocket.gems !== 'object') pocket.gems = {};
 delete pocket.bells;
+const serverMode = () => !!net && net.mode === 'server';
+function savePocket() { if (!serverMode()) store.set('pocket', pocket); }
+let myPlot = null;           // 自分の土地の番号
+let accountToken = store.get('token', null);
+const formatCode = (t) => (t || '').match(/.{1,5}/g)?.join('-') || '';
+if (!pocket.fish || typeof pocket.fish !== 'object') pocket.fish = {};
+if (!pocket.bugs || typeof pocket.bugs !== 'object') pocket.bugs = {};
+if (!pocket.iso || typeof pocket.iso !== 'object') pocket.iso = {};
+if (!pocket.dex || typeof pocket.dex !== 'object') pocket.dex = {};
+for (const c of ['fish', 'bug', 'iso', 'gem']) if (!pocket.dex[c] || typeof pocket.dex[c] !== 'object') pocket.dex[c] = {};
+for (const k of Object.keys(pocket.gems)) pocket.dex.gem[k] ||= Date.now();
+// 持ちものは、種類ごとの数だけ出す（くわしくは よろず屋で見られる）
 function renderPocket() {
   $('#coinCount').textContent = pocket.coins.toLocaleString('ja-JP');
   const box = $('#fruits');
   box.textContent = '';
-  for (const [k, n] of Object.entries(pocket.fruit)) {
-    if (!n || !FRUITS[k]) continue;
+  const sum = (bag) => Object.values(bag || {}).reduce((t, n) => t + (n || 0), 0);
+  for (const [icon, label, n] of [['🍑', 'くだもの', sum(pocket.fruit)], ['🐟', '魚', sum(pocket.fish)], ['🐛', '虫', sum(pocket.bugs)], ['🐚', '磯の生きもの', sum(pocket.iso)], ['💎', '宝石', sum(pocket.gems)]]) {
+    if (!n) continue;
     const chip = document.createElement('span');
     chip.className = 'pill fchip';
-    const dot = document.createElement('i');
-    dot.style.background = FRUITS[k].color;
-    chip.append(dot, document.createTextNode(`${FRUITS[k].name} ×${n}`));
+    chip.title = label;
+    chip.textContent = `${icon} ×${n}`;
     box.appendChild(chip);
   }
 }
@@ -944,15 +2188,25 @@ function handle(msg) {
       myId = msg.id;
       me.id = myId;
       people.set(myId, me);
-      for (const p of msg.players || []) if (!people.has(p.id)) createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false).m = p.m;
+      for (const p of msg.players || []) if (!people.has(p.id)) { const q = createPerson(p.id, p.name, p.look, p.x, p.z, p.r, false); q.m = p.m; setRank(q, p.rank); }
       for (const [i, n] of msg.world?.trees || []) setTreeFruit(i, n);
       for (const d of msg.world?.drops || []) addDrop(d, false);
+      gemMinedUntil.clear();
+      for (const [i, left] of msg.world?.gems || []) gemMinedUntil.set(i, Date.now() + left);
+      refreshGems();
+      if (msg.token) { accountToken = msg.token; store.set('token', accountToken); }
+      if (msg.pass && !pass) { pass = msg.pass; store.set('pass', pass); premium = true; }
+      if (msg.me) applyMe(msg.me);
+      if (msg.plots) applyPlots(msg.plots);
+      if (msg.bugs) applyBugs(msg.bugs);
+      if (msg.shadows) applyShadows(msg.shadows);
+      if (!serverMode()) setRank(me, rankOf(pocket.dex).i);
       updateOnline();
       break;
     }
     case 'join':
       if (!people.has(msg.p.id)) {
-        createPerson(msg.p.id, msg.p.name, msg.p.look, msg.p.x, msg.p.z, msg.p.r, false).m = msg.p.m;
+        { const q = createPerson(msg.p.id, msg.p.name, msg.p.look, msg.p.x, msg.p.z, msg.p.r, false); q.m = msg.p.m; setRank(q, msg.p.rank); }
         addLog(null, `${msg.p.name} さんが島にやってきました`);
         updateOnline();
       }
@@ -1000,24 +2254,99 @@ function handle(msg) {
     case 'picked':
       removeDrop(msg.id);
       break;
+    case 'hit': {
+      // ほかの人がピッケルをふった
+      const p = people.get(msg.id);
+      if (!p || p.isMe || !GEM_SPOTS[msg.i]) break;
+      p.v.swing();
+      const g = gemWorldPos(msg.i);
+      const near = me && Math.hypot(g.x - me.x, g.z - me.z) < 20;
+      setTimeout(() => { if (near) { sound.clink(0.6); spawnSparks(g.x, 0.7, g.z + 0.3, '#ffe9a8', 5); } }, 230);
+      break;
+    }
+    case 'gem': {
+      const i = msg.i;
+      if (!GEM_SPOTS[i]) break;
+      gemMinedUntil.set(i, Date.now() + (Number(msg.regrow) || 600000));
+      refreshGems();
+      const g = gemWorldPos(i);
+      const kind = GEM_KINDS.find((k) => k.key === msg.kind) || GEM_KINDS[0];
+      spawnSparks(g.x, 0.7, g.z + 0.3, kind.color, 16, 4);
+      if (msg.id === myId) {
+        if (!serverMode()) { pocket.gems[kind.key] = (pocket.gems[kind.key] || 0) + 1; addLocalDex('gem', kind.key); }
+        if (msg.first || (!serverMode() && localFirst)) setTimeout(() => toast(`📖 ${kind.name}が 図鑑に のったよ！`), 1600);
+        savePocket();
+        renderPocket();
+        sound.sparkle();
+        toast(`${kind.name}を ほりあてた！`);
+      } else {
+        const p = people.get(msg.id);
+        if (p) p.v.swing();
+      }
+      break;
+    }
     case 'got': {
       if (msg.kind === 'coin') {
-        const amt = [100, 200, 300, 500, 1000][Math.floor(Math.random() * 5)];
-        pocket.coins += amt;
+        const amt = msg.amount || [100, 200, 300, 500, 1000][Math.floor(Math.random() * 5)];
+        if (!serverMode()) pocket.coins += amt;
         toast(`${amt.toLocaleString('ja-JP')} ポカを手に入れた！`);
         sound.coins();
       } else {
         const key = PLACE.trees[msg.tree]?.fruit || 'peach';
-        pocket.fruit[key] = (pocket.fruit[key] || 0) + 1;
+        if (!serverMode()) pocket.fruit[key] = (pocket.fruit[key] || 0) + 1;
         toast(`${FRUITS[key].name}を手に入れた！`);
         sound.pop();
       }
-      store.set('pocket', pocket);
+      savePocket();
       renderPocket();
       break;
     }
     case 'full':
       toast('島がいっぱいです。少し待ってからまた来てね');
+      break;
+    case 'me':
+      applyMe(msg.me);
+      break;
+    case 'bugs':
+      applyBugs(msg.list, msg.fled);
+      break;
+    case 'shadows':
+      applyShadows(msg.list, msg.fled);
+      break;
+    case 'answer': {
+      const done = askWait.get(msg.id);
+      if (done) { askWait.delete(msg.id); done(msg); }
+      break;
+    }
+    case 'caught':
+      onCaught(msg);
+      break;
+    case 'rank': {
+      const p = people.get(msg.id);
+      if (p && !p.isMe) setRank(p, msg.rank);
+      break;
+    }
+    case 'plots':
+      applyPlots(msg.plots);
+      break;
+    case 'chest':
+      if (msg.amount > 0) { toast(`宝箱に ${msg.amount.toLocaleString('ja-JP')} ポカ 入っていた！`); sound.coins(); }
+      else { toast('宝箱はからっぽ… また明日来てね'); sound.click(); }
+      break;
+    case 'sold':
+      if (msg.gained > 0) { toast(`${msg.gained.toLocaleString('ja-JP')} ポカで 売れました！`); sound.coins(); }
+      renderShop();
+      break;
+    case 'plotResult':
+      onPlotResult(msg);
+      break;
+    case 'dup':
+      // 同じアカウントで ほかの画面から入った
+      net.stop?.();
+      toast('ほかの画面で この島に入ったので、ここは切断しました');
+      addLog(null, 'ほかの画面で同じアカウントが使われたので、切断しました。この画面を使うときは、ページを開きなおしてください。');
+      $('#online').classList.add('offline');
+      $('#onlineText').textContent = '切断しました';
       break;
   }
 }
@@ -1051,8 +2380,9 @@ let zoom = 1;
 const chatInput = $('#chat');
 
 addEventListener('keydown', (e) => {
-  if (document.activeElement === chatInput || document.activeElement === $('#name')) {
-    if (e.key === 'Escape') chatInput.blur();
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
+    if (e.key === 'Escape') ae.blur();
     return;
   }
   if (!me) return;
@@ -1061,10 +2391,19 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'm' || e.key === 'M') { toggleMap(); return; }
+  if (e.key === 'b' || e.key === 'B') { openDex(); return; }
+  if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); openAsk(); return; }
   if (e.key === 'Enter') { e.preventDefault(); chatInput.focus(); return; }
   if (e.key === 'Escape') { closeModals(); return; }
+  if (document.querySelector('.modal.on')) return; // パネルを ひらいているあいだは 島の そうさを しない
   if (/^[1-8]$/.test(e.key)) { sendEmote(EMOTES[+e.key - 1].key); return; }
-  if (['e', 'E', ' ', 'z', 'Z'].includes(e.key)) { e.preventDefault(); if (!e.repeat) action(); return; }
+  if (['e', 'E', ' ', 'z', 'Z'].includes(e.key)) {
+    e.preventDefault();
+    if (e.repeat) return;
+    if (!$('#catchCard').hidden) { closeCatchCard(); return; }
+    action();
+    return;
+  }
   keys.add(e.code);
   if (e.code.startsWith('Arrow')) e.preventDefault();
   clickTarget = null;
@@ -1205,10 +2544,30 @@ document.querySelectorAll('.modal').forEach((m) => {
 });
 $('#helpBtn').addEventListener('click', () => {
   $('#shareUrl').value = location.href.split('#')[0];
+  $('#accountBox').hidden = !(serverMode() && accountToken);
+  $('#myCode').value = formatCode(accountToken);
   $('#shareNote').textContent = net?.mode === 'solo'
     ? 'いまはひとりモードです。サーバー（server.js）で開くと、URLを送った友だちと同じ島で会えます。'
     : 'このページのURLを友だちに送ると、同じ島で会えます。';
   openModal('#helpModal');
+});
+$('#copyCode').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#myCode').value); toast('引き継ぎコードをコピーしました'); }
+  catch { $('#myCode').select(); }
+});
+// 引き継ぎコードで続きから：本物か確かめてから、この端末に保存する
+$('#joinCodeOpen').addEventListener('click', () => { $('#joinCodeForm').hidden = false; $('#joinCodeInput').focus(); });
+$('#joinCodeGo').addEventListener('click', async () => {
+  const code = $('#joinCodeInput').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length < 16) { $('#status').textContent = 'コードが短すぎます。もう一度確かめてください。'; return; }
+  const r = await api('/api/account?code=' + encodeURIComponent(code));
+  if (r && r.ok) {
+    accountToken = code; store.set('token', code);
+    $('#joinCodeForm').hidden = true;
+    $('#status').textContent = '✅ 引き継ぎコードを確認しました。「島へ行く」で続きから遊べます。';
+  } else {
+    $('#status').textContent = r ? 'そのコードは見つかりませんでした。' : 'いまはコードを確認できません（サーバーにつながっていません）。';
+  }
 });
 $('#copyBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('#shareUrl').value); toast('URLをコピーしました'); }
@@ -1220,9 +2579,24 @@ $('#copyBtn').addEventListener('click', async () => {
 // =====================================================================
 function findTarget() {
   if (!me || transitioning) return null;
+  if (layerOf(me.x) === 'under') {
+    const lx = me.x - UNDER_X;
+    for (const sp of UNDER_SPOTS) if (Math.hypot(lx - sp.x, me.z - sp.z) < 1.9) return { type: 'up', sp };
+    if (Math.hypot(lx - CHEST.x, me.z - CHEST.z) < 2.0) return { type: 'chest' };
+    if (!hasPickaxe && Math.hypot(lx - PICKAXE_SPOT.x, me.z - PICKAXE_SPOT.z) < 1.7) return { type: 'pickaxe' };
+    let best = null, bd = 1.9;
+    gemObjs.forEach((o, i) => {
+      if (!o.visible) return;
+      const d = Math.hypot(lx - o.sp.x, me.z - o.sp.z);
+      if (d < bd) { bd = d; best = { type: 'mine', i }; }
+    });
+    return best;
+  }
   const room = interiorAt(me.x);
   if (room) {
     if (me.seat) return { type: 'stand' };
+    const hatch = UNDER_SPOTS.find((sp) => sp.kind === 'hatch' && sp.room === room.i);
+    if (hatch && Math.hypot(me.x - (room.x + hatch.hatch.x), me.z - (room.z + hatch.hatch.z)) < 1.3) return { type: 'down', sp: hatch };
     if (Math.abs(me.x - room.x) < 1.2 && me.z > room.z + ROOM.d / 2 - 1.3) return { type: 'exit' };
     const seat = seatsNear(me.x, me.z, 1.9).find((st) => !seatTaken(st));
     if (seat) return { type: 'seat', seat };
@@ -1235,6 +2609,22 @@ function findTarget() {
   }
   if (best) return best;
   if (resident && Math.hypot(resident.x - me.x, resident.z - me.z) < 2.0) return { type: 'talk' };
+  for (const n of npcs) {
+    if (n.def.role === 'shop') continue; // もみじ とは よろず屋の前で話す
+    if (Math.hypot(n.person.x - me.x, n.person.z - me.z) < 2.2) return { type: 'talk', npc: n };
+  }
+  { const b = nearestBug(2.3); if (b) return { type: 'bug', id: b }; }
+  for (const sp of UNDER_SPOTS) {
+    if (sp.kind !== 'hatch' && Math.hypot(me.x - sp.x, me.z - sp.z) < 2.6) return { type: 'down', sp };
+  }
+  if (Math.hypot(me.x - SHOP.x, me.z - SHOP.z) < 2.4) return { type: 'shop' };
+  for (const p of PLOTS) {
+    if (plotOwned(p.i)) {
+      const h = p.house;
+      if (Math.abs(me.x - h.x) < 1.0 && Math.abs(me.z - (h.z + h.d / 2 + 0.55)) < 1.1) return { type: 'door', i: HOUSES.length + p.i };
+    }
+    if (Math.hypot(me.x - p.sign.x, me.z - p.sign.z) < 1.6) return { type: 'plot', i: p.i };
+  }
   for (let i = 0; i < HOUSES.length; i++) {
     const d = doorOf(HOUSES[i]);
     if (Math.abs(me.x - d.x) < 1.0 && Math.abs(me.z - d.z) < 1.1) return { type: 'door', i };
@@ -1251,16 +2641,41 @@ function findTarget() {
   }
   if (best) return best;
   if (Math.hypot(BOARD.x - me.x, BOARD.z - me.z) < 2.2) return { type: 'board' };
+  if (canFishHere()) return { type: 'fish' };
   return null;
 }
 let shakeCooldown = 0;
 function action() {
   if (!me || !net) return;
+  if (fishingAction()) return;
   const t = findTarget();
   if (!t) { me.v.hop(); return; }
   if (t.type === 'door') { enterHouse(t.i); return; }
+  if (t.type === 'down') { enterUnder(t.sp); return; }
+  if (t.type === 'up') { exitUnder(t.sp); return; }
+  if (t.type === 'chest') { openChest(); return; }
+  if (t.type === 'shop') {
+    // 店主の もみじ と話してから、よろず屋を ひらく
+    const keeper = npcs.find((n) => n.def.role === 'shop');
+    const open = () => { renderShop(); openModal('#shopModal'); };
+    if (keeper) startTalk(keeper, open); else open();
+    return;
+  }
+  if (t.type === 'plot') { openPlotModal(t.i); return; }
+  if (t.type === 'mine') { mineGem(t.i); return; }
+  if (t.type === 'bug') { tryCatchBug(t.id); return; }
+  if (t.type === 'fish') { startFishing(); return; }
+  if (t.type === 'pickaxe') {
+    hasPickaxe = true;
+    store.set('pickaxe', true);
+    if (pickaxeOnRack) pickaxeOnRack.visible = false;
+    me.v.hop();
+    sound.coins();
+    toast('ピッケルを手に入れた！ 宝石の岩を ほってみよう');
+    return;
+  }
   if (t.type === 'exit') { exitHouse(); return; }
-  if (t.type === 'talk') { startTalk(); return; }
+  if (t.type === 'talk') { startTalk(t.npc || null); return; }
   if (t.type === 'seat') { sitDown(t.seat); return; }
   if (t.type === 'stand') { standUp(); return; }
   if (t.type === 'pick') {
@@ -1282,10 +2697,21 @@ function action() {
 $('#promptKey').textContent = isTouch ? 'A' : 'E';
 let lastPrompt = null;
 function updatePrompt() {
+  if (fishing) {
+    const label = fishing.phase === 'reel' ? 'ふんばれ〜！' : fishing.phase === 'bite' ? 'いまだ！ つりあげる' : 'ウキが しずんだら おす';
+    if (label !== lastPrompt) { lastPrompt = label; $('#prompt').classList.add('on'); $('#promptText').textContent = label; }
+    return;
+  }
   const t = findTarget();
   const label = !t ? '' : {
-    pick: 'ひろう', board: 'けいじばんを読む', talk: `${RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
-    stand: 'たちあがる', seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
+    pick: 'ひろう', board: 'けいじばんを読む', talk: `${t.npc ? t.npc.def.name : RESIDENT.name}と はなす`, door: '家に入る', exit: '外に出る',
+    stand: 'たちあがる', chest: '宝箱をあける', pickaxe: 'ピッケルをひろう', shop: 'もみじの よろず屋',
+    bug: t.id && bugPrompt(bugObjs.get(t.id)?.key),
+    fish: hasTool('rod') ? 'つりをする' : 'ここで つりが できそう',
+    plot: t.i !== undefined && (plotInfo[t.i]?.owner ? '看板を読む' : '売り地を見る'),
+    mine: hasPickaxe ? 'ピッケルで ほる' : 'ピッケルがあれば ほれそう…',
+    down: t.sp && (t.sp.kind === 'well' ? '井戸をおりる' : t.sp.kind === 'hatch' ? '床の扉からおりる' : 'ほらあなに入る'),
+    up: t.sp && `はしごをのぼる（${t.sp.name}へ）`, seat: t.seat && (t.seat.pose === 'lie' ? 'ベッドでねころぶ' : t.seat.kind === 'sofa' ? 'ソファにすわる' : 'いすにすわる'),
   }[t.type] || (t.o.t.fruit && t.o.fruit > 0 ? '木をゆらす' : '木をゆらしてみる');
   if (label === lastPrompt) return;
   lastPrompt = label;
@@ -1298,15 +2724,23 @@ function updatePrompt() {
 // =====================================================================
 let resident = null;
 let talkCount = 0;
+const npcs = []; // { def, person, count }：決まった場所にいる住民
 const dialog = { open: false, lines: [], idx: 0, typing: null, full: '' };
-function startTalk() {
-  if (!resident || dialog.open) return;
+let talkingTo = null; // { person, name, voice, onEnd }
+// n：npcs の1人（なければ こむぎ）。onEnd：話しおわったら すること
+function startTalk(n = null, onEnd = null) {
+  if (dialog.open) return;
+  const person = n ? n.person : resident;
+  if (!person) return;
+  talkingTo = n
+    ? { person, name: n.def.name, voice: n.def.voice, onEnd }
+    : { person, name: RESIDENT.name, voice: RESIDENT.voice, onEnd };
   dialog.open = true;
-  dialog.lines = residentLines(me.name, currentHour(), talkCount++);
+  dialog.lines = n ? n.def.lines(me.name, currentHour(), n.count++) : residentLines(me.name, currentHour(), talkCount++);
   dialog.idx = 0;
   keys.clear(); clickTarget = null; stickVec = { x: 0, y: 0 };
-  me.r = Math.atan2(resident.x - me.x, resident.z - me.z);
-  $('#dialogWho').textContent = RESIDENT.name;
+  me.r = Math.atan2(person.x - me.x, person.z - me.z);
+  $('#dialogWho').textContent = talkingTo.name;
   $('#dialog').classList.add('on');
   document.body.classList.add('talking');
   showLine();
@@ -1324,8 +2758,8 @@ function showLine() {
     el.textContent += chars[i++] || '';
     if (i >= chars.length) { clearInterval(dialog.typing); dialog.typing = null; $('#dialog').classList.add('done'); }
   }, 50);
-  sound.speak(text, RESIDENT.voice, 1);
-  resident.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
+  sound.speak(text, talkingTo.voice, 1);
+  talkingTo.person.v.talk(Math.min(chars.length * 0.058 + 0.1, 5));
 }
 function advanceDialog() {
   if (dialog.typing) {
@@ -1339,7 +2773,10 @@ function advanceDialog() {
   dialog.open = false;
   $('#dialog').classList.remove('on');
   document.body.classList.remove('talking');
-  resident.v.hop();
+  const t = talkingTo;
+  talkingTo = null;
+  t.person.v.hop();
+  if (t.onEnd) t.onEnd();
 }
 $('#dialog').addEventListener('click', () => advanceDialog());
 
@@ -1380,6 +2817,40 @@ function seatOf(p) {
 // =====================================================================
 let transitioning = false;
 const INDOOR_BG = new THREE.Color('#1f1712');
+const UNDER_BG = new THREE.Color('#0d0b10');
+// いまいる場所：'surface'（島）/'room'（家の中）/'under'（地下）
+function layerOf(x) { return x > UNDER_X - 500 ? 'under' : x > INDOOR_X ? 'room' : 'surface'; }
+// 地下では MOMO の顔の画面がライトになる
+const momoLamp = new THREE.PointLight('#c8fff0', 0, 14, 1.1);
+scene.add(momoLamp);
+function enterUnder(sp) {
+  if (transitioning || !me) return;
+  me.seat = null;
+  sound.ladder();
+  fadeThen(() => { const e = underEntry(sp); me.x = e.x; me.z = e.z; me.r = 0; });
+}
+function exitUnder(sp) {
+  if (transitioning || !me) return;
+  sound.ladder();
+  fadeThen(() => { const e = surfaceExit(sp); me.x = e.x; me.z = e.z; me.r = 0; });
+}
+function openChest() {
+  chestLid.target = 1;
+  if (serverMode()) { net.send({ t: 'chest' }); return; }
+  const today = new Date().toDateString();
+  if (store.get('chestDay', '') === today) {
+    toast('宝箱はからっぽ… また明日来てね');
+    sound.click();
+    return;
+  }
+  const amt = [300, 500, 800, 1000][Math.floor(Math.random() * 4)];
+  pocket.coins += amt;
+  savePocket();
+  store.set('chestDay', today);
+  renderPocket();
+  toast(`宝箱に ${amt.toLocaleString('ja-JP')} ポカ 入っていた！`);
+  sound.coins();
+}
 function fadeThen(fn) {
   transitioning = true;
   keys.clear(); clickTarget = null;
@@ -1415,10 +2886,13 @@ function exitHouse() {
   });
 }
 function updateEnvironment() {
-  const inside = !!(me && interiorAt(me.x));
-  sky.visible = !inside;
-  scene.background = inside ? INDOOR_BG : null;
-  CURVE.uCurve.value = inside ? 0.0012 : 0.0055;
+  const layer = me ? layerOf(me.x) : 'surface';
+  sky.visible = layer === 'surface';
+  scene.background = layer === 'room' ? INDOOR_BG : layer === 'under' ? UNDER_BG : null;
+  CURVE.uCurve.value = layer === 'room' ? 0.0012 : layer === 'under' ? 0 : 0.0055;
+  scene.fog.near = layer === 'under' ? 9 : 60;
+  scene.fog.far = layer === 'under' ? 34 : 120;
+  momoLamp.intensity = layer === 'under' ? 6 : 0;
   applyDayNight();
 }
 
@@ -1466,6 +2940,13 @@ function buildMapBase() {
     g.fillRect(-b.len / 2 * k, -b.wid / 2 * k, b.len * k, b.wid * k);
     g.restore();
   }
+  // 地下への入り口
+  for (const sp of UNDER_SPOTS) {
+    if (sp.kind === 'hatch') continue;
+    const [ex, ey] = P(sp.x, sp.z);
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(ex, ey, 4.2, 0, 7); g.fill();
+    g.fillStyle = sp.kind === 'well' ? '#7c8a99' : '#5b4a3c'; g.beginPath(); g.arc(ex, ey, 2.8, 0, 7); g.fill();
+  }
   // 家
   for (const h of HOUSES) {
     const [cx, cy] = P(h.x, h.z);
@@ -1478,6 +2959,7 @@ function buildMapBase() {
   mapBase = c;
 }
 function mapPos(x, z) {
+  if (layerOf(x) === 'under') x -= UNDER_X;
   // 家の中にいる人は、その家の場所に出す
   const r = interiorAt(x);
   if (r) { const d = doorOf(r.house); x = d.x; z = d.z - 1.5; }
@@ -1492,7 +2974,25 @@ function drawMap() {
   const g = mapCtx;
   g.clearRect(0, 0, W, W);
   g.imageSmoothingEnabled = true;
-  if (mapBase) g.drawImage(mapBase, 0, 0, W, W);
+  const under = me && layerOf(me.x) === 'under';
+  if (mapBase) {
+    g.globalAlpha = under ? 0.28 : 1;
+    g.drawImage(mapBase, 0, 0, W, W);
+    g.globalAlpha = 1;
+  }
+  if (under) {
+    // 地下では通路の地図
+    const k = W / (2 * MAP_E), P = (x, z) => [(x + MAP_E) * k, (z + MAP_E) * k];
+    g.fillStyle = 'rgba(30,24,20,0.45)'; g.fillRect(0, 0, W, W);
+    g.strokeStyle = '#e8d9b6'; g.lineCap = 'round'; g.lineWidth = TUNNEL_W * 2 * k;
+    for (const [a, b] of UNDER_EDGES) { g.beginPath(); g.moveTo(...P(...UNDER_NODES[a])); g.lineTo(...P(...UNDER_NODES[b])); g.stroke(); }
+    g.fillStyle = '#e8d9b6';
+    for (const [key, r] of Object.entries(UNDER_ROOMS)) { g.beginPath(); g.arc(...P(...UNDER_NODES[key]), r * k, 0, 7); g.fill(); }
+    g.fillStyle = '#8a5a32';
+    for (const sp of UNDER_SPOTS) { const [px, py] = P(sp.x, sp.z); g.fillRect(px - 2 * dpr, py - 3 * dpr, 4 * dpr, 6 * dpr); }
+    g.fillStyle = '#e4b43c';
+    { const [px, py] = P(CHEST.x, CHEST.z); g.fillRect(px - 3 * dpr, py - 2 * dpr, 6 * dpr, 4 * dpr); }
+  }
   const dot = (x, z, color, rad) => {
     const [u, v] = mapPos(x, z);
     g.fillStyle = '#ffffff';
@@ -1502,8 +3002,43 @@ function drawMap() {
   };
   const big = box.classList.contains('big');
   const R = (big ? 5 : 3.2) * dpr;
-  for (const p of people.values()) if (!p.isMe) dot(p.x, p.z, tagColor(p.name), R);
-  if (resident) dot(resident.x, resident.z, '#e2a91e', R);
+  if (!under) {
+    // 土地：空き地は点線、家が建っている所は屋根の色
+    const k = W / (2 * MAP_E), P = (x, z) => [(x + MAP_E) * k, (z + MAP_E) * k];
+    for (const p of PLOTS) {
+      const [cx, cy] = P(p.x, p.z), hs = (PLOT_SIZE / 2) * k;
+      const info = plotInfo[p.i];
+      if (info.owner) {
+        g.fillStyle = '#ffffff'; g.fillRect(cx - hs * 0.8 - dpr, cy - hs * 0.8 - dpr, hs * 1.6 + 2 * dpr, hs * 1.6 + 2 * dpr);
+        g.fillStyle = MOMO_ACCENT[info.color] || MOMO_ACCENT[0]; g.fillRect(cx - hs * 0.8, cy - hs * 0.8, hs * 1.6, hs * 1.6);
+        if (p.i === myPlot) { g.strokeStyle = '#1fc3b3'; g.lineWidth = 2 * dpr; g.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2); }
+      } else {
+        g.setLineDash([2 * dpr, 2 * dpr]); g.strokeStyle = 'rgba(114,93,66,0.7)'; g.lineWidth = dpr;
+        g.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2); g.setLineDash([]);
+      }
+    }
+    // よろず屋
+    const [sx, sy] = P(SHOP.x, SHOP.z);
+    g.fillStyle = '#ffffff'; g.fillRect(sx - 4 * dpr, sy - 3 * dpr, 8 * dpr, 6 * dpr);
+    g.fillStyle = '#e2574c'; g.fillRect(sx - 3 * dpr, sy - 2 * dpr, 6 * dpr, 4 * dpr);
+  }
+  // 同じ階（地上か地下か）にいる人だけ出す
+  const same = (x) => (layerOf(x) === 'under') === !!under;
+  for (const p of people.values()) if (!p.isMe && same(p.x)) dot(p.x, p.z, tagColor(p.name), R);
+  if (resident && !under) dot(resident.x, resident.z, '#e2a91e', R);
+  if (!under) for (const n of npcs) dot(n.person.x, n.person.z, '#e2a91e', R * 0.85);
+  if (guideMark && !under) {
+    // 島ナビの しるし（ぴょこぴょこ はねる ピン）
+    const [u, v] = mapPos(guideMark.x, guideMark.z);
+    const px = u * W, py = v * W - Math.abs(Math.sin(performance.now() / 250)) * 3 * dpr, r = R * 1.25;
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(px, py - r * 1.6, r + 2 * dpr, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(px - r - 2 * dpr, py - r * 1.4); g.lineTo(px, py + 2 * dpr); g.lineTo(px + r + 2 * dpr, py - r * 1.4); g.fill();
+    g.fillStyle = '#ff5a3c';
+    g.beginPath(); g.arc(px, py - r * 1.6, r, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(px - r, py - r * 1.4); g.lineTo(px, py); g.lineTo(px + r, py - r * 1.4); g.fill();
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(px, py - r * 1.6, r * 0.4, 0, 7); g.fill();
+  }
   if (me) {
     const [u, v] = mapPos(me.x, me.z);
     const t = performance.now() / 1000;
@@ -1521,10 +3056,19 @@ function drawMap() {
   }
 }
 function whereName(x, z) {
+  if (layerOf(x) === 'under') {
+    const lx = x - UNDER_X;
+    if (Math.hypot(lx - UNDER_NODES.T[0], z - UNDER_NODES.T[1]) < UNDER_ROOMS.T + 0.5) return '地下の宝箱の部屋';
+    const sp = UNDER_SPOTS.find((s2) => Math.hypot(lx - s2.x, z - s2.z) < UNDER_ROOMS[s2.key] + 0.5);
+    return sp ? `地下通路（${sp.name}の下）` : '地下通路';
+  }
   const r = interiorAt(x);
   if (r) return `${r.house.name}の中`;
   if (Math.hypot(x - PLAZA.x, z - PLAZA.z) < PLAZA.r + 1) return 'ひろば';
   if (onBridge(x, z)) return '橋の上';
+  if (Math.hypot(x - SHOP.x, z - SHOP.z) < 3) return 'よろず屋のまえ';
+  const plot = PLOTS.find((p) => Math.abs(x - p.x) < PLOT_SIZE / 2 + 0.8 && Math.abs(z - p.z) < PLOT_SIZE / 2 + 1.2);
+  if (plot) return plotInfo[plot.i].owner ? `${plotInfo[plot.i].owner}の土地` : `売り地 No.${plot.i + 1}`;
   for (const h of HOUSES) if (Math.abs(x - h.x) < h.w / 2 + 2.5 && Math.abs(z - h.z) < h.d / 2 + 3) return `${h.name}のまえ`;
   if (pondDist(x, z) < 3) return '池のほとり';
   if (riverDist(x, z) < RIVER_W + 3) return '川べり';
@@ -1594,7 +3138,13 @@ function applyDayNight() {
   const dayT = clamp((h - 6) / 12, 0, 1);
   const ang = lerp(-1.1, 1.1, dayT);
   sunOffset.set(Math.sin(ang) * 30, 34, 18);
-  if (me && interiorAt(me.x)) {
+  if (me && layerOf(me.x) === 'under') {
+    // 地下は うす暗く、青っぽい
+    hemi.color.set('#8a93c4'); hemi.groundColor.set('#3a2c22'); hemi.intensity = 0.75;
+    sun.color.set('#b9c4ff'); sun.intensity = 0.35;
+    sunOffset.set(-6, 30, 14);
+    scene.fog.color.copy(UNDER_BG);
+  } else if (me && interiorAt(me.x)) {
     // 家の中は いつも あかるい
     hemi.color.set('#fff8ee'); hemi.groundColor.set('#b89a7a'); hemi.intensity = 1.7;
     sun.color.set('#fff0dc'); sun.intensity = 1.5;
@@ -1622,6 +3172,7 @@ const tmpV = new THREE.Vector3();
 let sendTimer = 0, lastSent = '';
 let stepDist = 0;
 let mapTick = 0;
+let dripAt = 0;
 const camPos = new THREE.Vector3(SPAWN.x, 14, SPAWN.z + 16);
 const camLook = new THREE.Vector3(SPAWN.x, 0, SPAWN.z);
 
@@ -1631,7 +3182,7 @@ function angleLerp(a, b, t) {
 }
 
 function moveMe(dt) {
-  if (transitioning || dialog.open) { me.speed = 0; return; }
+  if (transitioning || dialog.open || (fishing && fishing.phase === 'reel')) { me.speed = 0; return; }
   if (me.seat) {
     const moving = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].some((k) => keys.has(k))
       || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget;
@@ -1646,6 +3197,7 @@ function moveMe(dt) {
   if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   let mag = Math.hypot(ix, iz);
   if (mag > 0) { ix /= mag; iz /= mag; mag = 1; }
+  if (fishing && fishing.phase !== 'reel' && (mag || Math.hypot(stickVec.x, stickVec.y) > 0.4 || clickTarget)) endFishing();
   if (!mag && (stickVec.x || stickVec.y)) {
     mag = Math.hypot(stickVec.x, stickVec.y);
     if (mag > 0.15) { ix = stickVec.x / mag; iz = stickVec.y / mag; run = mag > 0.92; } else mag = 0;
@@ -1661,12 +3213,27 @@ function moveMe(dt) {
   let moved = 0;
   if (speed > 0) {
     me.r = angleLerp(me.r, Math.atan2(ix, iz), Math.min(1, dt * 14));
-    const nx = me.x + ix * speed * dt, nz = me.z + iz * speed * dt;
+    const step = speed * dt;
     const ox = me.x, oz = me.z;
-    if (walkable(nx, nz)) { me.x = nx; me.z = nz; }
-    else if (Math.abs(ix) > 0.05 && walkable(nx, me.z)) me.x = nx;
-    else if (Math.abs(iz) > 0.05 && walkable(me.x, nz)) me.z = nz;
-    else clickTarget = null;
+    const tryMove = (dx, dz) => {
+      if (!walkable(me.x + dx, me.z + dz)) return false;
+      me.x += dx; me.z += dz;
+      return true;
+    };
+    if (!tryMove(ix * step, iz * step)) {
+      // ぶつかったら、少し向きを変えて すべるように回りこむ（前にうまくいった側を先にためす）
+      const side = me.slideSide || 1;
+      let ok = false;
+      for (const a of [0.45, 0.9, 1.3]) {
+        for (const sgn of [side, -side]) {
+          const c = Math.cos(a * sgn), sn = Math.sin(a * sgn);
+          const rx = ix * c - iz * sn, rz = ix * sn + iz * c;
+          if (tryMove(rx * step * 0.9, rz * step * 0.9)) { me.slideSide = sgn; ok = true; break; }
+        }
+        if (ok) break;
+      }
+      if (!ok) clickTarget = null;
+    }
     moved = Math.hypot(me.x - ox, me.z - oz);
   }
   me.speed = moved / Math.max(dt, 1e-4);
@@ -1674,7 +3241,7 @@ function moveMe(dt) {
   const room = interiorAt(me.x);
   if (stepDist > (me.speed > 5 ? 1.25 : 0.95)) {
     stepDist = 0;
-    sound.step(0.9, room ? 'wood' : onBridge(me.x, me.z) ? 'wood' : islandSDF(me.x, me.z) > -7.4 ? 'sand' : 'grass');
+    sound.step(0.9, layerOf(me.x) === 'under' ? 'stone' : room ? 'wood' : onBridge(me.x, me.z) ? 'wood' : islandSDF(me.x, me.z) > -7.4 ? 'sand' : 'grass');
   }
   // 果物の上を歩いたら拾う
   for (const d of drops.values()) {
@@ -1682,9 +3249,9 @@ function moveMe(dt) {
   }
   // ドアに向かって歩くと家に入り、出口のマットで下へ歩くと外に出る
   if (speed > 0 && !room && iz < -0.5) {
-    for (let i = 0; i < HOUSES.length; i++) {
-      const h = HOUSES[i];
-      if (Math.abs(me.x - h.x) < 0.7 && me.z - (h.z + h.d / 2) < 0.45) { enterHouse(i); break; }
+    const all = [...HOUSES.map((h, i) => [h, i]), ...PLOTS.filter((p) => plotOwned(p.i)).map((p) => [p.house, HOUSES.length + p.i])];
+    for (const [h, i] of all) {
+      if (Math.abs(me.x - h.x) < 0.7 && me.z - (h.z + h.d / 2) < 0.45 && me.z > h.z) { enterHouse(i); break; }
     }
   }
   if (speed > 0 && room && iz > 0.5 && atRoomExit(me.x, me.z)) exitHouse();
@@ -1699,6 +3266,11 @@ function cameraGoal(now) {
     return { pos: t.clone().add(new THREE.Vector3(0, 9.2 * zi, 11.5 * zi)), look: t.clone().add(new THREE.Vector3(0, 0.4, -0.6)) };
   }
   const focus = me || { x: SPAWN.x, z: SPAWN.z };
+  if (me && layerOf(me.x) === 'under') {
+    const t = new THREE.Vector3(me.x, 0, me.z);
+    const zu = clamp(zoom, 0.7, 1.3) * portrait * 0.85;
+    return { pos: t.clone().add(new THREE.Vector3(0, 10 * zu, 15 * zu)), look: t.clone().add(new THREE.Vector3(0, 0.8, -1.8)) };
+  }
   const fy = me ? standHeight(me.x, me.z) : 0;
   const idle = me ? 0 : now * 0.05;
   const target = new THREE.Vector3(focus.x + Math.sin(idle) * 6, fy, focus.z + Math.cos(idle * 0.7) * 3);
@@ -1743,8 +3315,15 @@ function frame() {
   camera.updateMatrixWorld();
 
   // 住民
+  for (const n of npcs) {
+    // ふだんは 決まった向き。近くに人が来たら そっちを向く
+    const p = n.person, sp = n.def.spot;
+    p.tx = sp.x; p.tz = sp.z;
+    const near = me && Math.hypot(me.x - sp.x, me.z - sp.z) < 4.5;
+    p.tr = near || (talkingTo && talkingTo.person === p) ? Math.atan2(me.x - sp.x, me.z - sp.z) : sp.r;
+  }
   if (resident) {
-    if (dialog.open) {
+    if (dialog.open && talkingTo && talkingTo.person === resident) {
       resident.tx = resident.x; resident.tz = resident.z;
       resident.tr = Math.atan2(me.x - resident.x, me.z - resident.z);
     } else {
@@ -1757,9 +3336,33 @@ function frame() {
     }
   }
   if (me && (mapTick -= dt) <= 0) { mapTick = 0.1; drawMap(); updateWhere(); }
+  if (me && layerOf(me.x) === 'under') {
+    momoLamp.position.set(me.x, 3.4, me.z - 0.8);
+    if (now > dripAt) { dripAt = now + 2 + Math.random() * 5; sound.drip(); }
+  }
+  updateSparks(dt);
+  updateBugs(dt, now);
+  updateShadows(dt, now);
+  updateSplashes(now);
+  updateLanding(now);
+  updateGuideMark(now);
+  updateFishing(now);
+  updateTrophy(now);
+  if (me && layerOf(me.x) === 'under') {
+    for (const sh of shafts) {
+      const front = sh.z > me.z + 0.8;
+      sh.mat.opacity += ((front ? 0.03 : 0.12) - sh.mat.opacity) * Math.min(1, dt * 6);
+    }
+  }
+  if (chestLid.mesh) {
+    const lx = me ? me.x - UNDER_X : 0;
+    if (!me || Math.hypot(lx - CHEST.x, me.z - CHEST.z) > 4) chestLid.target = 0;
+    chestLid.open += (chestLid.target - chestLid.open) * Math.min(1, dt * 6);
+    chestLid.mesh.rotation.x = -chestLid.open * 1.2;
+  }
 
   // 人の動き
-  for (const p of (resident ? [...people.values(), resident] : people.values())) {
+  for (const p of [...people.values(), ...(resident ? [resident] : []), ...npcs.map((n) => n.person)]) {
     if (!p.isMe) {
       const ox = p.x, oz = p.z;
       if (Math.hypot(p.tx - p.x, p.tz - p.z) > 10) { p.x = p.tx; p.z = p.tz; }
@@ -1784,7 +3387,6 @@ function frame() {
     if (s.ok) p.wrap.style.transform = `translate(${s.sx.toFixed(1)}px, ${s.sy.toFixed(1)}px)`;
     const talking = now < p.sayUntil;
     if (!talking && p.bubble.classList.contains('on')) p.bubble.classList.remove('on');
-    p.tag.style.opacity = talking || now < p.emoteUntil ? 0 : 1;
     if (now > p.emoteUntil && p.emote.classList.contains('on')) p.emote.classList.remove('on');
   }
 
@@ -2013,7 +3615,7 @@ function startConnecting() {
       $('#online').classList.toggle('offline', st === 'offline');
       if (st === 'offline') { $('#onlineText').textContent = 'つなぎなおし中…'; addLog(null, '通信が切れました。つなぎなおしています…'); }
       else if (st === 'upgraded') {
-        net.send({ t: 'join', name: me.name, look: me.look, x: me.x, z: me.z, r: me.r, pass: premium ? pass : undefined });
+        net.send({ t: 'join', name: me.name, look: me.look, x: me.x, z: me.z, r: me.r, pass: premium ? pass : undefined, token: accountToken || undefined });
         lastSent = '';
         toast('サーバーにつながりました！');
         addLog(null, 'みんなの島につながりました');
@@ -2041,7 +3643,7 @@ async function enterIsland() {
   me = createPerson('__me', name, look, sx, sz, 0, true);
   camPos.set(sx, 14, sz + 17);
   for (const m of pending.splice(0)) handle(m);
-  net.send({ t: 'join', name, look, x: sx, z: sz, r: 0, pass: premium ? pass : undefined });
+  net.send({ t: 'join', name, look, x: sx, z: sz, r: 0, pass: premium ? pass : undefined, token: accountToken || undefined });
   $('#join').classList.add('hide');
   updateEnvironment();
   updateOnline();
@@ -2067,18 +3669,32 @@ buildRocks();
 buildFlowers();
 buildButterflies();
 buildInteriors();
+buildPlots();
+buildShop();
+buildUnderground();
+refreshGems();
+buildEntrances();
 buildMapBase();
 {
   const pose = residentPose();
   resident = createPerson(RESIDENT.id, RESIDENT.name, RESIDENT.look, pose.x, pose.z, pose.r, false, true);
   resident.voice = RESIDENT.voice;
+  for (const def of NPCS) {
+    const person = createPerson(def.id, def.name, def.look, def.spot.x, def.spot.z, def.spot.r, false, true);
+    if (def.tool) person.v.hold(def.tool);
+    npcs.push({ def, person, count: 0 });
+  }
+  // public/models/ に 立体モデルが あれば さしかえる
+  const swap = (key, person) => loadModel(key).then((obj) => { if (obj) person.v.attachModel(obj); });
+  if (RESIDENT.model) swap(RESIDENT.model, resident);
+  for (const n of npcs) if (n.def.model) swap(n.def.model, n.person);
 }
 applyDayNight();
 updateClock();
-setInterval(() => { applyDayNight(); updateClock(); }, 5000);
+setInterval(() => { applyDayNight(); updateClock(); refreshGems(); }, 5000);
 buildChoices();
 setupPreview();
 initPayments();
 startConnecting();
 frame();
-window.__island = { people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse };
+window.__island = { npcs, people, drops, treeObjs, handle, get me() { return me; }, get net() { return net; }, get resident() { return resident; }, room: () => me && interiorAt(me.x), enterHouse, gemObjs, bugObjs, shadowObjs, get fishing() { return fishing; }, get guideMark() { return guideMark; } };

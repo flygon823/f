@@ -126,6 +126,11 @@ export class Sound {
   step(vol = 1, surface = 'grass') {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
+    if (surface === 'stone') {
+      this._noise({ t, dur: 0.06, vol: 0.05 * vol, freq: 900, q: 1.2 });
+      this._tone({ type: 'sine', freq: 140 + Math.random() * 20, glide: 90, t, dur: 0.05, vol: 0.06 * vol });
+      return;
+    }
     if (surface === 'wood') {
       this._tone({ type: 'sine', freq: 190 + Math.random() * 30, glide: 120, t, dur: 0.07, vol: 0.12 * vol });
       this._noise({ t, dur: 0.04, vol: 0.03 * vol, freq: 1200, q: 2 });
@@ -133,6 +138,45 @@ export class Sound {
     }
     const sand = surface === 'sand';
     this._noise({ t, dur: 0.07, vol: 0.05 * vol, freq: sand ? 1400 : 2600, q: sand ? 0.6 : 1.4 });
+  }
+  clink(vol = 1) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._tone({ type: 'triangle', freq: 1850 + Math.random() * 200, t, dur: 0.12, vol: 0.12 * vol });
+    this._tone({ type: 'sine', freq: 3100, t, dur: 0.06, vol: 0.05 * vol });
+    this._noise({ t, dur: 0.05, vol: 0.08 * vol, freq: 3000, q: 1 });
+  }
+  sparkle() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    [84, 88, 91, 96, 100].forEach((n, i) => this._tone({ type: 'sine', freq: NOTE(n), t: t + i * 0.07, dur: 0.4, vol: 0.12 }));
+  }
+  cast() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._noise({ t, dur: 0.25, vol: 0.08, freq: 1800, q: 0.6 });
+    this._tone({ type: 'sine', freq: 900, glide: 300, t: t + 0.25, dur: 0.12, vol: 0.06 });
+  }
+  nibble() {
+    if (!this.ctx) return;
+    this._tone({ type: 'sine', freq: 700, glide: 500, t: this.ctx.currentTime, dur: 0.06, vol: 0.06 });
+  }
+  splash() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._noise({ t, dur: 0.35, vol: 0.18, freq: 900, q: 0.5, type: 'lowpass' });
+    this._tone({ type: 'sine', freq: 300, glide: 120, t, dur: 0.2, vol: 0.12 });
+  }
+  ladder() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 4; i++) this._tone({ type: 'sine', freq: 230 - i * 18, glide: 150, t: t + i * 0.09, dur: 0.07, vol: 0.12 });
+  }
+  drip() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime, f = 1300 + Math.random() * 900;
+    this._tone({ type: 'sine', freq: f, glide: f * 1.9, t, dur: 0.09, vol: 0.05 });
+    this._tone({ type: 'sine', freq: f * 0.7, glide: f * 1.2, t: t + 0.23, dur: 0.07, vol: 0.02 });
   }
   door() {
     if (!this.ctx) return;

@@ -165,6 +165,45 @@ function buildAnimal(body, look) {
     head.add(mesh(GEO.sphereLo, furDark, 0, 0.3, 0.3, 0.12, 0.05, 0.08));
     tailPivot.add(mesh(GEO.sphereLo, furM, 0, -0.04, 0, 0.06));
     mouth.position.set(0, -0.14, 0.45);
+  } else if (sp === 'redpanda') {
+    // レッサーパンダ：白いまゆと口もと、こげ茶の耳、しましまの大きなしっぽ
+    const white2 = toon('#fbf3e6'), dark = toon('#5a2f22');
+    for (const s of [-1, 1]) {
+      const ear = mesh(GEO.sphereLo, dark, 0.32 * s, 0.33, -0.04, 0.14, 0.15, 0.07);
+      head.add(ear);
+      head.add(mesh(GEO.sphereLo, white2, 0.32 * s, 0.33, 0.0, 0.08, 0.09, 0.05));
+      head.add(mesh(GEO.sphereLo, white2, 0.17 * s, 0.17, 0.39, 0.07, 0.035, 0.03)); // まゆ
+      head.add(mesh(GEO.sphereLo, white2, 0.24 * s, -0.12, 0.33, 0.13, 0.1, 0.1));   // ほお
+      head.add(mesh(GEO.sphereLo, dark, 0.2 * s, -0.02, 0.4, 0.05, 0.1, 0.03));      // なみだ もよう
+    }
+    head.add(mesh(GEO.sphereLo, white2, 0, -0.12, 0.38, 0.14, 0.1, 0.1));
+    head.add(mesh(GEO.sphereLo, black, 0, -0.07, 0.48, 0.045, 0.03, 0.03));
+    for (let k = 0; k < 5; k++) {
+      const r = 0.12 - k * 0.008;
+      const seg = mesh(GEO.sphereLo, k % 2 ? toon(shade(fur, 0.62)) : furM, 0, 0.05 + k * 0.1, -0.08 - k * 0.07, r, 0.09, r);
+      tailPivot.add(seg);
+    }
+    tailPivot.rotation.x = -0.35;
+    mouth.position.set(0, -0.19, 0.46);
+  } else if (sp === 'otter') {
+    // カワウソ：小さな耳、白っぽい口もととおなか、太くて長いしっぽ、ひげ
+    const pale = toon('#e9dcc6');
+    for (const s of [-1, 1]) {
+      head.add(mesh(GEO.sphereLo, furDark, 0.34 * s, 0.2, -0.05, 0.08, 0.08, 0.05));
+      head.add(mesh(GEO.sphereLo, pale, 0.18 * s, -0.12, 0.34, 0.15, 0.11, 0.11));
+      for (const k of [-1, 1]) {
+        const w = mesh(GEO.cyl, basic('#3b2e27'), 0.28 * s, -0.08 + k * 0.03, 0.4, 0.004, 0.2, 0.004);
+        w.rotation.z = Math.PI / 2 + k * 0.15 * s;
+        head.add(w);
+      }
+    }
+    head.add(mesh(GEO.sphereLo, pale, 0, -0.14, 0.38, 0.16, 0.11, 0.1));
+    head.add(mesh(GEO.sphereLo, black, 0, -0.06, 0.48, 0.06, 0.04, 0.035));
+    const tail = mesh(GEO.sphereLo, furM, 0, -0.05, -0.28, 0.1, 0.08, 0.36);
+    tail.rotation.x = 0.25;
+    tailPivot.add(tail);
+    tailPivot.position.y = 0.25;
+    mouth.position.set(0, -0.2, 0.45);
   } else if (sp === 'pig') {
     for (const s of [-1, 1]) {
       const ear = mesh(GEO.cone, furDark, 0.27 * s, 0.37, 0.05, 0.12, 0.18, 0.07);
@@ -181,7 +220,7 @@ function buildAnimal(body, look) {
     mouth.position.set(0, -0.2, 0.43);
   }
 
-  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 0.012, mouthOpen: 0.05, scale: 1, hip: 0.3, lieShift: 0 };
+  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 0.012, mouthOpen: 0.05, scale: 1, hip: 0.3, lieShift: 0, handY: -0.22 };
 }
 
 // ---------- MOMO（テレビ頭のロボット） ----------
@@ -269,7 +308,7 @@ function buildMomo(body, look) {
   head.add(mesh(GEO.sphereLo, toon('#f0a58f'), 0, 0.53, 0, 0.05));
   const tailPivot = new THREE.Group();
   body.add(tailPivot);
-  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 1, mouthOpen: 0.8, scale: 1.1, hip: 0.37, lieShift: 0.4 };
+  return { legs, arms, head, eyes, mouth, tailPivot, mouthRest: 1, mouthOpen: 0.8, scale: 1.1, hip: 0.37, lieShift: 0.4, handY: -0.31 };
 }
 
 export function makeVillager(look) {
@@ -288,8 +327,48 @@ export function makeVillager(look) {
   const { legs, arms, head, eyes, mouth, tailPivot } = parts;
   posePivot.scale.setScalar(parts.scale);
 
+  // ピッケル（ふるときだけ手に出す）
+  const pickaxe = new THREE.Group();
+  pickaxe.position.set(0, parts.handY, 0.02);
+  pickaxe.add(mesh(GEO.cyl, toon('#9c6b3e'), 0, 0, 0.3, 0.03, 0.72, 0.03).rotateX(Math.PI / 2));
+  const pickHead = new THREE.Group();
+  pickHead.position.set(0, 0, 0.64);
+  pickHead.add(mesh(GEO.box, toon('#8d96a3'), 0, 0, 0, 0.07, 0.34, 0.09));
+  for (const sy of [-1, 1]) {
+    const tip = mesh(GEO.cone, toon('#b8c0cb'), 0, sy * 0.28, -0.04, 0.05, 0.2, 0.05);
+    tip.rotation.x = sy > 0 ? -0.35 : Math.PI + 0.35;
+    pickHead.add(tip);
+  }
+  pickaxe.add(pickHead);
+  pickaxe.visible = false;
+  arms[1].add(pickaxe);
+  // つりざお
+  const rod = new THREE.Group();
+  rod.position.set(0, parts.handY, 0.02);
+  rod.add(mesh(GEO.cyl, toon('#7a5230'), 0, 0, 0.12, 0.028, 0.3, 0.028).rotateX(Math.PI / 2));
+  rod.add(mesh(GEO.cyl, toon('#c9a26b'), 0, 0, 0.9, 0.012, 1.3, 0.012).rotateX(Math.PI / 2));
+  rod.add(mesh(GEO.cyl, toon('#b8c0cb'), 0.04, 0, 0.18, 0.03, 0.05, 0.03).rotateZ(Math.PI / 2));
+  const rodTip = new THREE.Object3D();
+  rodTip.position.set(0, 0, 1.55);
+  rod.add(rodTip);
+  rod.visible = false;
+  arms[1].add(rod);
+  // 虫とりあみ
+  const net = new THREE.Group();
+  net.position.set(0, parts.handY, 0.02);
+  net.add(mesh(GEO.cyl, toon('#c9a26b'), 0, 0, 0.45, 0.02, 0.9, 0.02).rotateX(Math.PI / 2));
+  const ring = mesh(new THREE.TorusGeometry(0.2, 0.018, 6, 20), toon('#e8e3d6'), 0, 0, 1.08);
+  net.add(ring);
+  const bag = mesh(new THREE.ConeGeometry(0.19, 0.32, 14, 1, true), toon('#f4f7f2', { transparent: true, opacity: 0.6, side: THREE.DoubleSide }), 0, 0, 1.08);
+  bag.rotation.x = Math.PI / 2; bag.position.y = 0; bag.translateY(-0.16);
+  net.add(bag);
+  net.visible = false;
+  arms[1].add(net);
+  const tools = { pickaxe, rod, net };
+
   const st = {
     pose: 'stand',
+    swingT: 0, swingTool: 'pickaxe', hold: null, rodPull: 0, strain: 0,
     phase: 0, walk: 0, blinkT: 2 + Math.random() * 3, talkT: 0, hopT: 0, waveT: 0, shakeT: 0, t: Math.random() * 10,
   };
 
@@ -349,11 +428,54 @@ export function makeVillager(look) {
       for (const a of arms) { a.rotation.x = -1.35 + Math.sin(st.t * 30) * 0.15; }
       arms[0].rotation.z = -0.25; arms[1].rotation.z = 0.25;
     }
+    // ピッケルをふる：ふりかぶって、ふりおろす
+    if (st.swingT > 0) {
+      st.swingT = Math.max(0, st.swingT - dt);
+      const p = 1 - st.swingT / 0.42;
+      const a = p < 0.45 ? -2.7 * (p / 0.45) : -2.7 + 3.3 * Math.min(1, (p - 0.45) / 0.25);
+      arms[1].rotation.x = a;
+      arms[1].rotation.z = 0.15;
+      arms[0].rotation.x = a * 0.6;
+      body.rotation.x = p > 0.45 ? 0.15 : -0.05;
+    }
+    // 手に持つ道具：ふっているあいだの道具か、持ったままの道具（つりざお）
+    const shown = st.swingT > 0 ? st.swingTool : st.hold;
+    for (const [k, m] of Object.entries(tools)) m.visible = k === shown;
+    if (st.hold === 'rod' && st.swingT <= 0) {
+      // さおを前に かまえる（st.bob でウキがひかれると少し下がる）
+      arms[1].rotation.x = -0.9 + st.rodPull * 0.5;
+      arms[1].rotation.z = 0.2;
+    }
     body.position.y = y;
+    // Meshy などの立体モデルに さしかえたとき：体ごと ゆらして 歩いているように見せる
+    if (st.model) {
+      const m = st.model;
+      m.position.y = y * 0.8;
+      m.rotation.z = Math.sin(st.phase) * 0.1 * w;
+      m.rotation.x = run * 0.1 * w + (st.talkT > 0 ? Math.sin(st.t * 9) * 0.04 : 0);
+      m.rotation.y = st.waveT > 0 ? Math.sin(st.t * 10) * 0.25 : 0;
+      const b = Math.sin(st.t * 2.2) * 0.015 * (1 - w) + Math.abs(Math.sin(st.phase)) * 0.04 * w;
+      m.scale.set(m.userData.k * (1 - b * 0.5), m.userData.k * (1 + b), m.userData.k * (1 - b * 0.5));
+    }
+
+    // ふんばる（大物と ひっぱりあい）：うしろに体をたおして、さおを両手で高く
+    const sp = st.pose === 'stand' ? st.strain : 0;
+    if (sp > 0) {
+      const j = Math.sin(st.t * 31) * 0.05 * sp;
+      arms[1].rotation.x = -0.9 * (1 - sp) - 1.75 * sp + j * 2;
+      arms[1].rotation.z = 0.2 - 0.12 * sp;
+      arms[0].rotation.x = -1.45 * sp + j * 2;
+      arms[0].rotation.z = -0.55 + 0.35 * sp;
+      legs[0].rotation.x = 0.5 * sp;
+      legs[1].rotation.x = -0.3 * sp;
+      head.rotation.x = -0.18 * sp;
+      head.rotation.z = j * 1.5;
+      body.position.y = y - 0.05 * sp;
+    }
 
     // すわる・ねころぶ
     shadow.visible = st.pose === 'stand';
-    posePivot.rotation.x = st.pose === 'lie' ? -Math.PI / 2 : 0;
+    posePivot.rotation.x = st.pose === 'lie' ? -Math.PI / 2 : -0.3 * sp + Math.sin(st.t * 23) * 0.03 * sp;
     if (st.pose === 'sit') {
       legs[0].rotation.x = legs[1].rotation.x = -1.45;
       arms[0].rotation.x = arms[1].rotation.x = -0.35;
@@ -377,6 +499,28 @@ export function makeVillager(look) {
     hop() { st.hopT = 0.5; },
     wave() { st.waveT = 1.6; },
     shake() { st.shakeT = 0.6; },
+    swing(tool = 'pickaxe') { st.swingT = 0.42; st.swingTool = tool; },
+    hold(tool) { st.hold = tool; },
+    setRodPull(v) { st.rodPull = v; },
+    strain(v) { st.strain = v; }, // 0〜1：つりで ふんばる
+    // 手づくりの体を かくして、立体モデル（足もとが 0、前が +z）に さしかえる
+    attachModel(obj) {
+      if (st.model) posePivot.remove(st.model);
+      const pivot = new THREE.Group();
+      pivot.userData.k = 1 / parts.scale;
+      pivot.scale.setScalar(pivot.userData.k);
+      pivot.add(obj);
+      posePivot.add(pivot);
+      body.visible = false;
+      st.model = pivot;
+      // 道具は モデルの右手あたりに持つ
+      const hand = new THREE.Group();
+      hand.position.set(-0.3, 0.62, 0.18);
+      hand.rotation.set(-0.9, 0, 0.2);
+      pivot.add(hand);
+      for (const m of Object.values(tools)) { m.position.set(0, 0, 0); hand.add(m); }
+    },
+    rodTip(out) { return rodTip.getWorldPosition(out); },
     setPose(p) { st.pose = p; },
     get pose() { return st.pose; },
     lieShift: parts.lieShift, // ねころぶとき、頭がベッドの板にぶつからないよう足もと側へずらす量
