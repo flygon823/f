@@ -978,6 +978,7 @@ const SPECIES = {
 };
 // Where the card's BOOTH button goes. Put the item page URL in SET once it is listed.
 const BOOTH = { shop: 'https://moonlitprops.booth.pm/', set: null };
+const PUKU_GAME = 'https://autumn-frog-9332.flygon823.workers.dev/';
 const BOOTH_SPECIES = new Set(['madako', 'agohaze', 'isogani', 'yadokari', 'umeboshi', 'uni', 'hitode', 'mejina']);
 const ORDER = ['madako', 'agohaze', 'isogani', 'yadokari', 'umeboshi', 'uni', 'hitode', 'mejina'];
 
@@ -1827,23 +1828,21 @@ const pukuFaceGeo = new THREE.SphereGeometry(1.012, 24, 16, Math.PI / 2 - 0.62, 
 const pukuHiGeo = new THREE.SphereGeometry(1, 12, 8);
 function makePuku(color, face, r) {
   const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
-  const shell = new THREE.MeshStandardMaterial({ color, roughness: 0.12, metalness: 0, transparent: true, opacity: 0.62, emissive: color, emissiveIntensity: 0.12, depthWrite: false });
+  const shell = new THREE.MeshStandardMaterial({ color, roughness: 0.12, metalness: 0, transparent: true, opacity: 0.32, emissive: color, emissiveIntensity: 0.03, depthWrite: false });
   const ball = new THREE.Mesh(sphereGeo, shell); ball.scale.setScalar(r); ball.renderOrder = 3; body.add(ball);
-  const core = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.45), roughness: 0.3, transparent: true, opacity: 0.35, depthWrite: false }));
+  const core = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.45), roughness: 0.3, transparent: true, opacity: 0.14, depthWrite: false }));
   core.scale.setScalar(r * 0.72); core.position.y = -r * 0.08; core.renderOrder = 3; body.add(core);
-  const faceM = PUKU_FACES[face] || (PUKU_FACES[face] = new THREE.MeshBasicMaterial({ map: faceTex(face), transparent: true, depthWrite: false }));
+  const faceM = PUKU_FACES[face] || (PUKU_FACES[face] = new THREE.MeshLambertMaterial({ map: faceTex(face), transparent: true, opacity: 0.6, depthWrite: false }));
   const fc = new THREE.Mesh(pukuFaceGeo, faceM); fc.scale.setScalar(r); fc.renderOrder = 4; body.add(fc);
   // the glint of light on the top of the ball
-  const hiM = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false });
+  const hiM = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.3, depthWrite: false });
   const hi = new THREE.Mesh(pukuHiGeo, hiM); hi.scale.set(r * 0.2, r * 0.12, r * 0.08); hi.position.set(-r * 0.42, r * 0.58, r * 0.62); hi.rotation.z = 0.6; hi.renderOrder = 5; body.add(hi);
   const hi2 = new THREE.Mesh(pukuHiGeo, hiM); hi2.scale.setScalar(r * 0.06); hi2.position.set(-r * 0.2, r * 0.74, r * 0.62); hi2.renderOrder = 5; body.add(hi2);
   return { group: g, body, shell };
 }
 {
-  const PUKU = [
-    ['#b69ae6', 'dot', 0.2], ['#86bff0', 'happy', 0.18], ['#f1d870', 'wink', 0.15], ['#9fdcc9', 'dot', 0.12],
-    ['#f39cc4', 'happy', 0.19], ['#7fcf96', 'ring', 0.3], ['#86bff0', 'sleepy', 0.13], ['#b69ae6', 'wink', 0.14],
-  ];
+  // only a few, small and pale, keeping low among the weed: easy to miss unless you look
+  const PUKU = [['#aab8d4', 'dot', 0.12], ['#b4cdc2', 'happy', 0.1], ['#cfc3a6', 'sleepy', 0.09]];
   const home = { x: -4.8, z: 5, r: 1.9 };
   const deep = (x, z) => seF(x, z) < 0.8 && heightAt(x, z) < -1.35;
   const spots = spotsIn(PUKU.length, home.x, home.z, home.r, deep);
@@ -1866,7 +1865,7 @@ function makePuku(color, face, r) {
         const k2 = Math.min(1, dt * 0.35 * (ind.react > 0 ? 3 : 1));
         ind.x += (ind.tx - ind.x) * k2; ind.z += (ind.tz - ind.z) * k2;
         const floor = heightAt(ind.x, ind.z), water = waterLevelAt(ind.x, ind.z);
-        const ty = clamp(lerp(floor, water, 0.5) + Math.sin(t * 0.5 + ind.ph) * 0.2, floor + ind.r + 0.05, water - ind.r - 0.08);
+        const ty = clamp(lerp(floor, water, 0.15) + Math.sin(t * 0.5 + ind.ph) * 0.06, floor + ind.r + 0.03, water - ind.r - 0.08);
         ind.y += (ty - ind.y) * Math.min(1, dt * 0.9);
         ind.group.position.set(ind.x, ind.y + Math.sin(t * 1.6 + ind.ph) * 0.03, ind.z);
         // squash and stretch as it paddles along; a little hop of surprise when touched
@@ -1879,7 +1878,7 @@ function makePuku(color, face, r) {
         const want = clamp(Math.atan2(c.y, Math.hypot(c.x, c.z)), -0.6, 1.45);
         ind.pitch = lerp(ind.pitch ?? 0, want, Math.min(1, dt * 2.5));
         ind.group.rotation.set(-ind.pitch, ind.yaw, 0, 'YXZ');
-        ind.shell.emissiveIntensity = 0.12 + nightF * 0.5;
+        ind.shell.emissiveIntensity = 0.03;
       },
     });
   });
@@ -1887,8 +1886,8 @@ function makePuku(color, face, r) {
 Object.assign(SPECIES, {
   pukupuku: {
     name: 'ぷくぷく', sci: 'Bullula ludens', kind: '海のふしぎな住人', noBooth: true,
-    desc: 'どこから来たのか、だれも知らない丸い体の住人たち。沖の水の中をふわふわとただよい、目が合うとにっこりします。色によって、性格が少しずつちがうようです。',
-    size: '直径 約25〜60cm', habitat: '磯の沖の、日の光がとどく水の中',
+    desc: 'どこから来たのか、だれも知らない丸い体の住人たち。沖の海藻のかげにひっそりかくれていて、見つけた人だけが会えます。目が合うと、にっこりします。',
+    size: '直径 約20〜25cm', habitat: '磯の沖の、海藻のかげ',
     status: (ind) => ind.react > 0 ? 'ぴょこんと跳ねて、うれしそうにしています。'
       : nightF > 0.5 ? '夜の海で、体をほんのり光らせています。'
       : tn < 0.25 ? '潮が引いて、みんなで寄りそっています。' : 'ふわふわと、仲間といっしょにただよっています。',
@@ -5574,7 +5573,6 @@ const GROUPS = {
     { name: 'ヒトデ', members: ['hitode', 'aohitode', 'manjuhitode'] },
     { name: '群れの魚', members: ['mejina', 'rurisuzume', 'misuji'] },
     { name: 'チョウ', members: ['tsumabeni', 'ogomadara', 'asagimadara'] },
-    { name: 'ぷくぷく', members: ['pukupuku'] },
     { name: 'MOMO', members: ['momo'] },
     { name: '太陽と惑星', sky: true, members: ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn'] },
     { name: '星と星座', sky: true, members: ['orion', 'subaru', 'sirius', 'hokuto', 'cassiopeia', 'polaris', 'summer', 'cygnus', 'scorpius', 'crux', 'canopus'] },
@@ -5788,8 +5786,11 @@ function select(ind, fly) {
   $('cardDesc').textContent = sp.desc;
   $('cardSize').textContent = sp.size;
   $('cardHabitat').textContent = sp.habitat;
-  $('cardBuy').href = BOOTH.set || BOOTH.shop;
-  $('cardBuy').hidden = !BOOTH_SPECIES.has(ind.species);   // only the creatures in the BOOTH model set
+  const game = ind.species === 'pukupuku';
+  $('cardBuy').href = game ? PUKU_GAME : BOOTH.set || BOOTH.shop;
+  $('cardBuy').textContent = game ? 'ぷくぷくのゲームで遊ぶ' : '3D モデル（BOOTH）';
+  $('cardBuy').title = game ? 'ぷくぷくのゲーム（新しいタブで開きます）' : 'Moonlit Props「磯の生き物 3D セット」（FBX / GLB / Blender）';
+  $('cardBuy').hidden = !game && !BOOTH_SPECIES.has(ind.species);   // the BOOTH model set, or the game
   $('cardPov').hidden = NO_POV.has(ind.species) || !!ind.staticPos;   // only creatures that move get an eye view
   sideGroup(ind.sideName).add(ring.parent);
   $('cardNow').textContent = sp.status(ind);
