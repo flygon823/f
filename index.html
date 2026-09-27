@@ -51,6 +51,7 @@
   .brand, .caption, .credit, .species button { transition: color 1.2s ease; }
   #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
   #stage.hovering canvas { cursor: pointer; }
+  #stage.grabbing canvas { cursor: grabbing; }
 
   .underwater {
     position: fixed; inset: 0; pointer-events: none; opacity: 0;
@@ -336,7 +337,7 @@
   <button type="button" id="rareGo">見にいく</button>
 </div>
 <div class="tip" id="tip" hidden></div>
-<p class="credit">ドラッグで回転・スクロールで拡大。生き物は見やすい大きさに変えています。</p>
+<p class="credit">ドラッグで回転・右ドラッグでつかんで動かす・スクロールで拡大。生き物は見やすい大きさに変えています。</p>
 <div class="loader" id="loader"><p id="loaderText">月と潮の磯をひらいています</p></div>
 
 <script>
@@ -492,6 +493,7 @@ controls.addEventListener('start', () => { dragging = true; });
 controls.addEventListener('end', () => { dragging = false; });
 controls.target.set(0, CEN, 0);
 controls.noPan = true;   // no sliding the planet off-centre with a right drag or two fingers
+controls.mouseButtons.RIGHT = -1;   // the right button grabs the ground instead (see "grabbing the planet")
 
 const hemi = new THREE.HemisphereLight('#f3f7fb', '#cdbb94', 0.9);
 scene.add(hemi);
@@ -1796,15 +1798,18 @@ Object.assign(SPECIES, {
 /* ------------------------------------------------------------------ ぷくぷく */
 // A few round, see-through little folk drifting in the open water off the shore, each
 // its own colour and face. They bob and squash as they swim, turn to face whoever is
-// watching, and glow faintly at night.
-function faceTex(kind) {
+// watching, and glow faintly at night. Every colour on them is one the ぷくぷく game
+// itself uses: the body colours of its balls, its cheek pink, and the same ink (the body
+// colour pushed toward near-black) for the eyes and mouth.
+const PUKU_CHEEK = '#F59AC0';
+function faceTex(kind, color) {
   const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
   const g = c.getContext('2d');
   g.lineCap = 'round'; g.lineJoin = 'round';
-  const ink = '#2a2440';
+  const ink = '#' + new THREE.Color(color).lerp(new THREE.Color(26 / 255, 18 / 255, 34 / 255), 0.86).getHexString();
   g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 10;
   const eyeY = 112, ex = 58;
-  const blush = (x) => { g.save(); g.fillStyle = 'rgba(255,120,160,0.55)'; g.beginPath(); g.ellipse(x, eyeY + 38, 24, 14, 0, 0, TAU); g.fill(); g.restore(); };
+  const blush = (x) => { g.save(); g.globalAlpha = 0.55; g.fillStyle = PUKU_CHEEK; g.beginPath(); g.ellipse(x, eyeY + 38, 24, 14, 0, 0, TAU); g.fill(); g.restore(); };
   const dotEye = (x) => { g.beginPath(); g.ellipse(x, eyeY, 12, 16, 0, 0, TAU); g.fill(); g.save(); g.fillStyle = '#ffffff'; g.beginPath(); g.arc(x - 4, eyeY - 6, 5, 0, TAU); g.fill(); g.restore(); };
   const happyEye = (x) => { g.beginPath(); g.arc(x, eyeY + 8, 16, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); };
   const winkEye = (x) => { g.beginPath(); g.moveTo(x - 14, eyeY - 10); g.lineTo(x + 8, eyeY); g.lineTo(x - 14, eyeY + 10); g.stroke(); };
@@ -1830,9 +1835,9 @@ function makePuku(color, face, r) {
   const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
   const shell = new THREE.MeshStandardMaterial({ color, roughness: 0.12, metalness: 0, transparent: true, opacity: 0.32, emissive: color, emissiveIntensity: 0.03, depthWrite: false });
   const ball = new THREE.Mesh(sphereGeo, shell); ball.scale.setScalar(r); ball.renderOrder = 3; body.add(ball);
-  const core = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.45), roughness: 0.3, transparent: true, opacity: 0.14, depthWrite: false }));
+  const core = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.3, transparent: true, opacity: 0.14, depthWrite: false }));
   core.scale.setScalar(r * 0.72); core.position.y = -r * 0.08; core.renderOrder = 3; body.add(core);
-  const faceM = PUKU_FACES[face] || (PUKU_FACES[face] = new THREE.MeshLambertMaterial({ map: faceTex(face), transparent: true, opacity: 0.6, depthWrite: false }));
+  const fk = face + color, faceM = PUKU_FACES[fk] || (PUKU_FACES[fk] = new THREE.MeshLambertMaterial({ map: faceTex(face, color), transparent: true, opacity: 0.6, depthWrite: false }));
   const fc = new THREE.Mesh(pukuFaceGeo, faceM); fc.scale.setScalar(r); fc.renderOrder = 4; body.add(fc);
   // the glint of light on the top of the ball
   const hiM = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.3, depthWrite: false });
@@ -1841,8 +1846,10 @@ function makePuku(color, face, r) {
   return { group: g, body, shell };
 }
 {
-  // only a few, small and pale, keeping low among the weed: easy to miss unless you look
-  const PUKU = [['#aab8d4', 'dot', 0.12], ['#b4cdc2', 'happy', 0.1], ['#cfc3a6', 'sleepy', 0.09]];
+  // only a few, small and pale, keeping low among the weed: easy to miss unless you look.
+  // The palest three of the game's balls, each with the face it wears there:
+  // mint (round eyes), sky blue (^▽^) and the clear one (asleep)
+  const PUKU = [['#BDEBD5', 'dot', 0.12], ['#7CC8F0', 'happy', 0.1], ['#E6EEF0', 'sleepy', 0.09]];
   const home = { x: -4.8, z: 5, r: 1.9 };
   const deep = (x, z) => seF(x, z) < 0.8 && heightAt(x, z) < -1.35;
   const spots = spotsIn(PUKU.length, home.x, home.z, home.r, deep);
@@ -5864,7 +5871,7 @@ canvas.addEventListener('pointermove', (e) => {
   povDrag = { x: e.clientX, y: e.clientY };
 });
 canvas.addEventListener('pointerup', (e) => {
-  if (!down || pov) { down = null; return; }
+  if (!down || pov || e.button !== 0) { down = null; return; }
   const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dt = performance.now() - down.t;
   down = null;
   if (moved > 6 || dt > 600) return;
@@ -5889,6 +5896,54 @@ canvas.addEventListener('pointermove', (e) => {
   } else ui.tip.hidden = true;
 });
 canvas.addEventListener('pointerleave', () => { ui.tip.hidden = true; });
+
+// grabbing the planet: hold the right button on any spot and drag, and that spot stays
+// under the pointer as the planet turns beneath it. The camera still only swings round
+// the planet's centre, so the planet keeps its size and place; only which part faces
+// you changes, the way a globe turns under your hand.
+const grabWalls = () => [terrainMesh, ...rockMeshes, iceTerrain, ...iceRocks];
+const grabQ = new THREE.Quaternion(), grabA = new THREE.Vector3(), grabB = new THREE.Vector3();
+let grab = null;
+// where the pointer's ray meets the sphere of radius r round the planet's centre; past the
+// rim, the nearest point of the ray is lifted onto the sphere so the drag eases off there
+function grabPoint(e, r, out) {
+  setNdc(e);
+  const ray = raycaster.ray, oc = grabA.copy(ray.origin).sub(PLANET_C);
+  const tc = -oc.dot(ray.direction), d2 = oc.lengthSq() - tc * tc;
+  const t = d2 < r * r ? tc - Math.sqrt(r * r - d2) : tc;
+  return ray.at(Math.max(t, 0), out).sub(PLANET_C).setLength(r);
+}
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 2 || e.pointerType !== 'mouse' || pov) return;
+  setNdc(e);
+  const hit = raycaster.intersectObjects(grabWalls(), false)[0];
+  // under water the hand meets the sea's surface, not the floor seen through it
+  const r = Math.max(hit ? hit.point.distanceTo(PLANET_C) : 0, PR);
+  grab = { id: e.pointerId, r, at: grabPoint(e, r, new THREE.Vector3()) };
+  camAnim = null; dragging = true; controls._lastAngle = 0;   // stop any glide from a spin
+  canvas.setPointerCapture(e.pointerId);
+  stage.classList.add('grabbing');
+  ui.tip.hidden = true;
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!grab || e.pointerId !== grab.id) return;
+  // turn the camera round the centre by whatever carries the spot now under the
+  // pointer back to the grabbed one, so the grabbed spot comes to the pointer
+  const now = grabPoint(e, grab.r, grabB);
+  grabQ.setFromUnitVectors(now.normalize(), grabA.copy(grab.at).normalize());
+  camera.position.sub(PLANET_C).applyQuaternion(grabQ).add(PLANET_C);
+  camera.up.applyQuaternion(grabQ);
+  camera.quaternion.premultiply(grabQ);
+  camera.updateMatrixWorld();
+});
+const endGrab = (e) => {
+  if (!grab || e.pointerId !== grab.id) return;
+  grab = null; dragging = false;
+  stage.classList.remove('grabbing');
+};
+canvas.addEventListener('pointerup', endGrab);
+canvas.addEventListener('pointercancel', endGrab);
 
 // turning the diorama over
 const SIDE_TEXT = {
