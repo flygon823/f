@@ -4801,6 +4801,36 @@ const YEAR_START = new Date(today.getFullYear(), 0, 1).getTime();
 const moonAge = () => ((((YEAR_START + yearT * 365 * 86400000) - NEW_MOON_REF) / 86400000) % SYNODIC + SYNODIC) % SYNODIC;
 
 // stars at infinity: the field follows the camera so they never shift with it
+// Stars drawn as light, not squares: a bright core with a soft falling glow, and on
+// the brightest ones the faint cross of spikes a camera sees. They hold steady in
+// space and twinkle only when seen through the air near the ground.
+const STAR_U = { uOpacity: { value: 1 }, uTime: { value: 0 }, uTwinkle: { value: 0 }, uPx: { value: Math.min(window.devicePixelRatio, 2) } };
+function starMat(size, spikes = 0) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...STAR_U, uSize: { value: size }, uSpikes: { value: spikes } },
+    vertexShader: `uniform float uSize, uPx, uTime, uTwinkle; varying vec3 vCol; varying float vTw;
+      void main() {
+        vCol = color;
+        float ph = fract(sin(dot(position.xy + position.z, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
+        vTw = 1.0 - uTwinkle * (0.35 + 0.35 * sin(uTime * (3.0 + ph) + ph * 7.0)) * step(0.5, fract(ph * 3.7) + 0.4);
+        gl_PointSize = uSize * uPx * 4.0;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `uniform float uOpacity, uSpikes; varying vec3 vCol; varying float vTw;
+      void main() {
+        vec2 p = (gl_PointCoord - 0.5) * 2.0;
+        float r = length(p);
+        if (r > 1.0) discard;
+        float core = exp(-r * r * 38.0) * 1.3;
+        float glow = (exp(-r * 6.0) * 0.55 + exp(-r * r * 12.0) * 0.3) * (1.0 + uSpikes * 1.3);
+        float spike = uSpikes * (exp(-abs(p.x) * 55.0) + exp(-abs(p.y) * 55.0)) * pow(1.0 - r, 2.5) * 0.6;
+        float a = (core + glow + spike) * uOpacity * vTw;
+        vec3 c = mix(vCol, vec3(1.0), core * 0.7);
+        gl_FragColor = vec4(c * a, a);
+      }`,
+    vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+}
 const starfield = new THREE.Group();
 scene.add(starfield);
 {
@@ -4819,7 +4849,7 @@ scene.add(starfield);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    const pts = new THREE.Points(g, starMat(size * 0.9));
     pts.renderOrder = -2;
     starfield.add(pts);
   };
@@ -4990,7 +5020,7 @@ starfield.add(skyGroupStars);
 {
   // the named stars, sized by how bright they are
   const keys = Object.keys(SKY_STARS), pos = new Float32Array(keys.length * 3), col = new Float32Array(keys.length * 3);
-  const layers = [[-2, 0.9, 5.2], [0.9, 1.9, 3.8], [1.9, 3.2, 2.8], [3.2, 9, 2]];
+  const layers = [[-2, 0.9, 6], [0.9, 1.9, 4.2], [1.9, 3.2, 3], [3.2, 9, 2.2]];
   for (const [lo, hi, size] of layers) {
     const ks = keys.filter(k => SKY_STARS[k][2] >= lo && SKY_STARS[k][2] < hi);
     if (!ks.length) continue;
@@ -4999,7 +5029,7 @@ starfield.add(skyGroupStars);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(p, 3));
     g.setAttribute('color', new THREE.BufferAttribute(c, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    const pts = new THREE.Points(g, starMat(size * (lo < 0.9 ? 1.5 : 1), lo < 0.9 ? 1 : lo < 1.9 ? 0.35 : 0));
     pts.renderOrder = -1;
     skyGroupStars.add(pts);
   }
@@ -5202,8 +5232,9 @@ function updateDay(dt) {
   }
   const starA = 1 - inAir * smooth(-0.12, 0.15, e);
   starfield.visible = starA > 0.01;
-  starfield.children.forEach(p => { if (p.material) p.material.opacity = starA; });
-  skyGroupStars.children.forEach(p => { if (p.isPoints) p.material.opacity = starA; });
+  STAR_U.uOpacity.value = starA;
+  STAR_U.uTwinkle.value = inAir;
+  STAR_U.uTime.value = clock.elapsedTime;
   starAlpha = starA;
   sunGlow.material.opacity = 1 - inAir * 0.5;
   document.body.classList.toggle('dusk', bright < (document.body.classList.contains('dusk') ? 0.55 : 0.45));
