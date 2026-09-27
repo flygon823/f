@@ -5090,7 +5090,8 @@ function selectSky(hit) {
   $('cardPov').hidden = true; $('cardBuy').hidden = true;
   ui.card.hidden = false;
   document.body.classList.add('has-card');
-  const markAt = hit.star || (o.type === 'star' ? hit.key : null);
+  // the ring marks a single star only; a constellation is shown by its whole figure lighting up
+  const markAt = o.type === 'star' ? hit.key : null;
   skyMark.visible = !!markAt;
   if (markAt) skyMark.position.copy(skyDirs[markAt]).multiplyScalar(SKY_R * 0.99);
 }
