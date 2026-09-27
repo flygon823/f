@@ -475,7 +475,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.42;
 scene.fog = new THREE.Fog('#4f9e9b', 400, 1000);
 
-const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 250);
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 420);
 // Trackball rotation has no pole limit, so the planet can be turned any way and keeps
 // gliding a little after the pointer is released.
 const controls = new TrackballControls(camera, renderer.domElement);
@@ -5063,7 +5063,15 @@ const skyMark = new THREE.Sprite(new THREE.SpriteMaterial({ map: (() => {
 skyMark.scale.setScalar(0.05); skyMark.visible = false; skyMark.renderOrder = -1;
 skyGroupStars.add(skyMark);
 let skySel = null, starAlpha = 1;
+let skyCardTimer = 0;
 function updateSkyLines(t) {
+  // keep a chosen planet's card current as it moves
+  if (skySel && (skyCardTimer -= 1 / 60) <= 0) {
+    skyCardTimer = 0.5;
+    const o = SKY_OBJECTS[skySel];
+    $('cardNow').textContent = o.status();
+    if (typeof o.size === 'function') $('cardSize').textContent = o.size();
+  }
   for (const [k, l] of Object.entries(conLines)) {
     const on = skySel && (skySel === k || SKY_OBJECTS[skySel].con === k);
     l.material.opacity = starAlpha * (on ? 0.75 + Math.sin(t * 2.5) * 0.15 : 0.16);
@@ -5073,8 +5081,11 @@ function updateSkyLines(t) {
 // clicks and hovers: the nearest named star within a few pixels, or a figure line
 const skyP = new THREE.Vector3(), skyQ = new THREE.Vector3();
 function pickSky(e) {
-  if (!starfield.visible || starAlpha < 0.35 || pov) return null;
+  if (pov) return null;
   const r = renderer.domElement.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const body = pickBody(mx, my, r);
+  if (body) return { key: body, star: null };
+  if (!starfield.visible || starAlpha < 0.35) return null;
   const toPx = (v, out) => {
     out.copy(v).multiplyScalar(SKY_R).add(starfield.position).project(camera);
     if (out.z > 1) return false;
@@ -5108,12 +5119,14 @@ function selectSky(hit) {
   if (sel) deselect();
   const o = SKY_OBJECTS[hit.key];
   skySel = hit.key;
+  if (o.type === 'body') { skyFreeze = skyF; skyFollow.copy(skyDirOf(hit.key)); }
+  syncChips();
   $('cardKind').textContent = o.kind;
   $('cardName').textContent = o.name;
   $('cardSci').textContent = o.sci;
   $('cardDesc').textContent = o.desc;
   $('cardSizeL').textContent = o.type === 'star' ? '明るさ' : '大きさ';
-  $('cardSize').textContent = o.size;
+  $('cardSize').textContent = typeof o.size === 'function' ? o.size() : o.size;
   $('cardHabL').textContent = '見ごろ';
   $('cardHabitat').textContent = o.habitat;
   $('cardNow').textContent = o.status();
@@ -5125,7 +5138,48 @@ function selectSky(hit) {
   skyMark.visible = !!markAt;
   if (markAt) skyMark.position.copy(skyDirs[markAt]).multiplyScalar(SKY_R * 0.99);
 }
-function clearSky() { skySel = null; skyMark.visible = false; }
+function clearSky() { skySel = null; skyMark.visible = false; skyFreeze = null; }
+// While the Sun, the Moon or a planet is chosen the sky holds still (it would otherwise turn
+// with the view), and the camera follows it as the hours move it along.
+let skyFreeze = null, skyF = 0;
+const skyFollow = new THREE.Vector3(), skyFollowQ = new THREE.Quaternion();
+function skyDirOf(key) {
+  const o = SKY_OBJECTS[key];
+  if (o.type === 'body') return SKY_BODIES.find(b => b[0] === key)[1].getWorldPosition(new THREE.Vector3()).sub(PLANET_C).normalize();
+  const ks = o.type === 'con' ? [...new Set(o.lines.flat())] : [key];
+  return ks.reduce((c, k) => c.add(skyDirs[k]), new THREE.Vector3()).normalize();
+}
+// fly to where the object shows just beside the planet
+function flySky(key) {
+  if (!homePose) homePose = { ...currentPose(), view: currentView };
+  // the angle to stand off so the object shows the wanted angle beside the planet's centre;
+  // nearer things (the Moon, the planets) shift toward the planet as the camera moves
+  const o = SKY_OBJECTS[key], want = THREE.MathUtils.degToRad(o.type === 'con' ? 17.5 : 16.5);
+  const L = o.type === 'body' ? SKY_BODIES.find(x => x[0] === key)[1].getWorldPosition(new THREE.Vector3()).distanceTo(PLANET_C) : Infinity;
+  const seen = (x) => Math.atan2(56 * Math.sin(x), 56 * Math.cos(x)) - Math.atan2(56 * Math.sin(x), 56 * Math.cos(x) + L);
+  let lo = 0, hi = 1.4;
+  for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (seen(m) < want) lo = m; else hi = m; }
+  const d = skyDirOf(key), a = (lo + hi) / 2;
+  let perp = new THREE.Vector3().crossVectors(d, camera.up);
+  if (perp.lengthSq() < 1e-4) perp.crossVectors(d, new THREE.Vector3(1, 0, 0));
+  perp.normalize();
+  // with the camera's up taken as d × perp, the object sits left of the planet, clear of
+  // the card on the right
+  const pos = PLANET_C.clone().addScaledVector(d, -Math.cos(a) * 56).addScaledVector(perp, Math.sin(a) * 56);
+  flyTo(pos, PLANET_C.clone(), 1.8, new THREE.Vector3().crossVectors(d, perp).normalize());
+  setViewButtons('');
+  skyFollow.copy(d);
+}
+function followSky() {
+  if (!skySel || SKY_OBJECTS[skySel].type !== 'body' || camAnim) { if (skySel && SKY_OBJECTS[skySel].type === 'body') skyFollow.copy(skyDirOf(skySel)); return; }
+  const d = skyDirOf(skySel);
+  if (skyFollow.lengthSq() > 0) {
+    skyFollowQ.setFromUnitVectors(skyFollow, d);
+    camera.position.sub(PLANET_C).applyQuaternion(skyFollowQ).add(PLANET_C);
+    camera.up.applyQuaternion(skyFollowQ);
+  }
+  skyFollow.copy(d);
+}
 
 function glowTex(stops) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -5164,6 +5218,178 @@ function moonTex() {
 }
 const moonBall = new THREE.Mesh(new THREE.SphereGeometry(2.3, 48, 32), new THREE.MeshStandardMaterial({ map: moonTex(), roughness: 1, metalness: 0, envMapIntensity: 0 }));
 scene.add(moonBall);
+// The planets you can see by eye, where they really are on the in-app date. Positions
+// come from mean orbital elements (JPL, J2000), and each is placed by how far east or
+// west of the Sun it is along the ecliptic, so Venus shines near the Sun at dusk or dawn
+// and the outer planets rise and set with the sky. They are drawn far larger than real
+// (like the Moon) so they can be seen and clicked; each is lit by the Sun, so Venus and
+// Mercury show phases.
+const ORBITS = {
+  //        a        e          I          L             varpi        Omega       (per century)
+  mercury: [0.38709927, 0.20563593, 7.00497902, 252.25032350, 77.45779628, 48.33076593, 0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081],
+  venus: [0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255, 0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418],
+  earth: [1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0, 0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0],
+  mars: [1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891, 0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343],
+  jupiter: [5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909, -0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106],
+  saturn: [9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448, -0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794],
+};
+function helio(key, T) {
+  const o = ORBITS[key], D = Math.PI / 180;
+  const a = o[0] + o[6] * T, e = o[1] + o[7] * T, I = (o[2] + o[8] * T) * D, L = o[3] + o[9] * T, vp = o[4] + o[10] * T, Om = (o[5] + o[11] * T) * D;
+  const w = vp * D - Om;
+  let M = ((L - vp) % 360 + 540) % 360 - 180; M *= D;
+  let E = M + e * Math.sin(M);
+  for (let i = 0; i < 6; i++) E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+  const xp = a * (Math.cos(E) - e), yp = a * Math.sqrt(1 - e * e) * Math.sin(E);
+  const cw = Math.cos(w), sw = Math.sin(w), cO = Math.cos(Om), sO = Math.sin(Om), cI = Math.cos(I), sI = Math.sin(I);
+  return new THREE.Vector3(
+    (cw * cO - sw * sO * cI) * xp + (-sw * cO - cw * sO * cI) * yp,
+    (cw * sO + sw * cO * cI) * xp + (-sw * sO + cw * cO * cI) * yp,
+    (sw * sI) * xp + (cw * sI) * yp);
+}
+const appDate = () => new Date(YEAR_START + yearT * 365 * 86400000 + hour * 3600000);
+// where a planet is seen from Earth: its angle east of the Sun along the ecliptic, its
+// height above the ecliptic, and its distance (AU)
+function planetSky(key) {
+  const T = (appDate().getTime() / 86400000 + 2440587.5 - 2451545) / 36525;
+  const earth = helio('earth', T), g = helio(key, T).sub(earth), sun = earth.clone().negate();
+  const e1 = sun.clone().normalize(), e3 = new THREE.Vector3(0, 0, 1), e2 = e3.clone().cross(e1).normalize();
+  const d = g.clone().normalize();
+  return { east: Math.atan2(d.dot(e2), d.dot(e1)), lat: Math.asin(clamp(d.dot(e3), -1, 1)), dist: g.length(), sunDist: sun.length(), helioDist: helio(key, T).length() };
+}
+function bandTex(stops, spots) {
+  const W = 256, H = 128, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, H);
+  stops.forEach(([o, col]) => gr.addColorStop(o, col));
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  const rnd = mulberry32(3);
+  for (let i = 0; i < 60; i++) { g.fillStyle = `rgba(255,255,255,${rnd() * 0.06})`; g.fillRect(0, rnd() * H, W, 1 + rnd() * 2); }
+  if (spots) spots(g, W, H, rnd);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const PLANET_LOOK = {
+  mercury: { r: 0.9, dist: 118, map: bandTex([[0, '#8d8a86'], [0.5, '#a19d97'], [1, '#86827e']], (g, W, H, rnd) => { for (let i = 0; i < 70; i++) { g.fillStyle = `rgba(60,58,55,${0.2 + rnd() * 0.3})`; g.beginPath(); g.arc(rnd() * W, rnd() * H, 1 + rnd() * 5, 0, TAU); g.fill(); } }) },
+  venus: { r: 1.5, dist: 124, map: bandTex([[0, '#e8d6a8'], [0.3, '#f3e4bd'], [0.6, '#eadbb2'], [1, '#e3cf9d']]) },
+  mars: { r: 1.2, dist: 132, map: bandTex([[0, '#f4eee6'], [0.08, '#c8653a'], [0.5, '#b8552e'], [0.92, '#c46a40'], [1, '#f0ebe3']], (g, W, H, rnd) => { for (let i = 0; i < 14; i++) { g.fillStyle = `rgba(90,40,25,${0.3 + rnd() * 0.3})`; g.beginPath(); g.ellipse(rnd() * W, H * (0.3 + rnd() * 0.4), 8 + rnd() * 22, 4 + rnd() * 8, 0, 0, TAU); g.fill(); } }) },
+  jupiter: { r: 3.4, dist: 150, map: bandTex([[0, '#c9b69a'], [0.12, '#e8dccb'], [0.22, '#b08a66'], [0.3, '#efe6d6'], [0.4, '#c49a70'], [0.46, '#f2ead8'], [0.54, '#b9926c'], [0.62, '#ece2cf'], [0.72, '#a98262'], [0.82, '#e4d8c4'], [1, '#bfae95']],
+    (g, W, H) => { g.fillStyle = 'rgba(178,88,60,0.85)'; g.beginPath(); g.ellipse(W * 0.62, H * 0.6, 14, 7, 0, 0, TAU); g.fill(); }) },
+  saturn: { r: 2.9, dist: 160, map: bandTex([[0, '#d9c79a'], [0.3, '#e8d9b0'], [0.45, '#d2bd8c'], [0.55, '#eadcb6'], [0.7, '#cdb785'], [1, '#d6c498']]) },
+};
+const planetMeshes = {};
+for (const [k, L] of Object.entries(PLANET_LOOK)) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(L.r, 40, 24), new THREE.MeshStandardMaterial({ map: L.map, roughness: 1, metalness: 0, envMapIntensity: 0,
+    // Venus's clouds throw back so much sunlight that it outshines everything but the Moon
+    ...(k === 'venus' ? { emissive: '#fff4d8', emissiveMap: L.map, emissiveIntensity: 0.35 } : {}) }));
+  scene.add(m);
+  planetMeshes[k] = m;
+}
+// Saturn's rings, and Jupiter's four big moons
+{
+  const c = document.createElement('canvas'); c.width = 256; c.height = 4;
+  const g = c.getContext('2d');
+  for (let x = 0; x < 256; x++) {
+    const u = x / 255, gap = u > 0.62 && u < 0.67 ? 0.1 : 1;            // the Cassini division
+    const a = (u < 0.08 ? u / 0.08 * 0.3 : u < 0.35 ? 0.35 : 0.85) * gap * (0.85 + 0.15 * Math.sin(u * 90));
+    g.fillStyle = `rgba(${220 - u * 30},${205 - u * 30},${170 - u * 30},${a})`; g.fillRect(x, 0, 1, 4);
+  }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const geo = new THREE.RingGeometry(3.6, 6.6, 96, 1);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) { const r = Math.hypot(pos.getX(i), pos.getY(i)); uv.setXY(i, (r - 3.6) / 3, 0.5); }
+  const ring = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, roughness: 1, envMapIntensity: 0, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;   // in Saturn's equator
+  planetMeshes.saturn.add(ring);
+  planetMeshes.saturn.userData.ring = ring;
+  const moons = [];
+  for (const [d, r, per] of [[5.2, 0.22, 1.77], [6.3, 0.2, 3.55], [7.6, 0.3, 7.15], [9.4, 0.27, 16.7]]) {
+    const mm = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 10), new THREE.MeshStandardMaterial({ color: '#d8d0c0', roughness: 1, envMapIntensity: 0 }));
+    planetMeshes.jupiter.add(mm); moons.push({ mm, d, per });
+  }
+  planetMeshes.jupiter.userData.moons = moons;
+}
+const planetState = {};
+const plDir = new THREE.Vector3(), plTmp = new THREE.Vector3();
+function updatePlanets() {
+  const days = appDate().getTime() / 86400000;
+  for (const k of Object.keys(PLANET_LOOK)) {
+    const st = planetState[k] = planetSky(k);
+    skyDir(hour, st.east, plDir).multiplyScalar(Math.cos(st.lat)).addScaledVector(SUN_B, Math.sin(st.lat)).normalize();
+    plDir.applyAxisAngle(AXIS_Z, -Math.PI * skyF);
+    const m = planetMeshes[k];
+    m.position.copy(PLANET_C).addScaledVector(plDir, PLANET_LOOK[k].dist);
+    // spin axes stand about square to the orbits (Mars tilted like Earth, Jupiter barely)
+    m.quaternion.setFromUnitVectors(UP, plAxis.copy(SUN_B).applyAxisAngle(AXIS_Z, -Math.PI * skyF));
+    m.rotateX(PLANET_TILT[k] || 0);
+    m.rotateY(days * (PLANET_SPIN[k] || 0) * TAU % TAU);
+  }
+  // Saturn is set so its rings are seen nearly edge-on, as they are these years (edge-on in 2025)
+  const sat = planetMeshes.saturn, toUs = plTmp.copy(PLANET_C).sub(sat.position).normalize();
+  const along = new THREE.Vector3().crossVectors(toUs, plAxis).normalize(), up = new THREE.Vector3().crossVectors(along, toUs).normalize();
+  sat.quaternion.setFromUnitVectors(UP, up.multiplyScalar(Math.cos(0.14)).addScaledVector(toUs, Math.sin(0.14)).normalize());
+  // Jupiter's four moons circle in its equator, so from here they sit in a line
+  for (const mo of planetMeshes.jupiter.userData.moons) {
+    const a = days / mo.per * TAU;
+    mo.mm.position.set(Math.cos(a) * mo.d, 0, Math.sin(a) * mo.d);
+  }
+}
+const PLANET_TILT = { mars: 0.44, jupiter: 0.05, saturn: 0.47, mercury: 0, venus: 0.05 };
+const PLANET_SPIN = { mercury: 0.017, venus: -0.004, mars: 0.97, jupiter: 2.4, saturn: 2.2 };
+const plAxis = new THREE.Vector3();
+const kmTxt = (au) => { const km = au * 1.496e8; return km >= 1e8 ? `約${(km / 1e8).toFixed(1)}億km` : `約${Math.round(km / 1e4).toLocaleString()}万km`; };
+const sideTxt = (k) => { const st = planetState[k]; if (!st) return ''; const deg = Math.round(Math.abs(st.east) * 180 / Math.PI); return `太陽から${st.east > 0 ? '東' : '西'}へ約${deg}°`; };
+const moonPhaseName = (a) => a < 1.5 || a > 28 ? '新月のころ' : a < 5 ? '三日月のころ' : a < 9.5 ? '上弦の月のころ' : a < 13.5 ? '満月に向かって満ちていくところ' : a < 16.5 ? '満月' : a < 21 ? '満月から欠けていくところ' : a < 24.5 ? '下弦の月のころ' : '明け方の細い月のころ';
+Object.assign(SKY_OBJECTS, {
+  sun: { type: 'body', name: '太陽', sci: 'Sun', kind: '恒星・太陽系の中心',
+    desc: '太陽系のまん中で輝く恒星。水素がヘリウムに変わる核融合で、ばく大な光と熱を出しています。この小さな惑星の昼と夜も、太陽がどちらを照らしているかで決まります。',
+    size: '直径 約139万km（地球の約109倍）', habitat: '地球から 約1億5千万km',
+    status: () => `この惑星の${sunDir.dot(sideUpNow) > 0 ? side === 'ice' ? 'オホーツク側' : '南の島側' : '反対側'}を照らしています。表面は約6000℃です。` },
+  moon: { type: 'body', name: '月', sci: 'Moon', kind: '衛星・地球のまわり',
+    desc: '地球のまわりを約27日で回る衛星。太陽に照らされた部分だけが見えるので、約29.5日で満ち欠けをくり返します。潮の満ち引きを起こしているのも、月の引力です。',
+    size: '直径 約3,500km（地球の約4分の1）', habitat: '地球から 約38万km',
+    status: () => `月齢 ${moonAge().toFixed(1)}。${moonPhaseName(moonAge())}です。` },
+  mercury: { type: 'body', name: '水星', sci: 'Mercury', kind: '惑星・太陽にいちばん近い',
+    desc: '太陽のいちばん近くを回る小さな惑星。いつも太陽の近くにいるので、見られるのは夕方の西の空か明け方の東の空の、ほんの短い時間だけです。',
+    size: () => `直径 約4,900km・地球から${kmTxt(planetState.mercury?.dist ?? 1)}`, habitat: '夕方の西の空か、明け方の東の空の低いところ',
+    status: () => `${sideTxt('mercury')}。${planetState.mercury?.east > 0 ? '夕方、太陽を追うように沈みます。' : '明け方、太陽より先に昇ります。'}` },
+  venus: { type: 'body', name: '金星', sci: 'Venus', kind: '惑星・地球のとなり',
+    desc: '夜空で月の次に明るく輝く惑星。厚い雲につつまれていて、その雲が太陽の光を強くはね返します。夕方に見えるときは「宵の明星」、明け方は「明けの明星」と呼ばれます。望遠鏡で見ると、月のように満ち欠けします。',
+    size: () => `直径 約12,100km・地球から${kmTxt(planetState.venus?.dist ?? 1)}`, habitat: '夕方の西の空か、明け方の東の空',
+    status: () => `${sideTxt('venus')}。いまは${planetState.venus?.east > 0 ? '夕方の西の空に輝く「宵の明星」' : '明け方の東の空に輝く「明けの明星」'}です。` },
+  mars: { type: 'body', name: '火星', sci: 'Mars', kind: '惑星・赤い惑星',
+    desc: '赤く見える惑星。地面の砂に酸化鉄（さび）が多くふくまれているためです。北と南の極には白い氷の帽子があり、探査車が今も地表を調べています。',
+    size: () => `直径 約6,800km・地球から${kmTxt(planetState.mars?.dist ?? 1)}`, habitat: '夜空（約2年2か月ごとに地球に近づく）',
+    status: () => `${sideTxt('mars')}。${(planetState.mars?.dist ?? 2) < 0.8 ? '地球に近づいて、明るく見える時期です。' : '赤い光で輝いています。'}` },
+  jupiter: { type: 'body', name: '木星', sci: 'Jupiter', kind: '惑星・太陽系でいちばん大きい',
+    desc: '太陽系でいちばん大きなガスの惑星。しま模様は強い風で流れる雲で、「大赤斑」は地球がすっぽり入るほど大きな嵐です。まわりを回る4つの大きな月（ガリレオ衛星）は、双眼鏡でも見えます。',
+    size: () => `直径 約14万km（地球の約11倍）・地球から${kmTxt(planetState.jupiter?.dist ?? 5)}`, habitat: '夜空（約12年で星座を一周）',
+    status: () => `${sideTxt('jupiter')}。4つの衛星が、まわりを回っています。` },
+  saturn: { type: 'body', name: '土星', sci: 'Saturn', kind: '惑星・環のある惑星',
+    desc: '美しい環を持つガスの惑星。環は無数の氷のつぶでできていて、厚さは数十mしかありません。2025年に地球から見て環が真横を向いたため、いまは細い環が少しずつ開いてきているところです。',
+    size: () => `直径 約12万km（環をふくめると約27万km）・地球から${kmTxt(planetState.saturn?.dist ?? 9)}`, habitat: '夜空（約29年で星座を一周）',
+    status: () => `${sideTxt('saturn')}。細い環を、ほぼ真横から見ています。` },
+});
+const SKY_BODIES = [['sun', sunGlow, 3.5], ['moon', moonBall, 2.3], ...Object.entries(planetMeshes).map(([k, m]) => [k, m, k === 'saturn' ? 6 : PLANET_LOOK[k].r])];
+const bodyP = new THREE.Vector3(), bodyC = new THREE.Vector3();
+// the Sun, the Moon or a planet under the pointer (anything the planet itself hides is skipped)
+function pickBody(mx, my, r) {
+  let best = null, bestD = Infinity;
+  const f = r.height / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  for (const [k, obj, rad] of SKY_BODIES) {
+    if (!obj.visible) continue;
+    obj.getWorldPosition(bodyC);
+    const dist = bodyC.distanceTo(camera.position);
+    bodyP.copy(bodyC).project(camera);
+    if (bodyP.z > 1) continue;
+    const px = (bodyP.x + 1) / 2 * r.width, py = (1 - bodyP.y) / 2 * r.height, pr = Math.max(12, rad / dist * f * 1.15);
+    const d = Math.hypot(px - mx, py - my);
+    if (d > pr || d >= bestD) continue;
+    // hidden behind this little planet?
+    const seg = bodyC.clone().sub(camera.position), u = clamp(PLANET_C.clone().sub(camera.position).dot(seg) / seg.lengthSq(), 0, 1);
+    if (camera.position.clone().addScaledVector(seg, u).distanceTo(PLANET_C) < PR + 0.3 && u < 0.99) continue;
+    best = k; bestD = d;
+  }
+  return best;
+}
 
 // the page behind the canvas: space, or the sky's own colour when the camera is down in
 // the atmosphere (by the sun's height there)
@@ -5186,7 +5412,8 @@ function updateDay(dt) {
   const elong = moonAge() / SYNODIC * TAU, lit = (1 - Math.cos(elong)) / 2;
   skyDir(hour, elong, moonDir).addScaledVector(SUN_B, 0.09).normalize();
   // the clock is the time on the side being looked at, so the sky turns round with the view
-  sunDir.applyAxisAngle(AXIS_Z, -Math.PI * flipF); moonDir.applyAxisAngle(AXIS_Z, -Math.PI * flipF);
+  skyF += ((skyFreeze ?? flipF) - skyF) * Math.min(1, dt * 3);
+  sunDir.applyAxisAngle(AXIS_Z, -Math.PI * skyF); moonDir.applyAxisAngle(AXIS_Z, -Math.PI * skyF);
   sun.position.copy(PLANET_C).addScaledVector(sunDir, 40);
   sun.target.position.copy(PLANET_C);
   sun.intensity = 2.3;
@@ -5196,6 +5423,7 @@ function updateDay(dt) {
   moon.intensity = 0.16 * lit;
   sunGlow.position.copy(PLANET_C).addScaledVector(sunDir, 170);
   moonBall.position.copy(PLANET_C).addScaledVector(moonDir, 78);
+  updatePlanets();
   // sky light comes from the sun's side: the day side gets a blue fill, the night side
   // only a little starlight
   hemi.position.copy(sunDir);
@@ -5348,6 +5576,8 @@ const GROUPS = {
     { name: 'チョウ', members: ['tsumabeni', 'ogomadara', 'asagimadara'] },
     { name: 'ぷくぷく', members: ['pukupuku'] },
     { name: 'MOMO', members: ['momo'] },
+    { name: '太陽と惑星', sky: true, members: ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn'] },
+    { name: '星と星座', sky: true, members: ['orion', 'subaru', 'sirius', 'hokuto', 'cassiopeia', 'polaris', 'summer', 'cygnus', 'scorpius', 'crux', 'canopus'] },
   ],
   ice: [
     { name: '流氷', members: ['ryuhyo'] },
@@ -5361,17 +5591,27 @@ const GROUPS = {
     { name: 'ウサギ', members: ['usagi', 'nakiusagi'] },
     { name: 'リス', members: ['shimarisu', 'ezorisu', 'momonga'] },
     { name: '木と花', members: ['sakura', 'nanakamado', 'hamanasu'] },
+    { name: '太陽と惑星', sky: true, members: ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn'] },
+    { name: '星と星座', sky: true, members: ['orion', 'subaru', 'sirius', 'hokuto', 'cassiopeia', 'polaris', 'summer', 'cygnus', 'scorpius', 'crux', 'canopus'] },
   ],
 };
 let chipBtns = {}, memberBtns = {}, openGroup = null;
 const cycle = {};
 const groupsNow = () => GROUPS[side]
-  .map(g => ({ ...g, members: side === 'ice' ? g.members.filter(k => inds.some(i => i.species === k && isActive(i))) : g.members }))
+  .map(g => ({ ...g, members: side === 'ice' && !g.sky ? g.members.filter(k => inds.some(i => i.species === k && isActive(i))) : g.members }))
   .filter(g => g.members.length);
 const groupOf = (key) => groupsNow().find(g => g.members.includes(key));
 function pickSpecies(key) {
   // pressing the creature already shown puts it away and returns to the earlier view
   if (sel && sel.species === key) { if (pov) exitPov(false); deselect(true); return; }
+  if (SKY_OBJECTS[key]) {
+    if (skySel === key) { deselect(true); return; }
+    if (pov) exitPov(false);
+    if (sel) { const hp = homePose; deselect(); homePose = hp; }
+    selectSky({ key, star: null });
+    flySky(key);
+    return;
+  }
   const list = inds.filter(i => i.species === key && !i.hidden);
   if (!list.length) return;
   cycle[key] = ((cycle[key] ?? -1) + 1) % list.length;
@@ -5403,15 +5643,15 @@ function buildMembers() {
   row.replaceChildren(); memberBtns = {};
   row.hidden = !g;
   if (!g) return;
-  for (const k of g.members) { const b = chip(SPECIES[k].name.replace('（幼魚）', ''), () => pickSpecies(k)); row.appendChild(b); memberBtns[k] = b; }
+  for (const k of g.members) { const nm = SPECIES[k] ? SPECIES[k].name.replace('（幼魚）', '') : SKY_OBJECTS[k].name.replace(/（.*）/, ''); const b = chip(nm, () => pickSpecies(k)); row.appendChild(b); memberBtns[k] = b; }
 }
 function syncChips() {
-  const gs = sel ? groupOf(sel.species) : null;
+  const gs = sel ? groupOf(sel.species) : skySel ? groupOf(skySel) : null;
   for (const [name, b] of Object.entries(chipBtns)) {
     b.setAttribute('aria-pressed', String(!!gs && gs.name === name));
     if (b.hasAttribute('aria-expanded')) b.setAttribute('aria-expanded', String(name === openGroup));
   }
-  for (const [k, b] of Object.entries(memberBtns)) b.setAttribute('aria-pressed', String(!!sel && sel.species === k));
+  for (const [k, b] of Object.entries(memberBtns)) b.setAttribute('aria-pressed', String((!!sel && sel.species === k) || skySel === k));
 }
 
 const NO_POV = new Set(['ryuhyo', 'sakura', 'nanakamado', 'hamanasu', 'ryokakuki', 'iss', 'himawari']);   // plants, ice and machines have no eyes
@@ -5576,7 +5816,7 @@ function select(ind, fly) {
   }
 }
 function deselect(back = false) {
-  if (back && sel && homePose) {
+  if (back && (sel || skySel) && homePose) {
     flyToPose(homePose, 1.4);
     setViewButtons(homePose.view);
   }
@@ -5844,6 +6084,7 @@ function frame() {
   // camera
   if (pov) updatePov(dt);
   else {
+    followSky();
     controls.target.copy(PLANET_C);
     if (camAnim) stepCamAnim(dt);
   }
@@ -5938,6 +6179,8 @@ window.__tidal = {
   sky: (k, star) => selectSky({ key: k, star: star || null }), get skySel() { return skySel; }, SKY_OBJECTS,
   skyPx(k) { const r = renderer.domElement.getBoundingClientRect(), v = skyDirs[k].clone().multiplyScalar(SKY_R).add(starfield.position).project(camera); return v.z > 1 ? null : [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; },
   skyKeys: () => Object.keys(skyDirs),
+  snapBody(k, dist) { renderer.setAnimationLoop(null); const obj = SKY_BODIES.find(b => b[0] === k)[1], p = obj.getWorldPosition(new THREE.Vector3()), toSun = sunDir.clone(), view = p.clone().sub(PLANET_C).normalize(), cam = new THREE.PerspectiveCamera(30, camera.aspect, 0.1, 1000); const side = view.clone().cross(SUN_B).normalize(); cam.position.copy(p).addScaledVector(view, -dist).addScaledVector(side, dist * 0.35); cam.up.copy(SUN_B); cam.lookAt(p); camera.clearViewOffset(); renderer.render(scene, cam); },
+  lookAtBody(k, deg = 16, dist = 40) { const obj = SKY_BODIES.find(b => b[0] === k)[1], p = obj.getWorldPosition(new THREE.Vector3()), d = p.clone().sub(PLANET_C).normalize(), side = new THREE.Vector3(0, 1, 0).cross(d).normalize(), a = THREE.MathUtils.degToRad(deg); camAnim = null; camera.position.copy(PLANET_C).addScaledVector(d, -Math.cos(a) * dist).addScaledVector(side, Math.sin(a) * dist); camera.up.set(0, 1, 0); tiltRef.phi = 0; camTilt = 0; },
   skyScore(a, b, u, w, h, roll) {
     const Q = skyTurn2(a, u, roll), cam = camera.clone(), out = [];
     cam.aspect = w / h; cam.clearViewOffset(); cam.updateProjectionMatrix();
