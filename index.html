@@ -366,6 +366,8 @@ function vnoise(x, y) {
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 function fbm(x, y) { let f = 0, a = 0.5; for (let i = 0; i < 4; i++) { f += a * vnoise(x, y); x *= 2.03; y *= 2.03; a *= 0.5; } return f / 0.9375; }
+// sharp-crested noise: knife-edged ridges and rounded hollows, like weathered rock
+function ridged(x, y) { let f = 0, a = 0.5; for (let i = 0; i < 3; i++) { const n = 1 - Math.abs(vnoise(x, y) * 2 - 1); f += a * n * n; x *= 2.07; y *= 2.07; a *= 0.5; } return f / 0.875; }
 function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const srand = mulberry32(20260917);
 const sr = (a, b) => a + (b - a) * srand();
@@ -411,18 +413,72 @@ function sample(x, z) {
   const gr = Math.exp(-(((x - BIG_ROCK.x) ** 2) / 7 + ((z - BIG_ROCK.z) ** 2) / 6));
   const wr = smooth(0.25, 0.7, gr);
   if (wr > 0) { h = lerp(h, Math.max(h, 1.8), wr); rock = Math.max(rock, wr); }
+  h = shoreRelief(x, z, h, rock, d);
   const qs = POOLS.map(p => poolQ(p, x, z));
   POOLS.forEach((p, i) => {
     const q = qs[i];
-    if (q >= 1 && q < 1.8) { const t = smooth(1, 1.75, q); h = Math.max(h, lerp(p.rim, h, t)); rock = Math.max(rock, 1 - t); }
+    if (q >= 1 && q < 1.8) { const t = smooth(1, 1.75, q); h = Math.max(h, lerp(p.rim, h, t)); rock = Math.max(rock, 1 - t); relief.shade *= t; }
   });
   POOLS.forEach((p, i) => {
     const q = qs[i];
-    if (q < 1) { h = bowlH(p, q) + (fbm(x * 2.1, z * 2.1) - 0.5) * 0.1 * smooth(0.2, 0.6, q) * (1 - smooth(0.85, 1, q)); rock = 1; }
+    if (q < 1) { h = bowlH(p, q) + (fbm(x * 2.1, z * 2.1) - 0.5) * 0.1 * smooth(0.2, 0.6, q) * (1 - smooth(0.85, 1, q)); rock = 1; relief.shade = 0; }
   });
-  return { h: rimBlend(x, z, h), rock: rock * (1 - smooth(0.8, 0.95, Math.hypot(x, z) / RIM)) };
+  return { h: rimBlend(x, z, h), rock: rock * (1 - smooth(0.8, 0.95, Math.hypot(x, z) / RIM)), shade: relief.shade };
 }
 const heightAt = (x, z) => sample(x, z).h;
+// Patches of coral and boulders on the sea floor off the shore (0..1).
+const reefPatch = (x, z) => smooth(0.6, 0.74, fbm(x * 0.62 + 13.3, z * 0.62 - 5.1));
+// The finer relief of a real rocky shore, laid over the broad shape without moving the
+// pools or the outline of the shelf: pitted, knife-edged limestone on the rock; storm
+// berms stepping up the beach; and off the shore, coral heads and boulder patches, sand
+// ripples, and grooves running out to sea down the reef slope.
+const relief = { shade: 0 };   // how lit (+) or shadowed (-) the last point's small relief is
+function shoreRelief(x, z, h, rock, d) {
+  const t = x * 0.85 + z * 0.3;                     // along the shore (d runs out to sea)
+  relief.shade = 0;
+  // the rock: craggy knobs and knife-edged ridges between solution pits, cut by the
+  // straight joints limestone splits along; strongest well above the waterline
+  if (rock > 0) {
+    const crag = ridged(x * 0.55 + 1.7, z * 0.55 + 6.2), rd = ridged(x * 1.4 + 5.2, z * 1.4 - 2.4);
+    const pit = smooth(0.66, 0.82, vnoise(x * 3.2 + 2.1, z * 3.2 - 7.3));
+    const j1 = Math.abs(Math.sin(t * 1.35 + (vnoise(x * 0.4, z * 0.4) - 0.5) * 2.5));
+    const j2 = Math.abs(Math.sin((d * 0.9 - t * 0.35) * 1.2 + (vnoise(x * 0.4 + 7, z * 0.4) - 0.5) * 2.5));
+    const joint = Math.max(smooth(0.22, 0.04, j1) * smooth(0.35, 0.6, vnoise(t * 0.3, 2.2)), smooth(0.22, 0.04, j2) * smooth(0.4, 0.65, vnoise(d * 0.3, 5.5)));
+    const up = smooth(0.7, 1.5, h), k = rock * lerp(0.35, 1, up);
+    const bump = (crag - 0.4) * 0.34 * up + (rd - 0.45) * 0.24 - pit * 0.16 - joint * 0.14 + (vnoise(x * 4.1, z * 4.1) - 0.5) * 0.06;
+    h += k * bump;
+    relief.shade = rock * clamp(bump * 2.2 - joint * 0.5, -0.5, 0.35);
+  }
+  // the beach: soft steps where storms have left ridges of sand, higher up the shore
+  const beach = (1 - rock) * smooth(1.25, 1.6, h);
+  if (beach > 0) {
+    const st = 0.3, q = (h + (vnoise(t * 0.7 + 3, 1.7) - 0.5) * 0.15) / st, f = q - Math.floor(q);
+    h = lerp(h, (Math.floor(q) + smooth(0.55, 0.95, f)) * st, beach * 0.45);
+    relief.shade += beach * (smooth(0.55, 0.75, f) - smooth(0.75, 0.95, f)) * -0.12;
+    h += beach * (vnoise(x * 2.4 + 9, z * 2.4) - 0.5) * 0.06;
+  }
+  // the sea floor, only where it stays under water at the lowest tide
+  const deepF = 1 - smooth(-1.25, -0.75, h);
+  if (deepF > 0) {
+    // grooves cut down the reef slope, with spurs of rock between
+    const slope = smooth(3.2, 5, d) * (1 - smooth(8.5, 10.5, d));
+    const gv = 0.5 + 0.5 * Math.sin(t * 2.3 + (vnoise(t * 0.5 + 4, d * 0.35) - 0.5) * 5);
+    h -= deepF * slope * smooth(0.45, 0.95, gv) * 0.32;
+    // sand ripples, lined up with the shore
+    const sand = 1 - reefPatch(x, z);
+    h += deepF * sand * Math.sin(d * 6.8 + (vnoise(x * 0.8, z * 0.8) - 0.5) * 4) * 0.035;
+    // coral heads and boulders, never reaching the air
+    const patch = reefPatch(x, z);
+    if (patch > 0) {
+      // rounded heads with a rough skin, not spires
+      const rg = smooth(0.3, 0.85, fbm(x * 1.5 + 1.3, z * 1.5 + 8.8)) * 0.8 + ridged(x * 2.6 + 4.1, z * 2.6 - 1.2) * 0.2;
+      const top = h + deepF * patch * (0.2 + 0.5 * rg);
+      h = Math.max(h, Math.min(top, TIDE_LOW - 0.22));
+      relief.shade += deepF * patch * (rg - 0.5) * 0.5;
+    }
+  }
+  return h;
+}
 const UP = new THREE.Vector3(0, 1, 0);
 // flat side-local (x, y, z) -> point on the sphere (side-local)
 function bendVec(x, y, z, out = new THREE.Vector3()) {
@@ -599,18 +655,50 @@ function M(color, o = {}) {
 }
 
 /* ------------------------------------------------------------------ terrain */
-const K = 120, MSEG = 400;
+const K = 180, MSEG = 600;
 const bnd = [];
 for (let m = 0; m < MSEG; m++) bnd.push(boundaryAt(m / MSEG * TAU));
 
 const cSand = new THREE.Color('#ecdfc2'), cSand2 = new THREE.Color('#ddcdaa');
-const cRock = new THREE.Color('#dcd7cb'), cRock2 = new THREE.Color('#c5bdab'), cGreen = new THREE.Color('#bfc98d');
+const cRock = new THREE.Color('#dcd7cb'), cRock2 = new THREE.Color('#bdb3a0'), cWeather = new THREE.Color('#a8a295'), cGreen = new THREE.Color('#bfc98d');
 const tmpC = new THREE.Color();
 const DEEP = new THREE.Color('#7f8f8c');
 const rimMask = (x, z) => smooth(0.72, 0.95, Math.hypot(x, z) / RIM);
+// the bands a real shore wears between the tides, and the floor beyond them
+const cWetSand = new THREE.Color('#d8c8a3'), cWrack = new THREE.Color('#b3a07e'), cSeaSand = new THREE.Color('#d9cfb1');
+const cSpray = new THREE.Color('#aaa699'), cBarnacle = new THREE.Color('#e2ddd0'), cTurf = new THREE.Color('#a9a877'), cTurf2 = new THREE.Color('#8f9463');
+const cCoralline = new THREE.Color('#cfb0a4'), cSeagrass = new THREE.Color('#71884f');
+const CORALS = ['#b8977a', '#a88aa6', '#8fa37e', '#c9a27e'].map(c => new THREE.Color(c));
 function colorAt(x, z, h, rock, out) {
-  out.copy(cSand).lerp(cSand2, smooth(0.35, 0.75, fbm(x * 1.3 + 7, z * 1.3)) * 0.8);
-  if (rock > 0) { tmpC.copy(cRock).lerp(cRock2, smooth(0.3, 0.8, fbm(x * 2.2, z * 2.2))); out.lerp(tmpC, rock); }
+  const n1 = fbm(x * 1.3 + 7, z * 1.3), n2 = fbm(x * 2.2, z * 2.2), n3 = vnoise(x * 4.5 + 3, z * 4.5 - 1);
+  out.copy(cSand).lerp(cSand2, smooth(0.35, 0.75, n1) * 0.8);
+  // coarse bits of shell and coral scattered through the sand
+  out.multiplyScalar(1 + (vnoise(x * 3.7 + 1.1, z * 3.7 - 3.7) - 0.5) * 0.06);
+  // sand the tide has wet, and the line of dried weed it leaves at the top
+  out.lerp(cWetSand, (1 - smooth(TIDE_HIGH - 0.35, TIDE_HIGH + 0.05, h)) * 0.7);
+  out.lerp(cWrack, Math.max(0, 1 - Math.abs(h - TIDE_HIGH - 0.08) / 0.07) * smooth(0.35, 0.6, n3) * 0.6);
+  if (rock > 0) {
+    tmpC.copy(cRock).lerp(cRock2, smooth(0.3, 0.8, n2));
+    // old, weathered faces go grey in broad patches
+    tmpC.lerp(cWeather, smooth(0.5, 0.78, fbm(x * 0.8 + 3.3, z * 0.8 - 9.1)) * smooth(0.4, 1.2, h) * 0.6);
+    // splash zone above the tides: grey crusts of lichen
+    tmpC.lerp(cSpray, smooth(TIDE_HIGH - 0.05, TIDE_HIGH + 0.35, h) * smooth(0.4, 0.7, n1) * 0.7);
+    // barnacles in the upper half, low algal turf in the lower half
+    tmpC.lerp(cBarnacle, smooth(0.5, 1.0, h) * (1 - smooth(TIDE_HIGH - 0.1, TIDE_HIGH + 0.1, h)) * smooth(0.45, 0.75, n3) * 0.5);
+    const turf = smooth(0.75, 0.2, h) * smooth(TIDE_LOW - 0.4, TIDE_LOW + 0.1, h);
+    tmpC.lerp(n3 > 0.5 ? cTurf2 : cTurf, turf * (0.45 + 0.4 * smooth(0.3, 0.7, n2)));
+    // pink crusts of coralline algae where the rock never dries
+    tmpC.lerp(cCoralline, (1 - smooth(TIDE_LOW - 0.5, TIDE_LOW, h)) * 0.6);
+    out.lerp(tmpC, rock);
+  }
+  // the sea floor: pale sand with meadows of seagrass, and patches of coral
+  const floor = 1 - smooth(TIDE_LOW - 0.6, TIDE_LOW, h);
+  if (floor > 0) {
+    out.lerp(cSeaSand, floor * (1 - rock) * 0.6);
+    out.lerp(cSeagrass, floor * (1 - rock) * smooth(0.55, 0.68, fbm(x * 0.5 + 20.4, z * 0.5 + 3.3)) * (1 - reefPatch(x, z)) * 0.85);
+    const patch = reefPatch(x, z) * floor;
+    if (patch > 0) out.lerp(CORALS[Math.floor(vnoise(x * 1.9 + 4, z * 1.9) * 3.999)], patch * 0.8);
+  }
   const g = smooth(-3.2, -5.2, z) * smooth(1.9, 2.3, h);
   if (g > 0) out.lerp(cGreen, g * 0.55);
   return out.lerp(DEEP, rimMask(x, z));
@@ -625,10 +713,11 @@ let terrainMesh;
     const s = k / K;
     for (let m = 0; m < MSEG; m++) {
       const x = bnd[m][0] * s, z = bnd[m][1] * s;
-      const { h, rock } = sample(x, z);
+      const { h, rock, shade } = sample(x, z);
       const i = (k * MSEG + m) * 3;
       pos[i] = x; pos[i + 1] = h; pos[i + 2] = z;
       colorAt(x, z, h, rock, c);
+      c.multiplyScalar(1 + shade * 1.3 * (1 - rimMask(x, z)));   // hollows a shade darker, crests a touch lighter
       col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b;
     }
   }
@@ -801,6 +890,56 @@ let bigRock;
 
 const leafMats = ['#5f9a49', '#6fac55', '#4f8840', '#7cb45f'].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, flatShading: true }));
 const crownGeo = rockGeo(9, 0);
+
+// Mushroom rocks: limestone stacks standing in the shallows, their waists eaten into a
+// deep notch by the waves between the tides, with a cap overhanging above the highest
+// tide and a tuft of green on top, as on the coasts of Okinawa.
+const seaStackObst = [];
+{
+  const mat = wetShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, flatShading: true }));
+  const cTop = new THREE.Color('#e6e1d4'), cMid = new THREE.Color('#cfc7b5'), cNotch = new THREE.Color('#9d9788'), cFoot = new THREE.Color('#b5a597');
+  const tuftM = leafMats;
+  [[3.2, 5.9, 0.78, 0], [2.3, 7.2, 0.56, 1], [-7.2, 2.8, 0.66, 2]].forEach(([x, z, s, seed]) => {
+    const h0 = heightAt(x, z), top = lerp(2.0, 2.35, (s - 0.56) / 0.22);
+    // silhouette from the sea floor to the crown: flared foot, notched waist, broad cap
+    const prof = [[0.78, h0 - 0.35], [0.72, h0], [0.58, lerp(h0, TIDE_LOW, 0.6)], [0.42, TIDE_LOW + 0.5], [0.34, 0.55], [0.36, 1.15],
+      [0.55, TIDE_HIGH - 0.1], [0.92, top - 0.45], [1.02, top - 0.2], [0.9, top], [0.6, top + 0.12], [0.25, top + 0.17], [0, top + 0.18]]
+      .map(([r, y]) => new THREE.Vector2(r * s, y));
+    const g = new THREE.LatheGeometry(prof, 14).toNonIndexed(), pp = g.attributes.position, v = new THREE.Vector3(), cols = [], c = new THREE.Color();
+    for (let i = 0; i < pp.count; i++) {
+      v.fromBufferAttribute(pp, i);
+      const a = Math.atan2(v.z, v.x), n = fbm(Math.cos(a) * 1.3 + seed * 7.1 + v.y * 0.9, Math.sin(a) * 1.3 + seed * 3.3);
+      const k = 0.78 + n * 0.45 + (vnoise(a * 2.2 + seed, v.y * 3.1) - 0.5) * 0.12;
+      v.x *= k; v.z *= k;
+      pp.setXYZ(i, v.x, v.y, v.z);
+      c.copy(cMid).lerp(cTop, smooth(TIDE_HIGH, top, v.y));
+      c.lerp(cNotch, smooth(TIDE_LOW - 0.2, 0.3, v.y) * (1 - smooth(1.0, TIDE_HIGH + 0.1, v.y)) * 0.75);
+      c.lerp(cFoot, 1 - smooth(TIDE_LOW - 0.6, TIDE_LOW, v.y));
+      c.multiplyScalar(0.92 + n * 0.16);
+      cols.push(c.r, c.g, c.b);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat);
+    m.position.set(x, 0, z);
+    m.rotation.y = seed * 2.1;
+    m.castShadow = m.receiveShadow = true;
+    shoreSide.add(m);
+    rockMeshes.push(m);
+    // a scrap of green clinging to the crown
+    for (let t = 0; t < 2 + seed % 2; t++) {
+      const b = new THREE.Mesh(crownGeo, tuftM[(seed + t) % tuftM.length]);
+      const a = seed * 1.7 + t * 2.4, r = s * 0.35 * (t ? 1 : 0.2);
+      b.scale.set(s * 0.42, s * 0.22, s * 0.38);
+      b.position.set(x + Math.cos(a) * r, top + 0.14, z + Math.sin(a) * r);
+      b.castShadow = true;
+      shoreSide.add(b);
+    }
+    // the swimmers and walkers go round the waist, at every depth
+    for (const y of [h0 + 0.3, -0.3, 0.7]) seaStackObst.push({ x, z, y, r: 0.42 * s });
+  });
+}
+
 const shoreTrees = [];
 function makeTree(x, z, s = 1, base) {
   const g = new THREE.Group();
@@ -1909,8 +2048,50 @@ function iceHeight(x, z) {
   const shore = z + Math.sin(x * 0.33 + 1.2) * 1.1 + (vnoise(x * 0.4 + 20, 3) - 0.5) * 0.8;
   let h = lerp(2.3, -3.1, smooth(-5.2, -1.2, shore)) + (fbm(x * 0.35 + 40, z * 0.35 + 9) - 0.5) * 0.5;
   const g = Math.exp(-(((x - ISLET.x) ** 2) / 2.2 + ((z - ISLET.z) ** 2) / 1.8));
-  h = lerp(h, Math.max(h, 1.15 + (fbm(x * 1.2, z * 1.2) - 0.5) * 0.3), smooth(0.25, 0.6, g));
-  return rimBlend(x, z, h);
+  const isl = smooth(0.25, 0.6, g);
+  h = lerp(h, Math.max(h, 1.15 + (fbm(x * 1.2, z * 1.2) - 0.5) * 0.3), isl);
+  return rimBlend(x, z, iceRelief(x, z, h, isl));
+}
+// The finer relief of the northern coast: low hills cut by gullies behind the shore,
+// ridges of gravel thrown up along the beach, a craggy islet, and a rocky floor of
+// boulders and reefs between patches of rippled sand.
+const iceReef = (x, z) => smooth(0.58, 0.72, fbm(x * 0.7 - 8.3, z * 0.7 + 14.1));
+const iceShade = { v: 0 };
+function iceRelief(x, z, h, isl) {
+  iceShade.v = 0;
+  const land = smooth(1.0, 1.7, h);
+  if (land > 0) {
+    const hill = ridged(x * 0.45 + 11.2, z * 0.45 - 3.4), gully = smooth(0.12, 0.02, Math.abs(Math.sin(x * 0.9 + (vnoise(x * 0.3, z * 0.5) - 0.5) * 3)));
+    const bump = (hill - 0.45) * 0.4 - gully * 0.18 * smooth(-7, -4.5, z) + (vnoise(x * 3.3 + 2, z * 3.3) - 0.5) * 0.06;
+    h += land * (1 - isl) * bump;
+    iceShade.v += land * (1 - isl) * clamp(bump * 1.6, -0.3, 0.2);
+  }
+  // gravel berms stepping up the beach
+  const beach = smooth(0.25, 0.7, h) * (1 - smooth(1.4, 1.9, h)) * (1 - isl);
+  if (beach > 0) {
+    const st = 0.28, q = (h + (vnoise(x * 0.6 + 5, 2.3) - 0.5) * 0.12) / st, f = q - Math.floor(q);
+    h = lerp(h, (Math.floor(q) + smooth(0.55, 0.95, f)) * st, beach * 0.45);
+    iceShade.v += beach * (smooth(0.55, 0.75, f) - smooth(0.75, 0.95, f)) * -0.1;
+  }
+  // the islet: dark, craggy volcanic rock
+  if (isl > 0) {
+    const rd = ridged(x * 1.5 + 3.1, z * 1.5 + 9.7), bump = (rd - 0.45) * 0.36 + (vnoise(x * 4, z * 4) - 0.5) * 0.08;
+    h += isl * bump * smooth(0.2, 0.9, h);
+    iceShade.v += isl * clamp(bump * 1.8, -0.35, 0.25);
+  }
+  // the sea floor, below the lowest tide
+  const deepF = 1 - smooth(-1.25, -0.75, h);
+  if (deepF > 0) {
+    const reef = iceReef(x, z);
+    h += deepF * (1 - reef) * Math.sin(z * 6.2 + (vnoise(x * 0.7, z * 0.7) - 0.5) * 4) * 0.035;
+    if (reef > 0) {
+      const rg = smooth(0.3, 0.85, fbm(x * 1.3 + 6.6, z * 1.3 - 2.2)) * 0.8 + ridged(x * 2.4 - 3.3, z * 2.4 + 5.1) * 0.2;
+      const top = h + deepF * reef * (0.2 + 0.45 * rg);
+      h = Math.max(h, Math.min(top, TIDE_LOW - 0.25));
+      iceShade.v += deepF * reef * (rg - 0.5) * 0.5;
+    }
+  }
+  return h;
 }
 
 // Seasons. Only the Okhotsk side (Hokkaido) has four seasons; the southern shore stays
@@ -1947,12 +2128,13 @@ let iceTerrain, iceColorData, snowMounds;
 const iceRocks = [], snowCaps = [];
 // paint the Okhotsk ground for the current season: bare grass, green, autumn brown, or snow
 function recolorIce(col = iceColorData.col) {
-  const { base, land, top, rim, tint } = iceColorData, c = new THREE.Color(), g = new THREE.Color();
+  const { base, land, top, rim, tint, shade } = iceColorData, c = new THREE.Color(), g = new THREE.Color();
   for (let j = 0; j < land.length; j++) {
     const i = j * 3;
     g.copy(SEASON.ground).offsetHSL(0, 0, (tint[j] - 0.5) * 0.08);
     c.setRGB(base[i], base[i + 1], base[i + 2]).lerp(g, land[j]);
     c.lerp(cSnow2, land[j] * SEASON.snow).lerp(cSnow, top[j] * 0.8 * SEASON.snow);
+    c.multiplyScalar(1 + shade[j] * 1.3 * (1 - rim[j]) * (1 - top[j] * SEASON.snow * 0.7));
     c.lerp(DEEP, rim[j]);
     col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b;
   }
@@ -1960,21 +2142,28 @@ function recolorIce(col = iceColorData.col) {
 }
 {
   const N = (K + 1) * MSEG, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), c = new THREE.Color();
-  const base = new Float32Array(N * 3), land = new Float32Array(N), top = new Float32Array(N), rim = new Float32Array(N), tint = new Float32Array(N);
+  const base = new Float32Array(N * 3), land = new Float32Array(N), top = new Float32Array(N), rim = new Float32Array(N), tint = new Float32Array(N), shade = new Float32Array(N);
+  const cReefN = new THREE.Color('#56646a'), cSandN = new THREE.Color('#8d8f85');
   for (let k = 0; k <= K; k++) {
     const s = k / K;
     for (let m = 0; m < MSEG; m++) {
       const x = bnd[m][0] * s, z = bnd[m][1] * s, h = iceHeight(x, z), j = k * MSEG + m, i = j * 3;
       pos[i] = x; pos[i + 1] = h; pos[i + 2] = z;
       c.copy(cSeabed).lerp(cGravel, smooth(-2.5, 0.2, h));
+      // pale sand between dark reefs and boulders on the floor; darker cobbles in the swash
+      const fl = 1 - smooth(TIDE_LOW - 0.6, TIDE_LOW, h);
+      c.lerp(cSandN, fl * (1 - iceReef(x, z)) * smooth(0.45, 0.65, fbm(x * 0.6 + 2, z * 0.6 - 7)) * 0.6);
+      c.lerp(cReefN, fl * iceReef(x, z) * 0.8);
+      c.multiplyScalar(1 + (vnoise(x * 3.5 - 4, z * 3.5 + 1) - 0.5) * 0.1);
       base[i] = c.r; base[i + 1] = c.g; base[i + 2] = c.b;
+      shade[j] = iceShade.v;
       land[j] = smooth(0.9, 1.5, h + (fbm(x * 2, z * 2) - 0.5) * 0.5);
       top[j] = smooth(1.5, 2.1, h);
       rim[j] = rimMask(x, z);
       tint[j] = fbm(x * 1.4 + 3, z * 1.4);
     }
   }
-  iceColorData = { col, base, land, top, rim, tint };
+  iceColorData = { col, base, land, top, rim, tint, shade };
   recolorIce(col);
   const idx = [];
   for (let k = 0; k < K; k++) for (let m = 0; m < MSEG; m++) {
@@ -4616,9 +4805,9 @@ function separate(dt) {
     sepBodies[ind.sideName].push(b);
   }
   // tree trunks are obstacles too
-  for (const [name, trees] of [['shore', shoreTrees], ['ice', conifers]]) for (const tr of trees) {
+  for (const [name, trees] of [['shore', shoreTrees], ['ice', conifers], ['shore', seaStackObst]]) for (const tr of trees) {
     const b = tr.sepB || (tr.sepB = { ind: null, move: false, walker: false, state: false, w: new THREE.Vector3() });
-    b.x = tr.x; b.z = tr.z; b.y = heightOnSide(name)(tr.x, tr.z) + 0.3; b.r = 0.22 * tr.s; b.hit = false; b.px = b.pz = 0;
+    b.x = tr.x; b.z = tr.z; b.y = tr.y ?? heightOnSide(name)(tr.x, tr.z) + 0.3; b.r = tr.r ?? 0.22 * tr.s; b.hit = false; b.px = b.pz = 0;
     bendVec(b.x, b.y, b.z, b.w); b.wx = b.w.x; b.wy = b.w.y; b.wz = b.w.z; b.k = 1;
     sepBodies[name].push(b);
   }
