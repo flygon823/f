@@ -5649,7 +5649,7 @@ function updateDay(dt) {
   }
   const hex = skyCol.map(c => '#' + c.getHexString());
   const key = hex.join('');
-  if (key !== lastBgKey) {
+  if (key !== lastBgKey && !key.includes('N')) {   // never hand the page a broken colour
     lastBgKey = key;
     rootStyle.setProperty('--bg-hi', hex[0]);
     rootStyle.setProperty('--bg-mid', hex[1]);
@@ -5662,7 +5662,7 @@ function updateDay(dt) {
   STAR_U.uTime.value = clock.elapsedTime;
   starAlpha = starA;
   sunGlow.material.opacity = 1 - inAir * 0.5;
-  document.body.classList.toggle('dusk', bright < (document.body.classList.contains('dusk') ? 0.55 : 0.45));
+  document.body.classList.toggle('dusk', !(bright >= (document.body.classList.contains('dusk') ? 0.55 : 0.45)));
   dayUiTimer -= dt;
   if (dayUiTimer <= 0) {
     dayUiTimer = 0.2;
@@ -6035,6 +6035,7 @@ const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 function setNdc(e) {
   const r = renderer.domElement.getBoundingClientRect();
+  if (!r.width || !r.height) { ndc.set(0, 0); raycaster.setFromCamera(ndc, camera); return; }
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
 }
@@ -6231,6 +6232,7 @@ new ResizeObserver(() => document.documentElement.style.setProperty('--dock-h', 
 new ResizeObserver(() => document.documentElement.style.setProperty('--controls-h', $('controls').offsetHeight + 'px')).observe($('controls'));
 
 function onResize() {
+  if (!window.innerWidth || !window.innerHeight) return;   // hidden or squeezed shut: keep the last size
   camera.aspect = window.innerWidth / window.innerHeight;
   fitFov();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -6257,6 +6259,22 @@ const followDelta = new THREE.Vector3(), selWorld = new THREE.Vector3(), selLoca
 const viewOff = { x: 0, y: 0 }, povNear = new THREE.Vector3();
 const cullC = new THREE.Vector3(), cullP = new THREE.Vector3(), cullO = new THREE.Vector3(), CORE_R = PR + SEA_FLOOR - 0.4;
 
+// A single bad sum (two fingers meeting in a pinch, a window squeezed to nothing) can put
+// NaN into the camera, and from there into every later frame: nothing gets drawn and the
+// page goes blank for good. Remember the last sound view and fall back to it.
+const saneCam = { pos: camera.position.clone(), up: camera.up.clone(), quat: camera.quaternion.clone(), tilt: 0 };
+function keepCamSane() {
+  const p = camera.position, u = camera.up, q = camera.quaternion;
+  const ok = [p.x, p.y, p.z, u.x, u.y, u.z, q.x, q.y, q.z, q.w, camTilt].every(Number.isFinite) && p.distanceTo(PLANET_C) > PR * 0.5;
+  if (ok) { saneCam.pos.copy(p); saneCam.up.copy(u); saneCam.quat.copy(q); saneCam.tilt = camTilt; return; }
+  camAnim = null; grab = null;
+  camera.position.copy(saneCam.pos); camera.up.copy(saneCam.up); camera.quaternion.copy(saneCam.quat); camTilt = saneCam.tilt;
+  // clear whatever the controls were carrying, so the next update doesn't bring it back
+  controls._lastAngle = 0; controls._movePrev.copy(controls._moveCurr);
+  controls._zoomStart.copy(controls._zoomEnd); controls._touchZoomDistanceStart = controls._touchZoomDistanceEnd;
+  camera.updateMatrixWorld();
+  console.warn('camera went off the map; restored the last good view');
+}
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
@@ -6349,7 +6367,9 @@ function frame() {
     }
     if (camTilt > 1e-4) camera.rotateX(camTilt);
   }
+  keepCamSane();
   updateSide();
+  if (!Number.isFinite(skyF)) skyF = flipF;
 
   // keep the selected creature clear of the info card
   const narrow = window.innerWidth <= 720;
